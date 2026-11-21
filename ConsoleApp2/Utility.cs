@@ -298,7 +298,7 @@ namespace Aps反向代理
 
             return fileName;
         }
-        public static MethodInfo[] GetEventHandlers(Control control)
+        public static Delegate[] GetEventHandlers(Control control)
         {
             PropertyInfo _eventsProp = typeof(Component).GetProperty("Events", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.GetProperty);
             if (_eventsProp == null) return [];
@@ -312,10 +312,8 @@ namespace Aps反向代理
             Delegate d = (Delegate)_handlerField.GetValue(_entry);
             if (d != null)
             {
-                // 获取每个订阅者（事件处理器）的信息
-                return d.GetInvocationList()
-                                    .Select(d => d.Method)
-                                    .ToArray();
+                // 返回 Delegate 本身（保留 Target），闭包 lambda 的 Target 是编译器生成的闭包实例
+                return d.GetInvocationList();
             }
             return [];
         }

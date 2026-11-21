@@ -288,49 +288,43 @@ public class SurfaceController
     protected virtual void OnClick(int x, int y, int button)
     {
         var e = CreateScaledPoint(x, y);
-        object[] invokeArgs = null;
         Control target = form.GetChildAtPoint(e, skipValue: GetChildAtPointSkip.Invisible | GetChildAtPointSkip.Transparent);
-        if (target != null)
+        if (target == null)
         {
-            Point childPoint = new Point(e.X - target.Left, e.Y - target.Top);
-            var handlers = Utility.GetEventHandlers(target);
-            if (handlers.Length == 1)
-            {
-                var p = handlers[0].GetParameters().ElementAt(1);
-                switch (p.ParameterType.Name)
-                {
-                    case "LinkLabelLinkClickedEventArgs":
-                        invokeArgs = CreateLinkLabelLinkClickedEventArgs(target, button, (target as LinkLabel).Links[0]);
-                        break;
-                    case "EventArgs":
-                    default:
-                        invokeArgs = CreateMouseEventArgs(target, childPoint.X, childPoint.Y, button);
-                        break;
-                }
-                if (handlers[0].Name.Contains("Click"))
-                {
-                    handlers[0].Invoke(form, invokeArgs);
-                }
-                else
-                {
-                    Debug.WriteLine("Not correct handler found for " + handlers[0]);
-                }
+            Click?.Invoke(form, CreateMouseEventArgs(null, x, y, button));
+            return;
+        }
 
-            }
-            else if (handlers.Length == 0)
-            {
-                //handlers = Utility.GetEventHandlers(form);
-                return;
-            }
-            else
-            {
-                throw new NotImplementedException();
-            }
-            //Click?.Invoke(target, CreateMouseEventArgs(childPoint.X, childPoint.Y, button));
+        Point childPoint = new Point(e.X - target.Left, e.Y - target.Top);
+        var mb = button == 0 ? MouseButtons.Left : button == 1 ? MouseButtons.Middle : MouseButtons.Right;
 
+        if (target is LinkLabel link && link.Links.Count > 0)
+        {
+            InvokeOnMethod(link, "OnClick", new LinkLabelLinkClickedEventArgs(link.Links[0], mb));
         }
         else
-            Click?.Invoke(form, CreateMouseEventArgs(null, x, y, button));
+        {
+            // 调用控件的 OnClick 虚方法，由 WinForms 分发所有订阅的处理器（含闭包 lambda）
+            InvokeOnMethod(target, "OnClick", EventArgs.Empty);
+        }
+    }
+
+    private void InvokeOnMethod(Control target, string methodName, EventArgs args)
+    {
+        var method = target.GetType().GetMethod(methodName, BindingFlags.NonPublic | BindingFlags.Instance);
+        if (method == null)
+        {
+            Debug.WriteLine($"No {methodName} on {target.GetType().Name}");
+            return;
+        }
+        try
+        {
+            method.Invoke(target, new object[] { args });
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"Invoke {methodName} failed: " + ex.Message);
+        }
     }
 
     protected virtual void OnDoubleClick(int x, int y, int button)
@@ -390,12 +384,31 @@ public class SurfaceController
 
     protected virtual void OnMouseEnter(int x, int y)
     {
-        MouseEnter?.Invoke(form, [EventArgs.Empty]);
+        var target = ControlAt(x, y);
+        if (target == null)
+        {
+            MouseEnter?.Invoke(form, [EventArgs.Empty]);
+            return;
+        }
+        // 触发命中控件自身订阅的 MouseEnter（含 lambda），而非仅窗体
+        InvokeOnMethod(target, "OnMouseEnter", EventArgs.Empty);
     }
 
     protected virtual void OnMouseLeave(int x, int y)
     {
-        MouseLeave?.Invoke(form, [EventArgs.Empty]);
+        var target = ControlAt(x, y);
+        if (target == null)
+        {
+            MouseLeave?.Invoke(form, [EventArgs.Empty]);
+            return;
+        }
+        InvokeOnMethod(target, "OnMouseLeave", EventArgs.Empty);
+    }
+
+    private Control ControlAt(int x, int y)
+    {
+        var p = CreateScaledPoint(x, y);
+        return form?.GetChildAtPoint(p, skipValue: GetChildAtPointSkip.Invisible | GetChildAtPointSkip.Transparent);
     }
 
     protected virtual void OnContextMenu(int x, int y, int button)

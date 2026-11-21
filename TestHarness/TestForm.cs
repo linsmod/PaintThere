@@ -76,6 +76,8 @@ public class TestForm : Form
             _clicks++;
             submitButton.Text = $"提交 ({_clicks})";
         };
+        submitButton.MouseEnter += (s, e) => submitButton.BackColor = Color.FromArgb(255, 140, 60);
+        submitButton.MouseLeave += (s, e) => submitButton.BackColor = Color.FromArgb(45, 130, 210);
         Controls.Add(submitButton);
 
         var panel = new Panel

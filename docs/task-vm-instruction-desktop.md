@@ -125,7 +125,12 @@ created → mapped（可见）→ focused / unfocused
   - 验证：浏览器 mousemove 到按钮后橙色像素 5349（基线蓝色 5459、橙色 0）；重启后单次 mousedown/mouseup 使按钮文字从 `Clicked: 0` 变 `Clicked: 1`，精确加一。截图 `wm_click.png`。
   - 修复过的坑：Clay `drawText` 引用的 `Clay_String` 必须指向长生命周期内存，栈上 `label` 数组返回后失效导致渲染成 `pCC`，改用 `AppStateA.label`。`CLAY_TEXT` 宏不接受带逗号的复合字面量，需用变量。
   - 未覆盖：文本输入（IME/键盘）尚未接入焦点窗口，属后续增强。
-- [ ] **阶段 5 多客户端与指针**：复用彩色指针 + guest 焦点仲裁。验收：双客户端互见，焦点唯一。
+- [x] **阶段 5 多客户端与指针**：复用已有 `loadImg`/`drawImg` 箭头资源 + guest 焦点仲裁，端到端验证通过。
+  - `vm_wm.c/.h`：新增 `VmCursor` 表（id/color/x/y/visible/lastSeen）；`VmWm_HandleInput` 解析 `clientId`/`color`，更新指针表，只有焦点客户端能改变窗口焦点/拖动/hover，其他客户端仅更新指针；指针 3 秒未上报自动隐藏。
+  - `VmWm_BuildFrame` 在帧尾追加 `loadImg('cursor', SVG base64)`（幂等）+ 每个可见客户端的 `drawImg('cursor', x, y, 24, 24, tint)`，复用阶段 0 已实现的前端染色逻辑，不引入新协议类型。
+  - 测试页生成持久 `clientId`（sessionStorage）+ 按 hash 选颜色，所有输入带身份。
+  - 验证：服务端帧含两个客户端的 `drawImg`（红 `#F44336`、青 `#00BCD4`）；浏览器中红色箭头 171 像素、青色 161 像素，互见成功；非焦点客户端 mousemove 的 `changed=0`，窗口焦点保持，指针仍更新。截图 `wm_cursors.png`。
+  - 坑：指针坐标必须用 canvas 内部坐标；合成帧要持续 POST 否则 3 秒超时后指针消失，导致检查为 0。
 - [ ] **阶段 6 性能优化**：retained diff、脏矩形、frameId 绑定、限流。验收：60fps 下延迟可接受。
 
 预计耗时：阶段 0–2 约 1–2 天；阶段 3–5 约 2–4 天；阶段 6 视实测而定。
@@ -135,7 +140,7 @@ created → mapped（可见）→ focused / unfocused
 - 设计起点：本文 + `docs/arch-跨端图绘指令流.md`（现有指令流架构）+ `docs/task-multi-client-cursor.md`（多客户端指针）。
 - Clay 源码：`H:\github_repos\clay\clay.h`、`README.md`、`renderers/terminal/clay_renderer_terminal_ansi.c`（最简非像素 renderer 参考）。
 - VM 环境：`H:\github_repos\RVVM`，token 在 `release.test.windows.x86_64\runtime\supervisor\token`。
-- 下一动作：阶段 5，多客户端与指针——复用彩色指针，多客户端共享 guest 合成画面，焦点仲裁只在 guest。
+- 下一动作：阶段 6，性能优化——retained diff、脏矩形、frameId 绑定、限流，目标 60fps 延迟可接受。
 
 ## 已知限制
 

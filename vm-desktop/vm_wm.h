@@ -1,6 +1,8 @@
 #ifndef VM_WM_H
 #define VM_WM_H
 
+#include <time.h>
+
 #include "clay.h"
 #include "clay_frame_adapter.h"
 
@@ -10,6 +12,7 @@ extern "C" {
 
 #define VM_WM_MAX_WINDOWS 8
 #define VM_WM_TITLE_HEIGHT 28
+#define VM_WM_MAX_CURSORS 16
 
 typedef Clay_RenderCommandArray (*VmWindowLayout)(void *userData);
 
@@ -30,6 +33,14 @@ typedef struct {
 } VmWindow;
 
 typedef struct {
+    char id[64];
+    char color[32];
+    int x, y;
+    int visible;
+    time_t lastSeen;   /* updated on every input from this client */
+} VmCursor;
+
+typedef struct {
     int width, height;
     VmWindow windows[VM_WM_MAX_WINDOWS];
     int count;
@@ -38,6 +49,10 @@ typedef struct {
     /* drag state */
     int dragId;
     int dragOffX, dragOffY;
+    /* multi-client cursors (guest-side only, drawn as primitives) */
+    VmCursor cursors[VM_WM_MAX_CURSORS];
+    int cursorCount;
+    char focusClientId[64];
 } VmWm;
 
 VmWm *VmWm_Create(int width, int height);

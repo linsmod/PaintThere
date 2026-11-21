@@ -4,6 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* White arrow template (same as the WebSocket channel). Frontend tints it via drawImg. */
+static const char VM_CURSOR_SVG_B64[] =
+    "PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScyNCcgaGVpZ2h0PScyNCcgdmlld0JveD0nMCAwIDI0IDI0Jz48cGF0aCBkPSdNNCwyIEw0LDIwIEw5LDE1IEwxMi41LDIyIEwxNS41LDIwLjUgTDEyLDEzLjUgTDIwLDEzIFonIGZpbGw9JyNmZmYnIHN0cm9rZT0nIzAwMCcgc3Ryb2tlLXdpZHRoPScxJy8+PC9zdmc+";
+
 VmWm *VmWm_Create(int width, int height) {
     VmWm *wm = (VmWm *)calloc(1, sizeof(VmWm));
     if (!wm) return NULL;
@@ -12,6 +16,7 @@ VmWm *VmWm_Create(int width, int height) {
     wm->nextZ = 1;
     wm->focusId = -1;
     wm->dragId = -1;
+    wm->focusClientId[0] = '\0';
     return wm;
 }
 
@@ -145,21 +150,58 @@ static void sync_pointer_state(VmWm *wm) {
     }
 }
 
+static void update_cursor(VmWm *wm, const char *id, const char *color,
+                          int x, int y, int visible) {
+    if (!wm || !id || !*id) return;
+    for (int i = 0; i < wm->cursorCount; i++) {
+        if (strcmp(wm->cursors[i].id, id) == 0) {
+            wm->cursors[i].x = x;
+            wm->cursors[i].y = y;
+            wm->cursors[i].visible = visible;
+            wm->cursors[i].lastSeen = time(NULL);
+            snprintf(wm->cursors[i].color, sizeof(wm->cursors[i].color), "%s", color);
+            return;
+        }
+    }
+    if (wm->cursorCount >= VM_WM_MAX_CURSORS) return;
+    VmCursor *c = &wm->cursors[wm->cursorCount++];
+    snprintf(c->id, sizeof(c->id), "%s", id);
+    snprintf(c->color, sizeof(c->color), "%s", color);
+    c->x = x; c->y = y; c->visible = visible;
+    c->lastSeen = time(NULL);
+}
+
 int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     if (!wm || !jsonBody) return 0;
     char kind[32] = {0};
+    char clientId[64] = {0};
+    char color[32] = {0};
     extract_str(jsonBody, "kind", kind, sizeof(kind));
+    extract_str(jsonBody, "clientId", clientId, sizeof(clientId));
+    extract_str(jsonBody, "color", color, sizeof(color));
     int x = extract_int(jsonBody, "x", -1);
     int y = extract_int(jsonBody, "y", -1);
     int button = extract_int(jsonBody, "button", 0);
     int changed = 0;
 
-    VmWindow *hit = VmWm_HitTest(wm, x, y);
     int isDown = (strcmp(kind, "mousedown") == 0);
     int isUp = (strcmp(kind, "mouseup") == 0);
     int isMove = (strcmp(kind, "mousemove") == 0);
 
-    if ((isDown || strcmp(kind, "click") == 0) && hit) {
+    /* Track every client's pointer; all are drawn into the shared frame. */
+    if (*clientId) {
+        update_cursor(wm, clientId, *color ? color : "#FFFFFF", x, y, 1);
+        /* Focus arbitration: a mousedown claims focus for that client. */
+        if (isDown) snprintf(wm->focusClientId, sizeof(wm->focusClientId), "%s", clientId);
+    }
+
+    VmWindow *hit = VmWm_HitTest(wm, x, y);
+    /* Focus arbitration: window state changes only from the owning client.
+       A mousedown from any client claims ownership first. */
+    int ownsFocus = (*clientId && strcmp(wm->focusClientId, clientId) == 0);
+    if (isDown) ownsFocus = 1; /* this client just claimed focus above */
+
+    if (ownsFocus && (isDown || strcmp(kind, "click") == 0) && hit) {
         VmWm_Focus(wm, hit->id);
         changed = 1;
         if (y < hit->y + VM_WM_TITLE_HEIGHT && button == 0) {
@@ -169,19 +211,19 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
         }
     }
 
-    if (isMove && wm->dragId >= 0) {
+    if (ownsFocus && isMove && wm->dragId >= 0) {
         VmWm_Move(wm, wm->dragId, x - wm->dragOffX, y - wm->dragOffY);
         changed = 1;
     }
 
-    if (isUp && wm->dragId >= 0) {
+    if (ownsFocus && isUp && wm->dragId >= 0) {
         wm->dragId = -1;
         changed = 1;
     }
 
     /* Update local pointer for the focused window (content offset). */
     VmWindow *focus = VmWm_FindWindow(wm, wm->focusId);
-    if (focus && (isMove || isDown || isUp || strcmp(kind, "click") == 0)) {
+    if (ownsFocus && focus && (isMove || isDown || isUp || strcmp(kind, "click") == 0)) {
         focus->pointerX = x - (focus->x + 2);
         focus->pointerY = y - (focus->y + VM_WM_TITLE_HEIGHT + 2);
         if (isDown) focus->pointerDown = 1;
@@ -210,6 +252,27 @@ static void append_border_cmd(ClayFrameBuffer *out, const char *id,
              "\"rect\":[%d,%d,%d,%d]}",
              id, x, y, w, h, color, x, y, w, h);
     ClayFrame_AppendRaw(out, buf);
+}
+
+static void append_cursor_commands(VmWm *wm, ClayFrameBuffer *out) {
+    if (wm->cursorCount <= 0) return;
+    char buf[512];
+    /* loadImg is idempotent on the frontend (cached by imgId). */
+    snprintf(buf, sizeof(buf),
+             "{\"id\":\"cursor_asset\",\"cmd\":\"loadImg\",\"args\":[\"cursor\",\"data:image/svg+xml;base64,%s\"],\"rect\":[0,0,0,0]}",
+             VM_CURSOR_SVG_B64);
+    ClayFrame_AppendRaw(out, buf);
+
+    time_t now = time(NULL);
+    for (int i = 0; i < wm->cursorCount; i++) {
+        VmCursor *c = &wm->cursors[i];
+        if (!c->visible || now - c->lastSeen > 3) continue;
+        snprintf(buf, sizeof(buf),
+                 "{\"id\":\"cursor_%s\",\"cmd\":\"drawImg\",\"args\":[\"cursor\",%d,%d,24,24,\"%s\",0],"
+                 "\"rect\":[%d,%d,24,24]}",
+                 c->id, c->x, c->y, c->color, c->x, c->y);
+        ClayFrame_AppendRaw(out, buf);
+    }
 }
 
 static void append_title_cmd(ClayFrameBuffer *out, const char *id,
@@ -265,5 +328,6 @@ void VmWm_BuildFrame(VmWm *wm, ClayFrameBuffer *out, uint32_t frameId,
             }
         }
     }
+    append_cursor_commands(wm, out);
     ClayFrame_End(out);
 }

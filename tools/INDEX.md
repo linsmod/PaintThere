@@ -1,6 +1,9 @@
 # tools 索引
 
-- `start_vm_desktop.py` — 零参数启动 VM 桌面：`python tools/start_vm_desktop.py`。自动定位 `assets/`、显式传 webRoot 绝对路径、停掉旧的 demo_wm 进程并打开浏览器。调试用环境变量：`VM_DESKTOP_PORT`、`VM_DESKTOP_NO_BROWSER=1`。
+- `start_vm_renderer.py` — 一键启动 C 版 VM 渲染器：`python tools/start_vm_renderer.py`。同时拉起 SSE 服务端与 `vm_renderer.exe`，进程级禁用代理（避免本地请求走系统代理），Ctrl+C 一起停止。调试用环境变量：`VM_DESKTOP_PORT`、`VM_RENDERER_FRAMES`（>0 时跑满帧数自动退出）。
+- `vm-desktop/renderer/` — C 宿主（canvas-cpp/ant 引擎），构建：CMake `-S vm-desktop/renderer -B vm-desktop/renderer/build -G "MinGW Makefiles" -DCANVAS_SOURCE=<canvas-cpp源码> -DANT_ROOT=<ant目录>` 后 `--build`。运行由 `start_vm_renderer.py` 负责。
+- `assets/vm_renderer.js` — C 渲染器页面：复用 `app.js` 原语 + wasm 字体 + `EventSource`，无兼容 shim。将 `app.js` 所需但 SDK 缺失的标准 API（`ctx.canvas`、context 缓存）在页面入口对齐。
+- `start_vm_desktop.py` — 零参数启动浏览器版 VM 桌面：`python tools/start_vm_desktop.py`。自动定位 `assets/`、显式传 webRoot 绝对路径、停掉旧的 demo_wm 进程并打开浏览器。调试用环境变量：`VM_DESKTOP_PORT`、`VM_DESKTOP_NO_BROWSER=1`。
 - `assets/` — 共享前端资源（`app.js`、`systemColors.js`、`font_wasm.js`、`stb_font_wasm.mjs/.wasm`、`font.ttf`），供 demo_wm/demo_server 与 ConsoleApp2/TestHarness 共用，消除多份副本。
 - `vm-desktop/clay_frame_adapter.c/.h` — Clay `RenderCommandArray` 到 VM 绘制帧 JSON 的 adapter。
 - `vm-desktop/demo_layout.c/.h` — 共享单窗口 Clay 布局，供 demo_frame/demo_server 复用。

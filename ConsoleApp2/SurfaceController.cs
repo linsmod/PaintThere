@@ -89,6 +89,8 @@ public class SurfaceController
     }
 
     public static Dictionary<Form, Guid> FormIds = new Dictionary<Form, Guid>();
+    private static readonly Dictionary<Form, CursorOverlayPanel> CursorOverlays = new();
+
     public Guid GetFormID(Form form)
     {
         lock (FormIds)
@@ -96,7 +98,7 @@ public class SurfaceController
             if (!FormIds.ContainsKey(form))
             {
                 FormIds.Add(form, Guid.NewGuid());
-                form.Paint += Form_Paint;
+                EnsureCursorOverlay(form);
                 //form.VisibleChanged += async (s, e) => await UpdateRemote();
                 //form.Activated += async (s, e) => await UpdateRemote();
             }
@@ -104,10 +106,32 @@ public class SurfaceController
         }
     }
 
-    private void Form_Paint(object sender, PaintEventArgs e)
+    // 为每个窗体附加一个透明、鼠标穿透的指针覆盖层，置于最上层
+    private void EnsureCursorOverlay(Form form)
     {
-        if (this._showRemoteCursor)
-            e.Graphics.DrawImage(_cursorBitmap, new Point(_lastRemotePoint.X - _cursorHotSpot.X, _lastRemotePoint.Y - _cursorHotSpot.Y));
+        if (CursorOverlays.ContainsKey(form))
+            return;
+        // GetFormID 可能在后台线程（Timer）调用，控件必须在 UI 线程创建和添加
+        if (form.InvokeRequired)
+        {
+            form.Invoke(new Action(() => EnsureCursorOverlay(form)));
+            return;
+        }
+        var overlay = new CursorOverlayPanel();
+        overlay.Paint += CursorOverlay_Paint;
+        form.Controls.Add(overlay);
+        overlay.BringToFront();
+        CursorOverlays[form] = overlay;
+    }
+
+    private void CursorOverlay_Paint(object sender, PaintEventArgs e)
+    {
+        if (!this._showRemoteCursor)
+            return;
+        // 绘制系统箭头指针；箭头尖端（热点）位于左上角，直接对齐远程坐标
+        var size = Cursors.Default.Size;
+        var rect = new Rectangle(_lastRemotePoint.X, _lastRemotePoint.Y, size.Width, size.Height);
+        Cursors.Default.Draw(e.Graphics, rect);
     }
 
     private void InitializeEventHandlers()
@@ -284,11 +308,39 @@ public class SurfaceController
     private Point _cursorHotSpot;
     private Point _lastRemotePoint = Point.Empty; // 上一次远程鼠标位置
 
+    // 命中测试：跳过指针覆盖层等透明覆盖控件，返回最深的真实控件
+    private Control HitTest(Point clientPoint)
+    {
+        if (form == null)
+            return null;
+        return HitTestRecursive(form, clientPoint);
+    }
+
+    private Control HitTestRecursive(Control parent, Point pointInParent)
+    {
+        // 从最上层（Controls 索引从大到小）向下遍历
+        for (int i = parent.Controls.Count - 1; i >= 0; i--)
+        {
+            var child = parent.Controls[i];
+            if (child is OverlayPanel || child is CursorOverlayPanel)
+                continue;
+            if (!child.Visible || !child.Enabled)
+                continue;
+            // Bounds 相对父容器，pointInParent 也是父容器坐标，两者可直接比较
+            if (!child.Bounds.Contains(pointInParent))
+                continue;
+            var local = new Point(pointInParent.X - child.Left, pointInParent.Y - child.Top);
+            var deeper = HitTestRecursive(child, local);
+            return deeper ?? child;
+        }
+        return null;
+    }
+
     // 以下方法由外部调用，触发对应的 WinForm 事件
     protected virtual void OnClick(int x, int y, int button)
     {
         var e = CreateScaledPoint(x, y);
-        Control target = form.GetChildAtPoint(e, skipValue: GetChildAtPointSkip.Invisible | GetChildAtPointSkip.Transparent);
+        Control target = HitTest(e);
         if (target == null)
         {
             Click?.Invoke(form, CreateMouseEventArgs(null, x, y, button));
@@ -355,10 +407,21 @@ public class SurfaceController
         this.KeyUp = type.GetMethod("OnKeyUp", BindingFlags.NonPublic | BindingFlags.Instance);
     }
 
+    private void InvalidateCursorOverlay()
+    {
+        if (form == null || !CursorOverlays.TryGetValue(form, out var overlay))
+            return;
+        if (overlay.InvokeRequired)
+            overlay.BeginInvoke(new Action(overlay.Invalidate));
+        else
+            overlay.Invalidate();
+    }
+
     protected virtual void OnMouseMove(int x, int y)
     {
         // 更新远程鼠标位置
         _lastRemotePoint = CreateScaledPoint(x, y);
+        InvalidateCursorOverlay();
         // 触发原生事件
         MouseMove?.Invoke(form, CreateMouseEventArgs(null, x, y, 0));
     }
@@ -366,11 +429,13 @@ public class SurfaceController
     public void ShowRemoteCursor()
     {
         this._showRemoteCursor = true;
+        InvalidateCursorOverlay();
     }
 
     public void HideRemoteCursor()
     {
         _showRemoteCursor = false;
+        InvalidateCursorOverlay();
     }
     protected virtual void OnMouseDown(int x, int y, int button)
     {
@@ -407,8 +472,7 @@ public class SurfaceController
 
     private Control ControlAt(int x, int y)
     {
-        var p = CreateScaledPoint(x, y);
-        return form?.GetChildAtPoint(p, skipValue: GetChildAtPointSkip.Invisible | GetChildAtPointSkip.Transparent);
+        return HitTest(CreateScaledPoint(x, y));
     }
 
     protected virtual void OnContextMenu(int x, int y, int button)

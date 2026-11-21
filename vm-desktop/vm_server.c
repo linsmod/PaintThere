@@ -661,7 +661,9 @@ int VmServer_Run(VmServer *s) {
         FD_SET(s->listenFd, &readfds);
         vm_socket maxFd = s->listenFd;
         for (int i = 0; i < VM_MAX_CLIENTS; i++) {
-            if (s->clients[i].fd == VM_INVALID || s->clients[i].isSse) continue;
+            /* SSE 客户端也必须监听：它不发数据，可读只意味着对端已断开，
+               不检测就会漏槽位，最终新页面连不上、curl 一直空等。 */
+            if (s->clients[i].fd == VM_INVALID) continue;
             FD_SET(s->clients[i].fd, &readfds);
             if (s->clients[i].fd > maxFd) maxFd = s->clients[i].fd;
         }
@@ -676,15 +678,23 @@ int VmServer_Run(VmServer *s) {
 
         for (int i = 0; i < VM_MAX_CLIENTS; i++) {
             VmClient *c = &s->clients[i];
-            if (c->fd == VM_INVALID || c->isSse || !FD_ISSET(c->fd, &readfds)) continue;
+            if (c->fd == VM_INVALID || !FD_ISSET(c->fd, &readfds)) continue;
 #ifdef _WIN32
             int n = recv(c->fd, c->recvBuf + c->recvLen, (int)(VM_RECV_BUFFER - c->recvLen), 0);
 #else
             ssize_t n = recv(c->fd, c->recvBuf + c->recvLen, VM_RECV_BUFFER - c->recvLen, 0);
 #endif
             if (n <= 0) {
+                /* 包含 SSE 客户端：对端关闭或出错时就地回收槽位。 */
                 VM_CLOSE(c->fd);
                 c->fd = VM_INVALID;
+                c->isSse = 0;
+                c->isWs = 0;
+                continue;
+            }
+            if (c->isSse) {
+                /* SSE 只下行，读到什么都丢弃，只用于发现断开。 */
+                c->recvLen = 0;
                 continue;
             }
             c->recvLen += (size_t)n;

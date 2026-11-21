@@ -36,7 +36,7 @@ static void InputHandler(const char *body, size_t length, void *userData) {
 
 int main(int argc, char **argv) {
     unsigned short port = argc > 1 ? (unsigned short)atoi(argv[1]) : 9000;
-    const char *webRoot = argc > 2 ? argv[2] : "../ConsoleApp2";
+    const char *webRoot = argc > 2 ? argv[2] : "../assets";
 
     DemoLayout_Init();
     g_frame = ClayFrameBuffer_Create();

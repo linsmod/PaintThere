@@ -43,12 +43,16 @@ gcc -std=c11 -I. test_display_diff.c vm_display.c -o test_display_diff.exe
 
 # 编译 wasm 字体（先按上面设置 emsdk 环境变量）
 emcc -O2 -s EXPORTED_FUNCTIONS='["_loadFont","_measureText","_rasterizeText","_alloc","_freeMem"]' -s EXPORTED_RUNTIME_METHODS='["HEAPU8","HEAPU32"]' -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_ES6=1 -s EXPORT_NAME=StbFontWasm -s ENVIRONMENT=web,node -I"H:\github_repos\mystbfont_c" stb_font_wasm.c -o stb_font_wasm.mjs
+Copy-Item stb_font_wasm.mjs,stb_font_wasm.wasm ..\assets\
 Copy-Item stb_font_wasm.mjs,stb_font_wasm.wasm ..\ConsoleApp2\
 
-# 启动 WM demo（9000 端口；webRoot 指向前端源码目录）
-$p = Start-Process -FilePath ".\demo_wm.exe" -ArgumentList "9000","../ConsoleApp2" -PassThru -RedirectStandardOutput wm.log -RedirectStandardError wm.err
-# 若验证需要字体，先拷贝到 webRoot：
-Copy-Item "H:\github_repos\mystbfont_c\fonts\NotoSans-Regular.ttf" ..\ConsoleApp2\font.ttf
+# 一键启动（推荐）：零参数，自动定位 assets、停旧进程、开浏览器
+python tools/start_vm_desktop.py
+# 调试：环境变量改端口 / 不开浏览器
+# $env:VM_DESKTOP_PORT="9001"; $env:VM_DESKTOP_NO_BROWSER="1"; python tools/start_vm_desktop.py
+
+# 或手动启动（webRoot 默认 ../assets）
+$p = Start-Process -FilePath ".\demo_wm.exe" -ArgumentList "9000" -PassThru -RedirectStandardOutput wm.log -RedirectStandardError wm.err
 
 # 验证资源 + 首帧（自适应帧率下空闲无后续帧）
 curl -s --max-time 2 -N http://127.0.0.1:9000/events
@@ -65,7 +69,6 @@ agent-browser --session vm screenshot vm_check.png
 # 收尾（只停本任务启动的进程）
 Stop-Process -Id $p.Id
 agent-browser --session vm close
-Remove-Item ..\ConsoleApp2\font.ttf -ErrorAction SilentlyContinue
 ```
 
 ## 验证清单（按阶段）

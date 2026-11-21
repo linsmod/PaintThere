@@ -234,7 +234,7 @@ static void InputHandler(const char *body, size_t length, void *userData) {
 
 int main(int argc, char **argv) {
     unsigned short port = argc > 1 ? (unsigned short)atoi(argv[1]) : 9000;
-    const char *webRoot = argc > 2 ? argv[2] : "../ConsoleApp2";
+    const char *webRoot = argc > 2 ? argv[2] : "../assets";
 
     g_wm = VmWm_Create(800, 600);
     VmDisplay_Init(&g_frame);

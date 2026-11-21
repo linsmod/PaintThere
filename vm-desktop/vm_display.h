@@ -137,6 +137,8 @@ typedef struct {
     int removedCount;
     char order[VM_DISPLAY_MAX_COMMANDS][VM_DISPLAY_MAX_ID];
     int orderCount;
+    /* 绘制顺序（z 序）是否变化。变化时遮挡关系变了，前端必须整屏重绘。 */
+    int orderChanged;
 } VmDisplayDelta;
 
 void VmDisplay_Init(VmDisplayList *list);

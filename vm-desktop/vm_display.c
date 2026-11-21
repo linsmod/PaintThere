@@ -130,6 +130,21 @@ void VmDisplay_Diff(const VmDisplayList *prev, const VmDisplayList *current, VmD
         delta->orderCount++;
     }
 
+    /* 顺序变化会让遮挡关系变错，但每条命令的 rect/args 都没变；
+       这是服务端做出的决定，必须由服务端显式告诉前端整屏重绘。 */
+    if (prev) {
+        if (prev->count != current->count) {
+            delta->orderChanged = 1;
+        } else {
+            for (int i = 0; i < current->count; i++) {
+                if (strcmp(prev->commands[i].id, current->commands[i].id) != 0) {
+                    delta->orderChanged = 1;
+                    break;
+                }
+            }
+        }
+    }
+
     if (!prev) {
         for (int i = 0; i < current->count && delta->changedCount < VM_DISPLAY_MAX_COMMANDS; i++)
             delta->changed[delta->changedCount++] = current->commands[i];

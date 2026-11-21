@@ -229,8 +229,8 @@ char *VmSerialize_CommandArrayJson(const VmDisplayList *list) {
 char *VmSerialize_DeltaFrameJson(const VmDisplayDelta *delta, uint32_t frameId) {
     if (!delta) return NULL;
     StrBuf b = {0};
-    printf_(&b, "{\"type\":\"frame\",\"frameId\":%u,\"incremental\":true,\"commands\":[",
-            frameId);
+    printf_(&b, "{\"type\":\"frame\",\"frameId\":%u,\"incremental\":true,\"full\":%s,\"commands\":[",
+            frameId, delta->orderChanged ? "true" : "false");
     for (int i = 0; i < delta->changedCount; i++) {
         if (i) puts_(&b, ",");
         emit_command(&b, &delta->changed[i]);

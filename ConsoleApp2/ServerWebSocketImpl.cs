@@ -19,7 +19,13 @@ public class WebSocketServerImpl : IDisposable
     private readonly int _receiveBufferSize = 1024 * 4; // 4KB
     private readonly int _maxMessageSize = 1024 * 1024; // 1MB
     private readonly TimeSpan _keepAliveInterval = TimeSpan.FromSeconds(120);
+    private static readonly string[] CursorColors = { "#F44336", "#2196F3", "#4CAF50", "#FF9800", "#9C27B0", "#00BCD4", "#FF5722", "#3F51B5" };
+    private const string CursorSvg = "<svg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'><path d='M4,2 L4,20 L9,15 L12.5,22 L15.5,20.5 L12,13.5 L20,13 Z' fill='#fff' stroke='#000' stroke-width='1'/></svg>";
+    private static readonly TimeSpan CursorTimeout = TimeSpan.FromSeconds(3);
     private bool _disposed;
+    private int _nextClientIndex;
+    private string _lastCursorPayload = string.Empty;
+    private readonly object _cursorLock = new object();
     private string serverHello = null;
     private string lastMessage = null;
 
@@ -65,6 +71,9 @@ public class WebSocketServerImpl : IDisposable
             webSocket = wsContext.WebSocket;
 
             var clientContext = new ClientContext(_receiveBufferSize);
+            var index = Interlocked.Increment(ref _nextClientIndex) - 1;
+            clientContext.Id = Guid.NewGuid().ToString("N");
+            clientContext.Color = CursorColors[index % CursorColors.Length];
             if (!_clients.TryAdd(webSocket, clientContext))
             {
                 await webSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "Unable to register client", CancellationToken.None);
@@ -101,6 +110,14 @@ public class WebSocketServerImpl : IDisposable
             if (webSocket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
             {
                 await SendTextAsync(webSocket, serverHello, cancellationToken);
+                var welcome = new
+                {
+                    type = "welcome",
+                    clientId = context.Id,
+                    color = context.Color,
+                    cursorImage = "data:image/svg+xml;base64," + Convert.ToBase64String(Encoding.UTF8.GetBytes(CursorSvg))
+                };
+                await SendTextAsync(webSocket, JsonConvert.SerializeObject(welcome), cancellationToken);
             }
             while (webSocket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
             {
@@ -178,12 +195,20 @@ public class WebSocketServerImpl : IDisposable
     {
         try
         {
+            if (message.IndexOf("\"type\":\"cursor\"", StringComparison.Ordinal) >= 0)
+            {
+                var cursor = JsonConvert.DeserializeObject<CursorMessage>(message);
+                if (cursor != null && _clients.TryGetValue(webSocket, out var context))
+                {
+                    context.CursorX = cursor.x;
+                    context.CursorY = cursor.y;
+                    context.CursorVisible = cursor.visible;
+                    context.LastCursorTime = DateTime.UtcNow;
+                }
+                return Task.CompletedTask;
+            }
             OnMessageReceived(webSocket, message);
             return Task.CompletedTask;
-            //return Task.Run(() =>
-            //{
-            //    OnMessageReceived(webSocket, message);
-            //});
         }
         catch (Exception ex)
         {
@@ -196,17 +221,88 @@ public class WebSocketServerImpl : IDisposable
         }
     }
 
+    private sealed class CursorMessage
+    {
+        public double x { get; set; }
+        public double y { get; set; }
+        public bool visible { get; set; }
+    }
+
+    public Task BroadcastCursorsAsync()
+    {
+        var now = DateTime.UtcNow;
+        var list = new List<object>();
+        foreach (var kv in _clients)
+        {
+            var c = kv.Value;
+            if (string.IsNullOrEmpty(c.Id)) continue;
+            list.Add(new
+            {
+                clientId = c.Id,
+                color = c.Color,
+                x = c.CursorX,
+                y = c.CursorY,
+                visible = c.CursorVisible && (now - c.LastCursorTime) < CursorTimeout
+            });
+        }
+        var payload = JsonConvert.SerializeObject(new { type = "cursors", list });
+        lock (_cursorLock)
+        {
+            if (payload == _lastCursorPayload) return Task.CompletedTask;
+            _lastCursorPayload = payload;
+        }
+        var segment = new ArraySegment<byte>(Encoding.UTF8.GetBytes(payload));
+        var tasks = new List<Task>();
+        foreach (var kv in _clients)
+        {
+            if (kv.Key.State != WebSocketState.Open) continue;
+            tasks.Add(SendCursorSnapshotAsync(kv.Key, kv.Value, segment));
+        }
+        return Task.WhenAll(tasks);
+    }
+
+    private async Task SendCursorSnapshotAsync(WebSocket ws, ClientContext context, ArraySegment<byte> segment)
+    {
+        await context.CursorSendLock.WaitAsync();
+        try
+        {
+            if (ws.State == WebSocketState.Open)
+                await ws.SendAsync(segment, WebSocketMessageType.Text, true, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Cursor broadcast failed: {ex.Message}");
+        }
+        finally
+        {
+            context.CursorSendLock.Release();
+        }
+    }
+
     public async Task SendTextAsync(WebSocket webSocket, string text, CancellationToken cancellationToken)
     {
         if (webSocket.State != WebSocketState.Open)
             return;
 
-        var buffer = Encoding.UTF8.GetBytes(text);
-        await webSocket.SendAsync(
-            new ArraySegment<byte>(buffer),
-            WebSocketMessageType.Text,
-            true,
-            cancellationToken);
+        _clients.TryGetValue(webSocket, out var context);
+        if (context != null)
+            await context.CursorSendLock.WaitAsync();
+        try
+        {
+            if (webSocket.State != WebSocketState.Open)
+                return;
+            var buffer = Encoding.UTF8.GetBytes(text);
+            await webSocket.SendAsync(
+                new ArraySegment<byte>(buffer),
+                WebSocketMessageType.Text,
+                true,
+                cancellationToken);
+        }
+        finally
+        {
+            if (context != null)
+                context.CursorSendLock.Release();
+        }
     }
     public async Task BroadcastAsync(List<PaintCommand> commands, Guid formId, CancellationToken cancellationToken)
     {
@@ -322,6 +418,14 @@ public class WebSocketServerImpl : IDisposable
         public CancellationTokenSource LastSendCts = new CancellationTokenSource();
 
         public Task LastTask = Task.CompletedTask;
+
+        public string Id { get; set; }
+        public string Color { get; set; }
+        public double CursorX { get; set; }
+        public double CursorY { get; set; }
+        public bool CursorVisible { get; set; }
+        public DateTime LastCursorTime { get; set; }
+        public readonly SemaphoreSlim CursorSendLock = new SemaphoreSlim(1, 1);
 
         public Serialized LastSent = new Serialized(Guid.Empty, ArraySegment<byte>.Empty);
         public ClientContext(int initialBufferSize)

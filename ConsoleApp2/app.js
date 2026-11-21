@@ -37,6 +37,59 @@ function initCanvas(canvas, color, designWidth, designHeight) {
     return ctx;
 }
 
+// 资源缓存：imgId -> { image, ready, failed }
+const imageCache = new Map();
+// 染色缓存：`imgId|tint` -> HTMLCanvasElement
+const tintedCache = new Map();
+let drawImgCtx = null;
+
+function setDrawImgTarget(target) {
+    drawImgCtx = target;
+}
+
+function loadImg(imgId, dataUrl) {
+    if (imageCache.has(imgId)) return;
+    const entry = { image: null, ready: false, failed: false };
+    imageCache.set(imgId, entry);
+    const img = new Image();
+    img.onload = () => {
+        entry.image = img;
+        entry.ready = true;
+        tintedCache.clear();
+    };
+    img.onerror = () => { entry.failed = true; };
+    img.src = dataUrl;
+}
+
+function getTintedImage(imgId, tint) {
+    const key = imgId + '|' + (tint || '');
+    if (tintedCache.has(key)) return tintedCache.get(key);
+    const entry = imageCache.get(imgId);
+    if (!entry || !entry.ready || !entry.image) return null;
+    const src = entry.image;
+    const off = document.createElement('canvas');
+    off.width = src.naturalWidth || src.width;
+    off.height = src.naturalHeight || src.height;
+    const c = off.getContext('2d');
+    c.drawImage(src, 0, 0);
+    if (tint) {
+        c.globalCompositeOperation = 'source-in';
+        c.fillStyle = tint;
+        c.fillRect(0, 0, off.width, off.height);
+        c.globalCompositeOperation = 'source-over';
+    }
+    tintedCache.set(key, off);
+    return off;
+}
+
+function drawImg(imgId, x, y, w, h, tint) {
+    const target = drawImgCtx || ctx;
+    if (!target) return;
+    const src = getTintedImage(imgId, tint);
+    if (!src) return; // 资源未就绪时静默跳过，不打断既有渲染
+    target.drawImage(src, x, y, w || src.width, h || src.height);
+}
+
 let bounds = {
     x: 0,
     y: 0,
@@ -410,7 +463,9 @@ const commandHandlers = {
     drawCheckBox,
     drawLinkLabel,
     drawEnhancedTextBox,
-    drawControl
+    drawControl,
+    loadImg,
+    drawImg
 };
 
 // ES模块导出
@@ -424,6 +479,9 @@ export {
     drawLinkLabel,
     drawEnhancedTextBox,
     drawControl,
+    loadImg,
+    drawImg,
+    setDrawImgTarget,
     commandHandlers
 };
 

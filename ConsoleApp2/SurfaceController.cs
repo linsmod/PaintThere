@@ -50,6 +50,8 @@ public class SurfaceController
             return;
         try
         {
+            if (_webSocketServer.IsRunning)
+                await _webSocketServer.BroadcastCursorsAsync();
             await UpdateRemote();
         }
         finally

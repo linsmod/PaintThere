@@ -25,8 +25,8 @@
 
 前端静态文件（`ConsoleApp2` 与 `TestHarness` 输出目录各一份）：
 
-- `index.html`：只有一个 `<canvas id="formCanvas">`，加载 `main.js`。
-- `main.js`：WebSocket 客户端、渲染循环、事件采集与回传、结构化指令执行、脏矩形增量重绘。
+- `index.html`：包含 `<canvas id="formCanvas">` 与透明覆盖的 `<canvas id="cursorCanvas">`，加载 `main.js`。
+- `main.js`：WebSocket 客户端、渲染循环、事件采集与回传、结构化指令执行、脏矩形增量重绘；另处理 welcome/cursors 消息并驱动远端指针层。
 - `app.js`：Canvas 绘制函数库，导出 `commandHandlers` 映射。
 - `loadingSplash.js`：未连接时显示的加载动画。
 - `connection.js`：断线覆盖层绘制（当前渲染循环主要用 loadingSplash）。
@@ -67,6 +67,14 @@
 4. `HandleMouseEvent` / `HandleWheelEvent` / `HandleKeyEvent` 把坐标经 `CreateScaledPoint`（乘 `dpiScale`，当前 1.5）换算后，触发对应 WinForms 事件：
    - 点击/悬停：用 `HitTestRecursive` 跳过覆盖层找到最深的真实控件，再反射调用控件的 `OnClick`/`OnMouseEnter`/`OnMouseLeave` 虚方法，由 WinForms 分发所有订阅处理器（含闭包 lambda）。LinkLabel 传入 `LinkLabelLinkClickedEventArgs`。
    - 鼠标按下/抬起/移动/滚轮、键盘：用反射得到的 `Form.OnMouseDown` 等虚方法在窗体上触发。
+
+### 多客户端指针通道（独立于控件指令流）
+
+1. 建连后服务端分配 `clientId` 与调色板颜色，下发 `{"type":"welcome","clientId":...,"color":...,"cursorImage":"data:image/svg+xml;base64,..."}`；前端调用 `loadImg('cursor', cursorImage)` 加载白色箭头模板，按 `tint` 在离屏 canvas 染色并缓存。
+2. 前端 `mousemove` 以 33ms 节流上报 `{"type":"cursor","clientId":...,"x":...,"y":...,"visible":true}`，独立于 `handleEvent`，不受 `isUpdating` 影响；坐标用 `canvas.getBoundingClientRect()` 换算到 canvas 内部坐标系。
+3. `WebSocketServerImpl.ProcessMessageAsync` 分流 `cursor` 消息，用连接自身的 `ClientContext.Id` 覆盖消息中的 `clientId`，更新 `CursorX/CursorY/CursorVisible/LastCursorTime`，不走 `DomEvent` 反序列化。
+4. `SurfaceController` 的 60fps 定时器调用 `BroadcastCursorsAsync`，向所有客户端广播 `{"type":"cursors","list":[...]}` 快照，内容无变化时跳过发送；超过 3 秒未上报的客户端置为 `visible:false`。
+5. 前端 `renderCursors` 在 rAF 中清空并重绘 `cursorCanvas`，跳过自己的 `clientId`；`drawImg` 在图片未就绪时静默返回，下一帧自动补画。指针层不参与 `applyFrame` 的签名去重与脏矩形 diff。
 
 ## 关键设计点
 

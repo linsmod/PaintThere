@@ -39,6 +39,11 @@ public class ServerWebSocket
         await impl.BroadcastAsync(commands, formId, CancellationToken.None);
     }
 
+    public Task BroadcastCursorsAsync()
+    {
+        return impl.BroadcastCursorsAsync();
+    }
+
     public void Stop()
     {
         impl.Dispose();

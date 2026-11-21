@@ -1,4 +1,4 @@
-﻿import { initCanvas, commandHandlers } from './app.js';
+﻿import { initCanvas, commandHandlers, loadImg, drawImg, setDrawImgTarget } from './app.js';
 
 // eval 兼容路径需要这些函数在当前作用域可见（旧协议字符串指令用）
 const { setBounds, drawBackground, drawLabel, drawButton, drawCheckBox,
@@ -10,6 +10,12 @@ let ctx = null;
 let pendingFrame = null;     // 只保留最新帧，旧帧直接丢弃
 let lastCommands = [];       // 上一帧指令，用于增量 diff
 let lastFrameSignature = '';
+let cursorCanvas = null;
+let cursorCtx = null;
+let myClientId = null;
+let myColor = null;
+let cursorStates = [];
+let lastCursorSend = 0;
 const DEBOUNCE_INTERVAL = 1000 / 30; // 事件回传防抖间隔（毫秒）
 let ws = null; // WebSocket 连接
 let animationFrameId = 0
@@ -53,9 +59,17 @@ function executeCommand(command, structured) {
 function initApp() {
     canvas = document.getElementById('formCanvas');
     ctx = initCanvas(canvas, '#FFFFFF', 1024, 768);
+    cursorCanvas = document.getElementById('cursorCanvas');
+    cursorCanvas.width = canvas.width;
+    cursorCanvas.height = canvas.height;
+    cursorCanvas.style.width = canvas.style.width;
+    cursorCanvas.style.height = canvas.style.height;
+    cursorCtx = cursorCanvas.getContext('2d');
+    setDrawImgTarget(cursorCtx);
     startWebSocket();
     startRendering();
     setupEventListeners();
+    setupCursorReporting();
 }
 import { loadingSplash } from "./loadingSplash.js"
 
@@ -262,14 +276,26 @@ function startWebSocket() {
 
     ws.onmessage = (event) => {
         try {
-            // 只保存最新帧，渲染交给 requestAnimationFrame 统一处理
-            pendingFrame = JSON.parse(event.data);
+            const data = JSON.parse(event.data);
+            if (Array.isArray(data)) {
+                // 只保存最新帧，渲染交给 requestAnimationFrame 统一处理
+                pendingFrame = data;
+            } else if (data && data.type === 'welcome') {
+                myClientId = data.clientId;
+                myColor = data.color;
+                loadImg('cursor', data.cursorImage);
+                console.log('welcome client', myClientId, myColor);
+            } else if (data && data.type === 'cursors') {
+                cursorStates = Array.isArray(data.list) ? data.list : [];
+            }
         } catch (error) {
             console.error('Failed to parse message:', error);
         }
     };
 
     ws.onclose = () => {
+        cursorStates = [];
+        myClientId = null;
         if (!isDisconnected) {
             lastDisconnectTime = Date.now();
             isDisconnected = true;
@@ -365,6 +391,36 @@ function applyFrame() {
     lastCommands = frame;
 }
 
+// 光标上报独立于 DOM 事件回传，不受 isUpdating 影响
+function setupCursorReporting() {
+    document.addEventListener('mousemove', (e) => {
+        if (!ws || ws.readyState !== WebSocket.OPEN || !myClientId) return;
+        const rect = canvas.getBoundingClientRect();
+        if (e.clientX < rect.left || e.clientX > rect.right ||
+            e.clientY < rect.top || e.clientY > rect.bottom) return;
+        const now = performance.now();
+        if (now - lastCursorSend < 33) return;
+        lastCursorSend = now;
+        const x = (e.clientX - rect.left) / rect.width * canvas.width;
+        const y = (e.clientY - rect.top) / rect.height * canvas.height;
+        ws.send(JSON.stringify({ type: 'cursor', clientId: myClientId, x, y, visible: true }));
+    });
+    canvas.addEventListener('mouseleave', () => {
+        if (!ws || ws.readyState !== WebSocket.OPEN || !myClientId) return;
+        ws.send(JSON.stringify({ type: 'cursor', clientId: myClientId, visible: false }));
+    });
+}
+
+// 指针层独立绘制：不进入 applyFrame 的签名与脏矩形流程
+function renderCursors() {
+    if (!cursorCtx) return;
+    cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
+    for (const c of cursorStates) {
+        if (!c.visible || c.clientId === myClientId) continue;
+        drawImg('cursor', c.x, c.y, 24, 24, c.color);
+    }
+}
+
 import { drawDisconnectOverlay } from "./connection.js"
 // 启动渲染循环：渲染完全跟随 requestAnimationFrame，不再做二次 30fps 节流
 function startRendering() {
@@ -384,6 +440,7 @@ function startRendering() {
         else {
             applyFrame();
         }
+        renderCursors();
         animationFrameId = requestAnimationFrame(renderLoop);
     }
     renderLoop();

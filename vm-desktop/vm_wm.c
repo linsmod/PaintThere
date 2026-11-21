@@ -129,6 +129,22 @@ static void extract_str(const char *json, const char *key, char *out, size_t cap
     out[n] = '\0';
 }
 
+/* Push pointer state into every window's Clay context.
+   Non-focused windows get an off-screen pointer so no stale hover remains. */
+static void sync_pointer_state(VmWm *wm) {
+    for (int i = 0; i < wm->count; i++) {
+        VmWindow *win = &wm->windows[i];
+        if (!win->clayCtx) continue;
+        Clay_SetCurrentContext(win->clayCtx);
+        if (win->focused) {
+            Clay_SetPointerState((Clay_Vector2){(float)win->pointerX, (float)win->pointerY},
+                                 win->pointerDown != 0);
+        } else {
+            Clay_SetPointerState((Clay_Vector2){-1000.0f, -1000.0f}, 0);
+        }
+    }
+}
+
 int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     if (!wm || !jsonBody) return 0;
     char kind[32] = {0};
@@ -136,27 +152,43 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     int x = extract_int(jsonBody, "x", -1);
     int y = extract_int(jsonBody, "y", -1);
     int button = extract_int(jsonBody, "button", 0);
+    int changed = 0;
 
-    if (strcmp(kind, "mousedown") == 0 || strcmp(kind, "click") == 0) {
-        VmWindow *win = VmWm_HitTest(wm, x, y);
-        if (!win) return 0;
-        VmWm_Focus(wm, win->id);
-        if (y < win->y + VM_WM_TITLE_HEIGHT && button == 0) {
-            wm->dragId = win->id;
-            wm->dragOffX = x - win->x;
-            wm->dragOffY = y - win->y;
+    VmWindow *hit = VmWm_HitTest(wm, x, y);
+    int isDown = (strcmp(kind, "mousedown") == 0);
+    int isUp = (strcmp(kind, "mouseup") == 0);
+    int isMove = (strcmp(kind, "mousemove") == 0);
+
+    if ((isDown || strcmp(kind, "click") == 0) && hit) {
+        VmWm_Focus(wm, hit->id);
+        changed = 1;
+        if (y < hit->y + VM_WM_TITLE_HEIGHT && button == 0) {
+            wm->dragId = hit->id;
+            wm->dragOffX = x - hit->x;
+            wm->dragOffY = y - hit->y;
         }
-        return 1;
     }
-    if (strcmp(kind, "mousemove") == 0 && wm->dragId >= 0) {
+
+    if (isMove && wm->dragId >= 0) {
         VmWm_Move(wm, wm->dragId, x - wm->dragOffX, y - wm->dragOffY);
-        return 1;
+        changed = 1;
     }
-    if (strcmp(kind, "mouseup") == 0) {
-        if (wm->dragId >= 0) { wm->dragId = -1; return 1; }
-        return 0;
+
+    if (isUp && wm->dragId >= 0) {
+        wm->dragId = -1;
+        changed = 1;
     }
-    return 0;
+
+    /* Update local pointer for the focused window (content offset). */
+    VmWindow *focus = VmWm_FindWindow(wm, wm->focusId);
+    if (focus && (isMove || isDown || isUp || strcmp(kind, "click") == 0)) {
+        focus->pointerX = x - (focus->x + 2);
+        focus->pointerY = y - (focus->y + VM_WM_TITLE_HEIGHT + 2);
+        if (isDown) focus->pointerDown = 1;
+        if (isUp) focus->pointerDown = 0;
+        sync_pointer_state(wm);
+    }
+    return changed;
 }
 
 static void append_rect_cmd(ClayFrameBuffer *out, const char *id,

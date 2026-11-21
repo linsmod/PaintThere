@@ -23,6 +23,10 @@ typedef struct {
     Clay_Context *clayCtx;
     VmWindowLayout layout;
     void *userData;
+    /* pointer state in window-local layout coordinates */
+    int pointerX, pointerY;
+    int pointerDown;
+    int clicks;             /* number of PRESSED_THIS_FRAME handled by app */
 } VmWindow;
 
 typedef struct {

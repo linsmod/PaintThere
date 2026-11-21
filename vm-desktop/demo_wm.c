@@ -42,21 +42,42 @@ static Clay_Context *CreateWindowContext(int w, int h) {
     return ctx;
 }
 
+typedef struct {
+    int clicks;
+    char label[64];   /* stable storage for Clay_String (must outlive layout) */
+} AppStateA;
+static AppStateA g_appA;
+
+static void OnButtonHover(Clay_ElementId id, Clay_PointerData pointerData, void *userData) {
+    (void)id;
+    AppStateA *state = (AppStateA *)userData;
+    if (pointerData.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) state->clicks++;
+}
+
 static Clay_RenderCommandArray LayoutA(void *userData) {
-    (void)userData;
+    AppStateA *state = (AppStateA *)userData;
+    snprintf(state->label, sizeof(state->label), "Clicked: %d", state->clicks);
+    Clay_String labelStr = {.chars = state->label, .length = (int)strlen(state->label)};
     Clay_BeginLayout();
     CLAY(CLAY_ID("A_root"), {
         .layout = {.sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0)},
                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
                    .padding = CLAY_PADDING_ALL(12), .childGap = 8},
     }) {
-        CLAY_TEXT(CLAY_STRING("Window A - click title to focus/drag"),
+        CLAY_TEXT(CLAY_STRING("Hover/click the button below"),
                   CLAY_TEXT_CONFIG({.fontId = 0, .fontSize = 14,
                                     .textColor = (Clay_Color){30,30,30,255}}));
         CLAY(CLAY_ID("A_btn"), {
-            .layout = {.sizing = {CLAY_SIZING_FIXED(120), CLAY_SIZING_FIXED(36)}},
-            .backgroundColor = (Clay_Color){52,140,220,255},
-        }) {}
+            .layout = {.sizing = {CLAY_SIZING_FIXED(140), CLAY_SIZING_FIXED(40)},
+                       .childAlignment = {CLAY_ALIGN_X_CENTER, CLAY_ALIGN_Y_CENTER}},
+            .backgroundColor = Clay_Hovered() ? (Clay_Color){240,140,40,255}
+                                              : (Clay_Color){52,140,220,255},
+        }) {
+            CLAY_TEXT(labelStr,
+                      CLAY_TEXT_CONFIG({.fontId = 0, .fontSize = 14,
+                                        .textColor = (Clay_Color){255,255,255,255}}));
+            Clay_OnHover(OnButtonHover, state);
+        }
     }
     return Clay_EndLayout(0.016f);
 }
@@ -102,7 +123,7 @@ int main(int argc, char **argv) {
     g_frame = ClayFrameBuffer_Create();
     if (!g_wm || !g_frame) return 1;
 
-    VmWindow *a = VmWm_AddWindow(g_wm, 1, "Window A", 60, 60, 360, 260, LayoutA, NULL);
+    VmWindow *a = VmWm_AddWindow(g_wm, 1, "Window A", 60, 60, 360, 260, LayoutA, &g_appA);
     VmWindow *b = VmWm_AddWindow(g_wm, 2, "Window B", 300, 200, 360, 260, LayoutB, NULL);
     a->clayCtx = CreateWindowContext(356, 230);
     b->clayCtx = CreateWindowContext(356, 230);

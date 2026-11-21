@@ -119,7 +119,12 @@ created → mapped（可见）→ focused / unfocused
   - `vm-desktop/demo_wm.c`：两个 Clay 窗口 + SSE 服务；测试页发送 mousedown/mousemove/mouseup 并换算逻辑坐标。
   - 验证：浏览器渲染双窗口（背景 307200、焦点标题蓝 11485、非焦点标题灰 6188）；点击 B 标题栏后服务端 `focus=2`，蓝/灰像素随焦点变化；拖动 B 后其 body 坐标从 (302,228) 变为 (371,294)，与鼠标位移一致。截图 `wm_two_windows.png`、`wm_after_drag.png`。
   - 修复过的坑：测试页需发送 `mousedown/mousemove/mouseup` 而非笼统 `mouse`；坐标需从 CSS 像素换算到 800×600 逻辑坐标。
-- [ ] **阶段 4 输入闭环**：浏览器原始输入 → guest → Clay pointer state。验收：hover/click 在浏览器画面生效，文本输入可达焦点窗口。
+- [x] **阶段 4 输入闭环**：浏览器原始输入 → guest → Clay pointer state，端到端验证通过。
+  - `vm_wm.c`：`VmWm_HandleInput` 命中/焦点后把全局坐标减去窗口内容偏移，调用 `Clay_SetPointerState` 推送到各窗口 `Clay_Context`；非焦点窗口指针设为屏幕外，避免残留 hover。
+  - `demo_wm.c`：窗口 A 按钮用 `Clay_Hovered()` 变色（蓝→橙），`Clay_OnHover` 回调在 `CLAY_POINTER_DATA_PRESSED_THIS_FRAME` 时递增点击计数，文字用 wasm 字体渲染。
+  - 验证：浏览器 mousemove 到按钮后橙色像素 5349（基线蓝色 5459、橙色 0）；重启后单次 mousedown/mouseup 使按钮文字从 `Clicked: 0` 变 `Clicked: 1`，精确加一。截图 `wm_click.png`。
+  - 修复过的坑：Clay `drawText` 引用的 `Clay_String` 必须指向长生命周期内存，栈上 `label` 数组返回后失效导致渲染成 `pCC`，改用 `AppStateA.label`。`CLAY_TEXT` 宏不接受带逗号的复合字面量，需用变量。
+  - 未覆盖：文本输入（IME/键盘）尚未接入焦点窗口，属后续增强。
 - [ ] **阶段 5 多客户端与指针**：复用彩色指针 + guest 焦点仲裁。验收：双客户端互见，焦点唯一。
 - [ ] **阶段 6 性能优化**：retained diff、脏矩形、frameId 绑定、限流。验收：60fps 下延迟可接受。
 
@@ -130,7 +135,7 @@ created → mapped（可见）→ focused / unfocused
 - 设计起点：本文 + `docs/arch-跨端图绘指令流.md`（现有指令流架构）+ `docs/task-multi-client-cursor.md`（多客户端指针）。
 - Clay 源码：`H:\github_repos\clay\clay.h`、`README.md`、`renderers/terminal/clay_renderer_terminal_ansi.c`（最简非像素 renderer 参考）。
 - VM 环境：`H:\github_repos\RVVM`，token 在 `release.test.windows.x86_64\runtime\supervisor\token`。
-- 下一动作：阶段 4，输入闭环——把浏览器 hover/click 原始事件喂给焦点窗口的 Clay pointer state，验证按钮 hover/click 在合成画面生效。
+- 下一动作：阶段 5，多客户端与指针——复用彩色指针，多客户端共享 guest 合成画面，焦点仲裁只在 guest。
 
 ## 已知限制
 

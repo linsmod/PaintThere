@@ -34,31 +34,31 @@ namespace RemoteForm.Paint
             });
 
             int index = 0;
-            foreach (Control control in EnumerateControls(form))
-            {
-                var command = Render(control, "c" + index++);
-                if (command != null)
-                    commands.Add(command);
-            }
+            RenderChildren(form.Controls, 0, 0, commands, ref index);
             return commands;
         }
 
-        private static IEnumerable<Control> EnumerateControls(Control parent)
+        private static void RenderChildren(Control.ControlCollection controls, int offsetX, int offsetY,
+            List<PaintCommand> commands, ref int index)
         {
-            foreach (Control control in parent.Controls)
+            foreach (Control control in controls)
             {
                 if (control is OverlayPanel || control.IsDisposed || control.Disposing)
                     continue;
-                yield return control;
-                foreach (var child in EnumerateControls(control))
-                    yield return child;
+
+                var command = Render(control, "c" + index++, offsetX, offsetY);
+                if (command != null)
+                    commands.Add(command);
+
+                // 子控件的 Left/Top 相对父容器，累加父容器偏移得到窗体绝对坐标
+                RenderChildren(control.Controls, offsetX + control.Left, offsetY + control.Top, commands, ref index);
             }
         }
 
-        private static PaintCommand Render(Control control, string id)
+        private static PaintCommand Render(Control control, string id, int offsetX, int offsetY)
         {
-            int x = control.Left;
-            int y = control.Top;
+            int x = offsetX + control.Left;
+            int y = offsetY + control.Top;
             int w = control.Width;
             int h = control.Height;
             if (w <= 0 || h <= 0)

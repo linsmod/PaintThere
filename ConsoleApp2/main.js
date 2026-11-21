@@ -10,6 +10,7 @@ let ctx = null;
 let pendingFrame = null;     // 只保留最新帧，旧帧直接丢弃
 let lastCommands = [];       // 上一帧指令，用于增量 diff
 let lastFrameSignature = '';
+let lastUnkeyedArgs = { setBounds: null, drawBackground: null }; // 无 id 全屏指令的上次参数
 let currentFrameId = 0;      // 最新收到的 frameId，仅作标记，不阻塞输入
 let lastRenderedFrame = null; // 当前正在渲染的帧，字体就绪时用于重放
 let cursorCanvas = null;
@@ -31,12 +32,10 @@ let isUpdating = false;
 function beginUpdate(id) {
     winFormId = id;
     isUpdating = true;
-    console.log('begin update.')
 }
 function endUpdate(id) {
     winFormId = id;
     isUpdating = false;
-    console.log('end update.')
 }
 
 // 结构化指令直接调用函数；字符串指令保留 eval 以兼容旧服务端
@@ -350,9 +349,6 @@ function unionRects(rects) {
 }
 
 function applyFrame() {
-    // 每帧清理上一帧可能未配对的 clip/overlay，防止状态泄漏到后续帧
-    drainPrimitiveState();
-
     const frame = pendingFrame;
     if (!frame) return;
     pendingFrame = null;
@@ -364,6 +360,10 @@ function applyFrame() {
         : frame.join('\n');
     if (signature === lastFrameSignature) return; // 双保险：服务端已做值去重
     lastFrameSignature = signature;
+
+    // 只在真正重绘前清理上一帧可能未配对的 clip/overlay，防止状态泄漏到后续帧。
+    // 没有新帧时不做任何事，静止画面下不再每帧空转。
+    drainPrimitiveState();
 
     if (!structured) {
         // 旧协议：全量清空 + eval
@@ -387,7 +387,11 @@ function applyFrame() {
                 if (old && old.rect) dirty.push(old.rect); // 文本变短时旧区域也要擦除
             }
         } else if (c.cmd === 'setBounds' || c.cmd === 'drawBackground') {
-            dirty.push([0, 0, canvas.width, canvas.height]);
+            // 无 id 的全屏指令：参数没变就不算脏，否则只要有新帧就判整屏重绘，增量 diff 失效
+            if (!argsEqual(lastUnkeyedArgs[c.cmd], c.args)) {
+                lastUnkeyedArgs[c.cmd] = c.args;
+                dirty.push([0, 0, canvas.width, canvas.height]);
+            }
         }
         // #beginUpdate / #endUpdate 不影响画面
     }
@@ -428,9 +432,18 @@ function setupCursorReporting() {
     });
 }
 
-// 指针层独立绘制：不进入 applyFrame 的签名与脏矩形流程
+// 指针层独立绘制：不进入 applyFrame 的签名与脏矩形流程。
+// 没有可见远端指针时只在「从有到无」那一帧清一次全屏，之后跳过，
+// 避免静止画面下每帧 clearRect 整张覆盖层。
+let lastCursorRenderEmpty = true;
 function renderCursors() {
     if (!cursorCtx) return;
+    let hasVisible = false;
+    for (const c of cursorStates) {
+        if (c.visible && c.clientId !== myClientId) { hasVisible = true; break; }
+    }
+    if (!hasVisible && lastCursorRenderEmpty) return;
+    lastCursorRenderEmpty = !hasVisible;
     cursorCtx.clearRect(0, 0, cursorCanvas.width, cursorCanvas.height);
     for (const c of cursorStates) {
         if (!c.visible || c.clientId === myClientId) continue;

@@ -255,8 +255,12 @@ function drawBorder(x, y, w, h, color, widths, cornerRadius = 0) {
     applyOverlay(x, y, w, h);
 }
 
+// 栅格化失败的 key：避免逐帧重试并逐帧刷错误日志，字体重新加载后放开
+const rasterFailed = new Set();
+
 function loadFont(fontId, ttfBase64) {
     wasmLoadFont(fontId, ttfBase64).then(() => {
+        rasterFailed.clear();
         if (textNeedsReplay) textNeedsReplay();
     }).catch((e) => console.error('loadFont failed:', e));
 }
@@ -265,9 +269,14 @@ function drawText(x, y, w, h, text, fontId, fontSize, color, letterSpacing = 0, 
     const s = String(text);
     const raster = getRaster(fontId, fontSize, s);
     if (!raster) {
+        const key = `${fontId}|${fontSize}|${s}`;
+        if (rasterFailed.has(key)) return;
         rasterizeText(fontId, fontSize, s).then(() => {
             if (textNeedsReplay) textNeedsReplay();
-        }).catch((e) => console.error('rasterizeText failed:', e));
+        }).catch((e) => {
+            rasterFailed.add(key);
+            console.error('rasterizeText failed:', e);
+        });
         return;
     }
     drawRaster(ctx, raster, x, y, resolveColor(color));
@@ -703,6 +712,12 @@ function applyFrameDiff(frame, targetCanvas) {
     for (const c of state.commands) if (c.id) oldById.set(c.id, c);
     const newIds = new Set();
     const dirty = [];
+    // z 序变化不会体现为任何命令的 rect 或 args 变化，却会改变遮挡关系：
+    // 只重绘变化矩形会把下层内容留在旧层，表现为「另一个窗口从下面露出来」。整屏重绘兜底。
+    if (state.commands.length &&
+        state.commands.map(c => c.id || '').join(',') !== frame.map(c => c.id || '').join(',')) {
+        dirty.push([0, 0, canvas.width, canvas.height]);
+    }
     for (const c of frame) {
         if (c.id) {
             newIds.add(c.id);

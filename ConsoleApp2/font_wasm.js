@@ -33,12 +33,23 @@ async function loadFont(fontId, ttfBase64) {
     return true;
 }
 
+// key -> Promise：同一 key 的并发栅格化只做一次，避免逐帧重复发起
+const inflightRaster = new Map();
+
 async function rasterizeText(fontId, fontSize, text) {
-    const m = await ensureModule();
     const key = `${fontId}|${fontSize}|${text}`;
     const cached = rasterCache.get(key);
     if (cached) return cached;
+    const pending = inflightRaster.get(key);
+    if (pending) return pending;
+    const task = doRasterize(key, fontId, fontSize, text)
+        .finally(() => { inflightRaster.delete(key); });
+    inflightRaster.set(key, task);
+    return task;
+}
 
+async function doRasterize(key, fontId, fontSize, text) {
+    const m = await ensureModule();
     const bytes = new TextEncoder().encode(String(text));
     const textPtr = m._alloc(bytes.length + 1);
     m.HEAPU8.set(bytes, textPtr);
@@ -67,20 +78,35 @@ async function rasterizeText(fontId, fontSize, text) {
     return result;
 }
 
-function drawRaster(ctx, raster, x, y, color) {
-    // 先在离屏 canvas 上把白色字形染成目标色，再画到目标，避免 source-in 影响目标已有内容
-    const tinted = document.createElement('canvas');
-    tinted.width = raster.w;
-    tinted.height = raster.h;
-    const tc = tinted.getContext('2d');
-    tc.drawImage(raster.canvas, 0, 0);
-    if (color) {
-        tc.globalCompositeOperation = 'source-in';
-        tc.fillStyle = color;
-        tc.fillRect(0, 0, raster.w, raster.h);
-        tc.globalCompositeOperation = 'source-over';
+// raster -> Map<color, canvas>：染色结果按颜色缓存，同一字形不再每次绘制都重建离屏 canvas
+const tintCache = new WeakMap();
+
+function tintedRaster(raster, color) {
+    if (!color) return raster.canvas;
+    let byColor = tintCache.get(raster);
+    if (!byColor) {
+        byColor = new Map();
+        tintCache.set(raster, byColor);
     }
-    ctx.drawImage(tinted, x, y);
+    const cached = byColor.get(color);
+    if (cached) return cached;
+
+    // 先在离屏 canvas 上把白色字形染成目标色，再画到目标，避免 source-in 影响目标已有内容
+    const canvas = document.createElement('canvas');
+    canvas.width = raster.w;
+    canvas.height = raster.h;
+    const tc = canvas.getContext('2d');
+    tc.drawImage(raster.canvas, 0, 0);
+    tc.globalCompositeOperation = 'source-in';
+    tc.fillStyle = color;
+    tc.fillRect(0, 0, raster.w, raster.h);
+    tc.globalCompositeOperation = 'source-over';
+    byColor.set(color, canvas);
+    return canvas;
+}
+
+function drawRaster(ctx, raster, x, y, color) {
+    ctx.drawImage(tintedRaster(raster, color), x, y);
 }
 
 function hasRaster(fontId, fontSize, text) {

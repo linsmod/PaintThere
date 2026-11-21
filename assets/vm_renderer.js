@@ -127,13 +127,32 @@ async function boot() {
   for (let i = 0; i < cid.length; i++) h = (h * 31 + cid.charCodeAt(i)) | 0;
   const color = palette[Math.abs(h) % palette.length];
 
+  // 上行输入：优先 WebSocket（无 HTTP 头、无新连接、无请求排队），失败回退 HTTP POST。
+  const WS_URL = `${BASE.replace(/^http/, 'ws')}/ws`;
+  let inputWs = null;
+  const connectInput = () => {
+    let ws;
+    try { ws = new WebSocket(WS_URL); } catch (e) { inputWs = null; return; }
+    inputWs = ws;
+    ws.onopen = () => { window.__vmRenderer.input = 'ws'; };
+    ws.onclose = () => {
+      if (inputWs === ws) inputWs = null;
+      window.__vmRenderer.input = 'http';
+      setTimeout(connectInput, 1000);
+    };
+  };
   const postInput = (payload) => {
+    if (inputWs && inputWs.readyState === WebSocket.OPEN) {
+      inputWs.send(JSON.stringify(payload));
+      return;
+    }
     fetch(INPUT_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
     }).catch((err) => { window.__vmRenderer.error = 'input: ' + err; });
   };
+  connectInput();
   const sendPointer = (kind, e) => {
     const r = cv.getBoundingClientRect();
     const x = Math.round((e.clientX - r.left) / r.width * cv.width);
@@ -141,8 +160,29 @@ async function boot() {
     postInput({ type: 'input', kind, x, y, button: e.button, clientId: cid, color });
   };
   cv.addEventListener('mousedown', (e) => sendPointer('mousedown', e));
-  document.addEventListener('mousemove', (e) => sendPointer('mousemove', e));
   document.addEventListener('mouseup', (e) => sendPointer('mouseup', e));
+
+  // mousemove 节流：鼠标事件密度远高于服务端出帧节奏（20ms 一轮）。
+  // 走 WS 后每帧只是一次 send，但仍要合并，避免把服务端打成每事件一帧。
+  const MOVE_INTERVAL_MS = 16;
+  let moveTimer = 0;
+  let pendingMove = null;
+  document.addEventListener('mousemove', (e) => {
+    const r = cv.getBoundingClientRect();
+    pendingMove = {
+      x: Math.round((e.clientX - r.left) / r.width * cv.width),
+      y: Math.round((e.clientY - r.top) / r.height * cv.height),
+      button: e.button
+    };
+    if (moveTimer) return;
+    moveTimer = setTimeout(() => {
+      moveTimer = 0;
+      const p = pendingMove;
+      pendingMove = null;
+      if (!p) return;
+      postInput({ type: 'input', kind: 'mousemove', x: p.x, y: p.y, button: p.button, clientId: cid, color });
+    }, MOVE_INTERVAL_MS);
+  });
   const sendKey = (kind, e) => {
     postInput({ type: 'input', kind, key: e.key, code: e.code, clientId: cid, color });
   };

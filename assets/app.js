@@ -255,8 +255,12 @@ function drawBorder(x, y, w, h, color, widths, cornerRadius = 0) {
     applyOverlay(x, y, w, h);
 }
 
+// 栅格化失败的 key：避免逐帧重试并逐帧刷错误日志，字体重新加载后放开
+const rasterFailed = new Set();
+
 function loadFont(fontId, ttfBase64) {
     wasmLoadFont(fontId, ttfBase64).then(() => {
+        rasterFailed.clear();
         if (textNeedsReplay) textNeedsReplay();
     }).catch((e) => console.error('loadFont failed:', e));
 }
@@ -265,9 +269,14 @@ function drawText(x, y, w, h, text, fontId, fontSize, color, letterSpacing = 0, 
     const s = String(text);
     const raster = getRaster(fontId, fontSize, s);
     if (!raster) {
+        const key = `${fontId}|${fontSize}|${s}`;
+        if (rasterFailed.has(key)) return;
         rasterizeText(fontId, fontSize, s).then(() => {
             if (textNeedsReplay) textNeedsReplay();
-        }).catch((e) => console.error('rasterizeText failed:', e));
+        }).catch((e) => {
+            rasterFailed.add(key);
+            console.error('rasterizeText failed:', e);
+        });
         return;
     }
     drawRaster(ctx, raster, x, y, resolveColor(color));
@@ -686,7 +695,7 @@ function unionRects(rects) {
 
 /* Apply a structured frame with per-id retained diff and dirty-rectangle redraw.
    Returns true if anything was drawn. */
-function applyFrameDiff(frame, targetCanvas) {
+function applyFrameDiff(frame, targetCanvas, forceFull) {
     if (!Array.isArray(frame) || !frame.length) return false;
     const canvas = targetCanvas || ctx.canvas;
     const targetCtx = canvas.getContext('2d');
@@ -696,13 +705,15 @@ function applyFrameDiff(frame, targetCanvas) {
     if (!state) { state = { signature: '', commands: [] }; diffState.set(canvas, state); }
 
     const signature = frame.map(c => (c.id || '') + ':' + c.cmd + ':' + JSON.stringify(c.args)).join('|');
-    if (signature === state.signature) return false;
+    if (signature === state.signature && !forceFull) return false;
     state.signature = signature;
 
     const oldById = new Map();
     for (const c of state.commands) if (c.id) oldById.set(c.id, c);
     const newIds = new Set();
     const dirty = [];
+    // forceFull 由服务端给出（例如 z 序变化改变了遮挡关系），前端不自行推断。
+    if (forceFull) dirty.push([0, 0, canvas.width, canvas.height]);
     for (const c of frame) {
         if (c.id) {
             newIds.add(c.id);
@@ -764,7 +775,7 @@ function applyIncrementalFrame(frame, targetCanvas) {
     } else {
         full = Array.from(byId.values());
     }
-    return applyFrameDiff(full, canvas);
+    return applyFrameDiff(full, canvas, frame.full === true);
 }
 
 // 结构化指令分发表：避免 eval 解析字符串

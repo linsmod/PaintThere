@@ -374,15 +374,15 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
     append_cursor_commands(wm, out);
 }
 
-/* z 序变化只改变重叠区域的显示：收集窗口两两重叠的矩形（外扩 2px 覆盖边框），
-   前端据此局部重绘，而不是整屏重绘。 */
-int VmWm_CollectOverlapRects(VmWm *wm, VmRect *out, int cap) {
-    if (!wm || !out || cap <= 0) return 0;
-    int n = 0;
-    for (int i = 0; i < wm->count && n < cap; i++) {
+/* z 序变化只改变重叠区域的显示：把窗口两两重叠的矩形（外扩 2px 覆盖边框）
+   并成一个区域交给服务端做脏区，前端不做任何计算。 */
+int VmWm_OverlapUnion(VmWm *wm, VmRect *out) {
+    if (!wm || !out) return 0;
+    int found = 0;
+    for (int i = 0; i < wm->count; i++) {
         const VmWindow *a = &wm->windows[i];
         if (a->minimized) continue;
-        for (int j = i + 1; j < wm->count && n < cap; j++) {
+        for (int j = i + 1; j < wm->count; j++) {
             const VmWindow *b = &wm->windows[j];
             if (b->minimized) continue;
             int x1 = (a->x > b->x ? a->x : b->x) - 2;
@@ -392,12 +392,24 @@ int VmWm_CollectOverlapRects(VmWm *wm, VmRect *out, int cap) {
             int x2 = (ax2 < bx2 ? ax2 : bx2) + 2;
             int y2 = (ay2 < by2 ? ay2 : by2) + 2;
             if (x2 <= x1 || y2 <= y1) continue;
-            out[n].x = (float)x1;
-            out[n].y = (float)y1;
-            out[n].w = (float)(x2 - x1);
-            out[n].h = (float)(y2 - y1);
-            n++;
+            if (!found) {
+                out->x = (float)x1;
+                out->y = (float)y1;
+                out->w = (float)(x2 - x1);
+                out->h = (float)(y2 - y1);
+                found = 1;
+            } else {
+                float ox2 = out->x + out->w, oy2 = out->y + out->h;
+                float nx1 = out->x < (float)x1 ? out->x : (float)x1;
+                float ny1 = out->y < (float)y1 ? out->y : (float)y1;
+                float nx2 = ox2 > (float)x2 ? ox2 : (float)x2;
+                float ny2 = oy2 > (float)y2 ? oy2 : (float)y2;
+                out->x = nx1;
+                out->y = ny1;
+                out->w = nx2 - nx1;
+                out->h = ny2 - ny1;
+            }
         }
     }
-    return n;
+    return found;
 }

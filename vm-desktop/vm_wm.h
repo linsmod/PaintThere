@@ -86,8 +86,8 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length);
 void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
                      const char *(*fontResolver)(uint16_t));
 
-/* 收集窗口两两重叠的矩形：z 序变化时只有重叠区域显示会变，只重绘这些区域。 */
-int VmWm_CollectOverlapRects(VmWm *wm, VmRect *out, int cap);
+/* 窗口两两重叠区域的并集：z 序变化时只有这块区域显示会变。返回 1 表示存在重叠。 */
+int VmWm_OverlapUnion(VmWm *wm, VmRect *out);
 
 #ifdef __cplusplus
 }

@@ -106,6 +106,8 @@ async function boot() {
       const f = JSON.parse(e.data);
       if (f.incremental) {
         applyIncrementalFrame(f, cv);
+        // 增量帧带的是完整命令列表，保留下来供字体就绪时整屏重放
+        if (Array.isArray(f.commands) && f.commands.length) lastFrame = f.commands;
       } else {
         applyFrameDiff(f.commands, cv);
         lastFrame = f.commands;
@@ -153,11 +155,23 @@ async function boot() {
     }).catch((err) => { window.__vmRenderer.error = 'input: ' + err; });
   };
   connectInput();
-  const sendPointer = (kind, e) => {
+  const toCanvasPoint = (e) => {
     const r = cv.getBoundingClientRect();
     const x = Math.round((e.clientX - r.left) / r.width * cv.width);
     const y = Math.round((e.clientY - r.top) / r.height * cv.height);
-    postInput({ type: 'input', kind, x, y, button: e.button, clientId: cid, color });
+    return {
+      x: Math.min(cv.width - 1, Math.max(0, x)),
+      y: Math.min(cv.height - 1, Math.max(0, y))
+    };
+  };
+  const insideCanvas = (e) => {
+    const r = cv.getBoundingClientRect();
+    return e.clientX >= r.left && e.clientX < r.right &&
+           e.clientY >= r.top && e.clientY < r.bottom;
+  };
+  const sendPointer = (kind, e) => {
+    const p = toCanvasPoint(e);
+    postInput({ type: 'input', kind, x: p.x, y: p.y, button: e.button, clientId: cid, color });
   };
   // mousemove 节流：鼠标事件密度远高于服务端出帧节奏（20ms 一轮）。
   // 走 WS 后每帧只是一次 send，但仍要合并，避免把服务端打成每事件一帧。
@@ -172,18 +186,24 @@ async function boot() {
     postInput({ type: 'input', kind: 'mousemove', x: p.x, y: p.y, button: p.button, clientId: cid, color });
   };
   document.addEventListener('mousemove', (e) => {
-    const r = cv.getBoundingClientRect();
-    pendingMove = {
-      x: Math.round((e.clientX - r.left) / r.width * cv.width),
-      y: Math.round((e.clientY - r.top) / r.height * cv.height),
-      button: e.button
-    };
+    // 指针移出画布就不再上报：越界坐标会把服务端的 hover 状态清掉，
+    // 远端指针停在最后位置即可。
+    if (!insideCanvas(e)) {
+      pendingMove = null;
+      if (moveTimer) {
+        clearTimeout(moveTimer);
+        moveTimer = 0;
+      }
+      return;
+    }
+    const p = toCanvasPoint(e);
+    pendingMove = { x: p.x, y: p.y, button: e.button };
     if (moveTimer) return;
     moveTimer = setTimeout(flushMove, MOVE_INTERVAL_MS);
   });
 
   // 按下/抬起立即发送，并丢弃尚未发出的移动：否则节流定时器会在松手之后
-  // 把指针位置写回旧坐标，表现为松手后指针跳回原位。
+  // 把指针位置写回旧坐标。抬起必须发出（坐标钳在画布内），否则拖动状态会卡住。
   const sendImmediate = (kind, e) => {
     pendingMove = null;
     if (moveTimer) {

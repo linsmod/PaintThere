@@ -226,30 +226,19 @@ char *VmSerialize_CommandArrayJson(const VmDisplayList *list) {
     return serialize(list, 0);
 }
 
-char *VmSerialize_DeltaFrameJson(const VmDisplayDelta *delta, uint32_t frameId) {
-    if (!delta) return NULL;
+/* 增量帧带完整命令列表和唯一的重绘矩形：前端只做 clip/clear/重放，
+   是否需要重绘、重绘哪里全部由服务端决定。dirty 为空表示这一帧不用画。 */
+char *VmSerialize_DeltaFrameJson(const VmDisplayList *list, const VmDisplayDelta *delta) {
+    if (!list || !delta) return NULL;
     StrBuf b = {0};
-    printf_(&b, "{\"type\":\"frame\",\"frameId\":%u,\"incremental\":true,\"full\":%s,\"commands\":[",
-            frameId, delta->orderChanged ? "true" : "false");
-    for (int i = 0; i < delta->changedCount; i++) {
+    printf_(&b, "{\"type\":\"frame\",\"frameId\":%u,\"incremental\":true,\"commands\":[",
+            list->frameId);
+    for (int i = 0; i < list->count; i++) {
         if (i) puts_(&b, ",");
-        emit_command(&b, &delta->changed[i]);
-    }
-    puts_(&b, "],\"removed\":[");
-    for (int i = 0; i < delta->removedCount; i++) {
-        if (i) puts_(&b, ",");
-        json_string(&b, delta->removed[i]);
+        emit_command(&b, &list->commands[i]);
     }
     puts_(&b, "],\"dirty\":[");
-    for (int i = 0; i < delta->dirtyCount; i++) {
-        if (i) puts_(&b, ",");
-        rect_json(&b, delta->dirty[i]);
-    }
-    puts_(&b, "],\"order\":[");
-    for (int i = 0; i < delta->orderCount; i++) {
-        if (i) puts_(&b, ",");
-        json_string(&b, delta->order[i]);
-    }
+    if (delta->hasDirty) rect_json(&b, delta->dirty);
     puts_(&b, "]}");
     return b.data;
 }

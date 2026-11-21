@@ -118,6 +118,27 @@ int VmDisplay_CommandEqual(const VmDrawCommand *a, const VmDrawCommand *b) {
     return 0;
 }
 
+void VmDisplay_AddDirty(VmDisplayDelta *delta, VmRect r) {
+    if (!delta || r.w <= 0 || r.h <= 0) return;
+    if (!delta->hasDirty) {
+        delta->dirty = r;
+        delta->hasDirty = 1;
+        return;
+    }
+    float x1 = delta->dirty.x < r.x ? delta->dirty.x : r.x;
+    float y1 = delta->dirty.y < r.y ? delta->dirty.y : r.y;
+    float dx2 = delta->dirty.x + delta->dirty.w;
+    float dy2 = delta->dirty.y + delta->dirty.h;
+    float rx2 = r.x + r.w;
+    float ry2 = r.y + r.h;
+    float x2 = dx2 > rx2 ? dx2 : rx2;
+    float y2 = dy2 > ry2 ? dy2 : ry2;
+    delta->dirty.x = x1;
+    delta->dirty.y = y1;
+    delta->dirty.w = x2 - x1;
+    delta->dirty.h = y2 - y1;
+}
+
 void VmDisplay_Diff(const VmDisplayList *prev, const VmDisplayList *current, VmDisplayDelta *delta) {
     if (!delta) return;
     memset(delta, 0, sizeof(*delta));
@@ -157,6 +178,7 @@ void VmDisplay_Diff(const VmDisplayList *prev, const VmDisplayList *current, VmD
         if (!old || !VmDisplay_CommandEqual(old, c)) {
             if (delta->changedCount < VM_DISPLAY_MAX_COMMANDS)
                 delta->changed[delta->changedCount++] = *c;
+            VmDisplay_AddDirty(delta, c->rect);
         }
     }
 
@@ -165,6 +187,7 @@ void VmDisplay_Diff(const VmDisplayList *prev, const VmDisplayList *current, VmD
         if (!VmDisplay_Find((VmDisplayList *)current, old->id)) {
             if (delta->removedCount < VM_DISPLAY_MAX_COMMANDS)
                 snprintf(delta->removed[delta->removedCount++], VM_DISPLAY_MAX_ID, "%s", old->id);
+            VmDisplay_AddDirty(delta, old->rect);
         }
     }
 }

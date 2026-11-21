@@ -140,9 +140,10 @@ typedef struct {
     int orderCount;
     /* 绘制顺序（z 序）是否变化。变化时遮挡关系变了，必须重绘重叠区域。 */
     int orderChanged;
-    /* 顺序变化时需要重绘的矩形（由 WM 层按窗口重叠算出，全空则前端退回整屏）。 */
-    VmRect dirty[VM_DISPLAY_MAX_DIRTY];
-    int dirtyCount;
+    /* 这一帧需要重绘的区域（changed/removed 命令的 rect 与顺序变化重叠区的并集）。
+       是否需要重绘、重绘哪里，全部由服务端决定，前端只按这个矩形执行。 */
+    VmRect dirty;
+    int hasDirty;
 } VmDisplayDelta;
 
 void VmDisplay_Init(VmDisplayList *list);
@@ -153,6 +154,9 @@ VmDrawCommand *VmDisplay_Find(VmDisplayList *list, const char *id);
 int VmDisplay_CommandEqual(const VmDrawCommand *a, const VmDrawCommand *b);
 /* Compute a structural delta from prev -> current. Delta references current's storage. */
 void VmDisplay_Diff(const VmDisplayList *prev, const VmDisplayList *current, VmDisplayDelta *delta);
+
+/* 把一块区域并入 delta 的重绘区域（WM 层用它补充 z 序变化的重叠区）。 */
+void VmDisplay_AddDirty(VmDisplayDelta *delta, VmRect r);
 
 #ifdef __cplusplus
 }

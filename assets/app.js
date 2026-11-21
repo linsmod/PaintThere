@@ -669,118 +669,44 @@ function wrapText(text, maxWidth, font) {
     return lines;
 }
 
-// ---- 公共 retained diff 帧执行（供 WebSocket 与 SSE 通道共用）----
-const diffState = new WeakMap(); // canvas -> { signature, commands }
-
-function argsEqual(a, b) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
-    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-    return true;
-}
-
-function unionRects(rects) {
-    if (!rects.length) return null;
-    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
-    for (const r of rects) {
-        if (!r || r.length < 4) continue;
-        x1 = Math.min(x1, r[0]); y1 = Math.min(y1, r[1]);
-        x2 = Math.max(x2, r[0] + r[2]); y2 = Math.max(y2, r[1] + r[3]);
-    }
-    if (x1 === Infinity) return null;
-    const cw = ctx.canvas.width, ch = ctx.canvas.height;
-    x1 = Math.max(0, Math.floor(x1)); y1 = Math.max(0, Math.floor(y1));
-    x2 = Math.min(cw, Math.ceil(x2)); y2 = Math.min(ch, Math.ceil(y2));
-    return [x1, y1, x2 - x1, y2 - y1];
-}
-
-/* Apply a structured frame with per-id retained diff and dirty-rectangle redraw.
-   Returns true if anything was drawn. */
-function applyFrameDiff(frame, targetCanvas, forcedRects) {
-    if (!Array.isArray(frame) || !frame.length) return false;
-    const canvas = targetCanvas || ctx.canvas;
+// ---- 帧执行：重绘区域由服务端给出，前端只做 clip / clear / 重放 ----
+function executeRegion(commands, canvas, region) {
     const targetCtx = canvas.getContext('2d');
-
-    drainPrimitiveState();
-    let state = diffState.get(canvas);
-    if (!state) { state = { signature: '', commands: [] }; diffState.set(canvas, state); }
-
-    const signature = frame.map(c => (c.id || '') + ':' + c.cmd + ':' + JSON.stringify(c.args)).join('|');
-    if (signature === state.signature && !forcedRects) return false;
-    state.signature = signature;
-
-    const oldById = new Map();
-    for (const c of state.commands) if (c.id) oldById.set(c.id, c);
-    const newIds = new Set();
-    const dirty = [];
-    // forcedRects 由服务端给出（z 序变化等）：数组是局部脏区，true 是整屏兜底。
-    // 顺序语义属于服务端，前端不自行推断。
-    if (forcedRects === true) dirty.push([0, 0, canvas.width, canvas.height]);
-    else if (Array.isArray(forcedRects)) for (const r of forcedRects) dirty.push(r);
-    for (const c of frame) {
-        if (c.id) {
-            newIds.add(c.id);
-            const old = oldById.get(c.id);
-            if (!old || old.cmd !== c.cmd || !argsEqual(old.args, c.args)) {
-                if (c.rect) dirty.push(c.rect);
-                if (old && old.rect) dirty.push(old.rect);
-            }
-        } else if (c.cmd === 'setBounds' || c.cmd === 'drawBackground') {
-            dirty.push([0, 0, canvas.width, canvas.height]);
-        }
-    }
-    for (const [id, old] of oldById) {
-        if (!newIds.has(id) && old.rect) dirty.push(old.rect);
-    }
-
-    const region = unionRects(dirty);
     const prevCtx = ctx;
     ctx = targetCtx;
     try {
-        if (region) {
-            ctx.save();
-            ctx.beginPath();
-            ctx.rect(region[0], region[1], region[2], region[3]);
-            ctx.clip();
-            ctx.clearRect(region[0], region[1], region[2], region[3]);
-            for (const c of frame) {
-                const fn = commandHandlers[c.cmd];
-                if (fn) { try { fn(...c.args); } catch (e) { console.error('cmd failed:', c.cmd, e); } }
-            }
-            ctx.restore();
+        drainPrimitiveState();
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(region[0], region[1], region[2], region[3]);
+        ctx.clip();
+        ctx.clearRect(region[0], region[1], region[2], region[3]);
+        for (const c of commands) {
+            const fn = commandHandlers[c.cmd];
+            if (fn) { try { fn(...c.args); } catch (e) { console.error('cmd failed:', c.cmd, e); } }
         }
+        ctx.restore();
     } finally {
         ctx = prevCtx;
     }
-    state.commands = frame;
-    return !!region;
+    return true;
 }
 
-/* Merge a guest-side structural delta into the retained baseline, then draw.
-   frame = {frameId, incremental:true, commands:[changed], removed:[ids], order:[ids]} */
-function applyIncrementalFrame(frame, targetCanvas) {
+/* 整屏执行一条完整命令列表（连接时下发的 fullframe）。 */
+function applyFrameDiff(frame, targetCanvas) {
+    if (!Array.isArray(frame) || !frame.length) return false;
     const canvas = targetCanvas || ctx.canvas;
-    let state = diffState.get(canvas);
-    if (!state) { state = { signature: '', commands: [] }; diffState.set(canvas, state); }
+    return executeRegion(frame, canvas, [0, 0, canvas.width, canvas.height]);
+}
 
-    const removed = new Set(Array.isArray(frame.removed) ? frame.removed : []);
-    const byId = new Map();
-    for (const c of state.commands) if (c.id && !removed.has(c.id)) byId.set(c.id, c);
-    for (const c of (frame.commands || [])) if (c.id) byId.set(c.id, c);
-
-    const order = Array.isArray(frame.order) ? frame.order : [];
-    let full;
-    if (order.length) {
-        full = [];
-        for (const id of order) { const c = byId.get(id); if (c) full.push(c); }
-        // 增量里出现但 order 未覆盖的命令追加到末尾，避免丢失
-        for (const [id, c] of byId) if (!order.includes(id)) full.push(c);
-    } else {
-        full = Array.from(byId.values());
-    }
-    // 服务端给出顺序变化的局部脏区；只给了 full 标记时退回整屏。
-    const forced = (Array.isArray(frame.dirty) && frame.dirty.length) ? frame.dirty
-                 : (frame.full === true ? true : null);
-    return applyFrameDiff(full, canvas, forced);
+/* 增量帧：commands 是服务端给的完整命令列表，dirty 是服务端算好的唯一重绘矩形。
+   dirty 为空表示这一帧不需要重绘，前端不做任何判断。 */
+function applyIncrementalFrame(frame, targetCanvas) {
+    if (!frame || !Array.isArray(frame.commands) || !frame.commands.length) return false;
+    const r = frame.dirty;
+    if (!Array.isArray(r) || r.length < 4) return false;
+    const canvas = targetCanvas || ctx.canvas;
+    return executeRegion(frame.commands, canvas, r);
 }
 
 // 结构化指令分发表：避免 eval 解析字符串

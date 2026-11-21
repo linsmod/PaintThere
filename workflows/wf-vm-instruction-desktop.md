@@ -41,12 +41,8 @@ gcc -std=c11 -I"H:\github_repos\clay" -I. demo_wm.c clay_frame_adapter.c vm_disp
 gcc -std=c11 -I"H:\github_repos\clay" -I. demo_frame.c demo_layout.c clay_frame_adapter.c vm_display.c vm_serialize_json.c -o demo_frame.exe
 gcc -std=c11 -I. test_display_diff.c vm_display.c -o test_display_diff.exe
 
-# 构建 C 版渲染器（canvas-cpp/ant 引擎，一次构建；依赖源码树在 H:/ant-v16）
-cd h:\github_repos\跨端图绘指令流
-cmake -S vm-desktop/renderer -B vm-desktop/renderer/build -G "MinGW Makefiles" `
-  -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe `
-  -DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe
-cmake --build vm-desktop/renderer/build -j4
+# 构建 C 版渲染器（自动同步 canvas-cpp 的 libcanvas.a / antjsb.dll 再编译）
+python tools/build_vm_renderer.py
 # 一键运行（同时起 SSE 服务 + 原生渲染窗口；脚本会禁用本地请求的代理）
 python tools/start_vm_renderer.py
 # 调试：$env:VM_RENDERER_FRAMES="90"; python tools/start_vm_renderer.py  # 跑满 90 帧自动退出

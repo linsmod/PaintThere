@@ -1,5 +1,6 @@
 # tools 索引
 
+- `build_vm_renderer.py` — 编译 C 版 VM 渲染器并同步 canvas-cpp 产物：`python tools/build_vm_renderer.py`。自动同步 `build-ant/libcanvas.a` 与 `antjsb.dll` 到 renderer build 与 assets，再执行 cmake 配置/构建。环境变量：`CANVAS_BUILD_DIR`、`CANVAS_SOURCE_DIR`、`VM_BUILD_DIR`、`VM_FORCE_CONFIGURE=1`。
 - `start_vm_renderer.py` — 一键启动 C 版 VM 渲染器：`python tools/start_vm_renderer.py`。同时拉起 SSE 服务端与 `vm_renderer.exe`，进程级禁用代理（避免本地请求走系统代理），Ctrl+C 一起停止。调试用环境变量：`VM_DESKTOP_PORT`、`VM_RENDERER_FRAMES`（>0 时跑满帧数自动退出）。
 - `vm-desktop/renderer/` — C 宿主（canvas-cpp/ant 引擎），构建：CMake `-S vm-desktop/renderer -B vm-desktop/renderer/build -G "MinGW Makefiles" -DCANVAS_SOURCE=<canvas-cpp源码> -DANT_ROOT=<ant目录>` 后 `--build`。运行由 `start_vm_renderer.py` 负责。
 - `assets/vm_renderer.js` — C 渲染器页面：复用 `app.js` 原语 + wasm 字体 + `EventSource`，无兼容 shim。将 `app.js` 所需但 SDK 缺失的标准 API（`ctx.canvas`、context 缓存）在页面入口对齐。

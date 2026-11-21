@@ -660,6 +660,88 @@ function wrapText(text, maxWidth, font) {
     return lines;
 }
 
+// ---- 公共 retained diff 帧执行（供 WebSocket 与 SSE 通道共用）----
+const diffState = new WeakMap(); // canvas -> { signature, commands }
+
+function argsEqual(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+    return true;
+}
+
+function unionRects(rects) {
+    if (!rects.length) return null;
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    for (const r of rects) {
+        if (!r || r.length < 4) continue;
+        x1 = Math.min(x1, r[0]); y1 = Math.min(y1, r[1]);
+        x2 = Math.max(x2, r[0] + r[2]); y2 = Math.max(y2, r[1] + r[3]);
+    }
+    if (x1 === Infinity) return null;
+    const cw = ctx.canvas.width, ch = ctx.canvas.height;
+    x1 = Math.max(0, Math.floor(x1)); y1 = Math.max(0, Math.floor(y1));
+    x2 = Math.min(cw, Math.ceil(x2)); y2 = Math.min(ch, Math.ceil(y2));
+    return [x1, y1, x2 - x1, y2 - y1];
+}
+
+/* Apply a structured frame with per-id retained diff and dirty-rectangle redraw.
+   Returns true if anything was drawn. */
+function applyFrameDiff(frame, targetCanvas) {
+    if (!Array.isArray(frame) || !frame.length) return false;
+    const canvas = targetCanvas || ctx.canvas;
+    const targetCtx = canvas.getContext('2d');
+
+    drainPrimitiveState();
+    let state = diffState.get(canvas);
+    if (!state) { state = { signature: '', commands: [] }; diffState.set(canvas, state); }
+
+    const signature = frame.map(c => (c.id || '') + ':' + c.cmd + ':' + JSON.stringify(c.args)).join('|');
+    if (signature === state.signature) return false;
+    state.signature = signature;
+
+    const oldById = new Map();
+    for (const c of state.commands) if (c.id) oldById.set(c.id, c);
+    const newIds = new Set();
+    const dirty = [];
+    for (const c of frame) {
+        if (c.id) {
+            newIds.add(c.id);
+            const old = oldById.get(c.id);
+            if (!old || old.cmd !== c.cmd || !argsEqual(old.args, c.args)) {
+                if (c.rect) dirty.push(c.rect);
+                if (old && old.rect) dirty.push(old.rect);
+            }
+        } else if (c.cmd === 'setBounds' || c.cmd === 'drawBackground') {
+            dirty.push([0, 0, canvas.width, canvas.height]);
+        }
+    }
+    for (const [id, old] of oldById) {
+        if (!newIds.has(id) && old.rect) dirty.push(old.rect);
+    }
+
+    const region = unionRects(dirty);
+    const prevCtx = ctx;
+    ctx = targetCtx;
+    try {
+        if (region) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(region[0], region[1], region[2], region[3]);
+            ctx.clip();
+            ctx.clearRect(region[0], region[1], region[2], region[3]);
+            for (const c of frame) {
+                const fn = commandHandlers[c.cmd];
+                if (fn) { try { fn(...c.args); } catch (e) { console.error('cmd failed:', c.cmd, e); } }
+            }
+            ctx.restore();
+        }
+    } finally {
+        ctx = prevCtx;
+    }
+    state.commands = frame;
+    return !!region;
+}
+
 // 结构化指令分发表：避免 eval 解析字符串
 const commandHandlers = {
     setBounds,
@@ -716,6 +798,7 @@ export {
     pauseDrawProgram,
     resumeDrawProgram,
     replayBackgroundPrograms,
+    applyFrameDiff,
     registerFont,
     drainPrimitiveState,
     clear,

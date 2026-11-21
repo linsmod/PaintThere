@@ -77,6 +77,7 @@ Remove-Item ..\ConsoleApp2\font.ttf -ErrorAction SilentlyContinue
 6. **交互**：hover 按钮由蓝变橙；单次 click 使 `Clicked: 0` → `Clicked: 1`。
 7. **多客户端**：两个客户端持续上报不同颜色指针，浏览器看到对应颜色箭头（约 150 像素/箭头）。
 8. **键盘**：焦点客户端点击窗口后发 `keydown`（key=`H`/`i`），帧中文本从空变 `Hi`；非焦点客户端发键被忽略（`changed=0`）。截图 `wm_keyboard.png`。
+9. **retained diff**：浏览器 eval 调 `applyFrameDiff(frame,cv)`，相同帧第二次返回 `false`；两命令帧只改一个时仅脏区重画。端到端渲染像素不退化。
 
 ## 经验与坑
 

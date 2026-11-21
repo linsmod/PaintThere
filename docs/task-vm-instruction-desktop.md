@@ -148,7 +148,7 @@ created → mapped（可见）→ focused / unfocused
 - 设计起点：本文 + `docs/arch-跨端图绘指令流.md`（现有指令流架构）+ `docs/task-multi-client-cursor.md`（多客户端指针）。
 - Clay 源码：`H:\github_repos\clay\clay.h`、`README.md`、`renderers/terminal/clay_renderer_terminal_ansi.c`（最简非像素 renderer 参考）。
 - VM 环境：`H:\github_repos\RVVM`，token 在 `release.test.windows.x86_64\runtime\supervisor\token`。
-- 全部阶段完成；后续已完成**键盘输入闭环**（见下节）。剩余增强方向：复杂图样的 wasm 通道、retained diff 精细化（当前仍全量重放窗口层命令）。
+- 全部阶段完成；后续已完成**键盘输入闭环**与 **retained diff 精细化**（见下节）。剩余增强方向：复杂图样的 wasm 通道、guest 侧命令级 diff（当前仅前端 diff，guest 仍全量发命令）。
 
 ## 后续增强：键盘输入闭环（2026-11-21，已完成）
 
@@ -158,6 +158,13 @@ created → mapped（可见）→ focused / unfocused
 - 测试页：`keydown` / `keyup` 上报（可打印键 / Backspace / Enter）。
 - 验证：客户端 A 点击取得焦点后发 `H`、`i`，帧文本从空变为 `Hi`（服务端 `changed=1`）；客户端 B 未获焦点时发 `X`，`changed=0` 且文本不变，焦点仲裁生效。console 无错误，截图 `wm_keyboard.png`。
 - 未覆盖：IME 组合输入状态机（由客户端把最终字符以 `key` 上报，guest 不实现 IME）。
+
+## 后续增强：retained diff 精细化（2026-11-21，已完成）
+
+- `ConsoleApp2/app.js` 新增公共 `applyFrameDiff(frame, canvas)`：按 `id` 比较命令，签名相同则跳过；变化命令收集脏矩形，`ctx.clip` + `clearRect` 后只重画脏区。状态按 canvas 存在 `WeakMap`，两条通道互不干扰。
+- SSE 测试页从裸遍历 `commandHandlers` 改为调用 `applyFrameDiff`；WebSocket 通道的 `main.js` 保留其已有的同类逻辑（含旧协议兼容与重放）。
+- 验证：`applyFrameDiff` 对相同帧首次返回 `true`、第二次 `false`；两命令帧只改其中一个时，仅变化区域被重画（取样像素变为新颜色）；端到端渲染正常（背景 480000、标题 11720、按钮 5600），console 无错误。
+- 未做：guest 侧命令级 diff（减少带宽）。当前 guest 仍每帧发全量命令，前端 diff 只减少重画。
 
 ## 已知限制
 

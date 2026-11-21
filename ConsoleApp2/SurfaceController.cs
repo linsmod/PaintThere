@@ -290,8 +290,6 @@ public class SurfaceController
     public MethodInfo KeyDown;
     public MethodInfo KeyUp;
 
-    private Bitmap _cursorBitmap; // 鼠标指针图像
-    private Point _cursorHotSpot;
     private Point _lastRemotePoint = Point.Empty; // 上一次远程鼠标位置
 
     // 命中测试：跳过指针覆盖层等透明覆盖控件，返回最深的真实控件
@@ -372,12 +370,6 @@ public class SurfaceController
 
     private void InitializeOverlay()
     {
-
-        // 加载鼠标指针图像
-        _cursorBitmap = new Bitmap("cursor.png"); // 从资源加载或创建
-        _cursorHotSpot = new Point(_cursorBitmap.Width / 2, _cursorBitmap.Height / 2); // 设置热点位于图像中心
-
-
         var type = typeof(Form);
         this.MouseClick = type.GetMethod("OnMouseClick", BindingFlags.NonPublic | BindingFlags.Instance);
         this.Click = type.GetMethod("OnClick", BindingFlags.NonPublic | BindingFlags.Instance);

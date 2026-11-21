@@ -40,7 +40,6 @@
     <None Include="../ConsoleApp2/connection.js" Link="connection.js" CopyToOutputDirectory="Always" />
     <None Include="../ConsoleApp2/loadingSplash.js" Link="loadingSplash.js" CopyToOutputDirectory="Always" />
     <None Include="../ConsoleApp2/systemColors.js" Link="systemColors.js" CopyToOutputDirectory="Always" />
-    <None Include="../ConsoleApp2/cursor.png" Link="cursor.png" CopyToOutputDirectory="Always" />
   </ItemGroup>
 
 </Project>

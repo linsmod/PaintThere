@@ -13,7 +13,6 @@ public sealed class CursorOverlayPanel : IDisposable
 {
     private const int WS_EX_LAYERED = 0x80000;
     private const int WS_EX_TRANSPARENT = 0x20;
-    private const int WS_EX_TOPMOST = 0x8;
     private const int WS_EX_TOOLWINDOW = 0x80;
     private const int WS_POPUP = unchecked((int)0x80000000);
     private const int SW_SHOWNOACTIVATE = 4;

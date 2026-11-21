@@ -43,7 +43,23 @@
 | `overlayPush` | `(color)` | 压栈叠加色，期间每个原语绘制后叠一层 |
 | `overlayPop` | `()` | 弹栈结束叠加 |
 
-`loadImg(imgId, dataUrl)` 沿用已有资源命令，不放在帧内。
+**样式参数约定**：`drawRect` / `drawBorder` / `drawText` 的颜色参数允许传 `styleId` 字符串（如 `"s1"`），表示引用客户端缓存的样式，而非字面颜色。未定义则按字面 CSS 颜色处理。这样每帧只发几何与 id，不重复传颜色/字体。
+
+**资源与绘制程序命令**（一次性下发，客户端缓存，不随每帧重复）：
+
+| cmd | args | 语义 |
+|---|---|---|
+| `loadImg` | `(imgId, dataUrl)` | 已有，加载图片 |
+| `definePattern` | `(patternId, descriptor)` | 声明式图样：`{type:'solid',color}` / `{type:'gradient',from,to,direction}` / `{type:'image',imgId,tiling}` |
+| `defineStyle` | `(styleId, {bgPattern?,border?,fontId?,fontSize?,textColor?})` | 样式表，供绘制原语按 id 引用 |
+| `defineDrawProgram` | `(programId, commands[], layerId)` | 定义一段可复用绘制指令，绑定到图层 |
+| `startDrawProgram` | `(programId, mode)` | `mode`: `once`（默认）/ `loop` |
+| `pauseDrawProgram` | `(programId)` | 暂停该程序的自动重绘 |
+| `resumeDrawProgram` | `(programId)` | 恢复 |
+
+**图样算法边界**：`definePattern` 只接受声明式 descriptor，不传可执行代码。复杂图案若确需自定义算法，走 wasm 模块通道（与字体方案一致），不嵌入帧指令。
+
+`loadImg` / `definePattern` / `defineStyle` / `defineDrawProgram` 不放在普通帧内重复下发；由 guest 在连接建立或资源变更时发一次，客户端按 id 缓存。
 
 ### 字体加载（决策更新：wasm 光栅化）
 
@@ -55,6 +71,21 @@
 - `drawText` 执行时调用 `rasterizeText` 得到 RGBA 位图，用离屏 canvas + `putImageData` 生成 ImageBitmap，再按颜色 tint 画到目标 canvas；不使用浏览器字体引擎。
 - 已实测：同一份 stb_truetype C 代码在 native（`font_probe`）与 wasm 下对三段文本度量完全一致（91 / 70 / 247），无需 Canvas `measureText` 对比。
 - 阶段 2 剩余验证：浏览器像素级渲染一致性（中文/英文/换行）。
+
+## 图层模型
+
+跨端画面分三层，自底向上合成：
+
+| layerId | 名称 | 绘制方 | 更新方式 |
+|---|---|---|---|
+| `bg` | 背景层 | 客户端本地 | 由 draw program 绑定，静态或循环，不随每帧指令流更新 |
+| `windows` | 窗口层 | guest 指令帧 | 每帧 `drawRect` / `drawText` / `drawImg` 等原语 |
+| `cursors` | 指针层 | guest 指令帧（帧尾） | 复用 `loadImg` + `drawImg` 画各客户端彩色箭头 |
+
+- `defineDrawProgram(programId, commands[], layerId)` 把绘制程序绑定到具体图层。`startDrawProgram(..., 'loop')` 只在该图层内循环，不干扰窗口层。
+- `pauseDrawProgram` / `resumeDrawProgram` 的语义是暂停/恢复某层的自动重绘，不改变其他层。
+- 背景层与窗口背景都用 draw program 本地绘制：桌面背景绑 `bg` 层，窗口背景作为窗口层内的静态 program（窗口移动时由 guest 重定位，不重传颜色/图样）。
+- 图层顺序固定，跨端不暴露图层创建/销毁 API；layerId 只有上述三个取值。
 
 ## Clay 命令映射
 
@@ -77,24 +108,29 @@
 {
   "type": "input",
   "clientId": "ab12...",
+  "color": "#F44336",
   "frameId": 42,
-  "kind": "mouse",
+  "kind": "mousedown",
   "x": 120,
   "y": 80,
-  "button": 0,
-  "buttons": 0,
-  "key": null,
-  "code": null,
-  "deltaX": 0,
-  "deltaY": 0
+  "button": 0
 }
 ```
 
-- `clientId` 复用多客户端指针的连接 id。
+- `clientId` 复用多客户端指针身份；`color` 为该客户端指针颜色。
 - `frameId` 为客户端处理该输入时所见的最新帧号，guest 可据此判断“所见即所操作”；不阻塞输入，只作标记。
-- `kind`：`mouse` / `key` / `wheel` / `touch`。
+- `kind`：`mousedown` / `mousemove` / `mouseup` / `click` / `wheel` / `key` / `touch`。
 - `x/y` 为 canvas 内部坐标（guest 逻辑桌面坐标），浏览器按 canvas 实际尺寸换算后填入。
-- guest 收到后由 WM 做命中、焦点与分发；跨端不解释事件语义。
+- guest 收到后由 WM 做命中、焦点与分发；跨端不解释事件语义。焦点仲裁只在 guest：仅焦点客户端的输入能改变窗口状态，其他客户端只更新指针。
+
+## SDK 前瞻性
+
+资源 / 样式 / 绘制程序三层抽象是为了不阻塞未来的窗口与控件 SDK：
+
+- 未来控件的视觉属性（背景、边框、字体、图样）统一走 `defineStyle` + `definePattern`，与窗口背景、桌面背景同源，不出现“背景一套机制、控件另一套机制”的分裂。
+- 控件的静态外观用 `defineDrawProgram` 缓存到客户端，hover/click 只改少量状态参数，不重发整段外观指令。
+- 图层固定三层（bg/windows/cursors），SDK 不跨端创建图层；若未来需要新层，作为协议版本升级处理，不在现有 SDK 里动态申请。
+- `drawLoop` 类的命名不采用——静态背景用 `mode:once`，动画用 `mode:loop`，避免“Loop”语义限制控件复用。
 
 ## 与现有协议的关系
 

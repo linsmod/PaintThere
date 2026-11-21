@@ -1,9 +1,13 @@
 using System;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
 internal static class Program
 {
+    [DllImport("user32.dll")]
+    private static extern bool SetProcessDPIAware();
+
     private static StaticFileServer _staticServer =
         new StaticFileServer("http://localhost:8080/", AppDomain.CurrentDomain.BaseDirectory);
 
@@ -13,6 +17,8 @@ internal static class Program
     [STAThread]
     private static void Main()
     {
+        if (Environment.OSVersion.Version.Major >= 6)
+            SetProcessDPIAware();
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 

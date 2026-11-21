@@ -106,32 +106,18 @@ public class SurfaceController
         }
     }
 
-    // 为每个窗体附加一个透明、鼠标穿透的指针覆盖层，置于最上层
+    // 为每个窗体创建一个 Win32 分层透明窗口作为指针层，跟随窗体且鼠标穿透
     private void EnsureCursorOverlay(Form form)
     {
         if (CursorOverlays.ContainsKey(form))
             return;
-        // GetFormID 可能在后台线程（Timer）调用，控件必须在 UI 线程创建和添加
+        // GetFormID 可能在后台线程（Timer）调用，窗口必须关联 UI 线程的窗体
         if (form.InvokeRequired)
         {
             form.Invoke(new Action(() => EnsureCursorOverlay(form)));
             return;
         }
-        var overlay = new CursorOverlayPanel();
-        overlay.Paint += CursorOverlay_Paint;
-        form.Controls.Add(overlay);
-        overlay.BringToFront();
-        CursorOverlays[form] = overlay;
-    }
-
-    private void CursorOverlay_Paint(object sender, PaintEventArgs e)
-    {
-        if (!this._showRemoteCursor)
-            return;
-        // 绘制系统箭头指针；箭头尖端（热点）位于左上角，直接对齐远程坐标
-        var size = Cursors.Default.Size;
-        var rect = new Rectangle(_lastRemotePoint.X, _lastRemotePoint.Y, size.Width, size.Height);
-        Cursors.Default.Draw(e.Graphics, rect);
+        CursorOverlays[form] = new CursorOverlayPanel(form);
     }
 
     private void InitializeEventHandlers()
@@ -322,7 +308,7 @@ public class SurfaceController
         for (int i = parent.Controls.Count - 1; i >= 0; i--)
         {
             var child = parent.Controls[i];
-            if (child is OverlayPanel || child is CursorOverlayPanel)
+            if (child is OverlayPanel)
                 continue;
             if (!child.Visible || !child.Enabled)
                 continue;
@@ -411,10 +397,7 @@ public class SurfaceController
     {
         if (form == null || !CursorOverlays.TryGetValue(form, out var overlay))
             return;
-        if (overlay.InvokeRequired)
-            overlay.BeginInvoke(new Action(overlay.Invalidate));
-        else
-            overlay.Invalidate();
+        overlay.SetCursor(_lastRemotePoint, _showRemoteCursor);
     }
 
     protected virtual void OnMouseMove(int x, int y)

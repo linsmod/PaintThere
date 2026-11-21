@@ -29,7 +29,7 @@
 
 ## 绘制原语清单
 
-与 `ConsoleApp2/app.js` 的 `commandHandlers` 对齐。`color` 为 CSS 颜色字符串或 `[r,g,b,a]`。
+与 `ConsoleApp2/app.js` 的 `commandHandlers` 对齐。`color` 为 CSS 颜色字符串（Clay 的 RGBA 由 adapter 转成 `rgba(r,g,b,a)`），`resolveColor` 不接受数组。
 
 | cmd | args | 语义 |
 |---|---|---|

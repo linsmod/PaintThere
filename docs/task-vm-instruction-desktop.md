@@ -98,7 +98,13 @@ created → mapped（可见）→ focused / unfocused
   - `app.js` 已注册原语：`clear` / `drawRect` / `drawBorder` / `drawText` / `drawImg` / `clipPush` / `clipPop` / `overlayPush` / `overlayPop`，并导出 `registerFont` / `drainPrimitiveState`。
   - `main.js` 已识别 `{type:'frame', frameId, commands}` envelope，记录 `currentFrameId`，上行事件带 `frameId` 标记，帧边界清理原语状态栈。
   - 验证：两个项目 `dotnet build` 通过；未做浏览器运行时验证（阶段 1 起配合 adapter）。
-- [ ] **阶段 1 adapter**：Clay `RenderCommandArray` → 跨端指令。验收：单窗口 demo，浏览器显示与 Clay terminal renderer 等价布局。
+- [x] **阶段 1 adapter（代码完成，运行时验证受阻）**：Clay `RenderCommandArray` → 跨端指令。
+  - 已实现 `vm-desktop/clay_frame_adapter.c/.h`：Clay 命令 → `{type:'frame',frameId,commands}` JSON；颜色转 `rgba(...)` 字符串，坐标拆为独立参数与 `rect` 数组。
+  - 已实现 `vm-desktop/demo_frame.c`：单窗口 Clay 布局 demo，输出 9 条原语帧。本机 gcc 15.2.0 编译通过，JSON 经 Node 校验结构正确。
+  - 服务端 `ServerWebSocketImpl` 增加纯传输帧转发（`type:'frame'` 广播，不解释语义）。
+  - 前端模块导出 18 个 handler（含 9 个 VM 原语），Node + DOM stub 校验通过。
+  - **未完成**：浏览器运行时等价布局验证。原因：8080/8081 被用户启动的 `RemoteForm.exe`（PID 24704，15:22:56 启动）占用且其加载的是旧前端/服务端代码；按规则未终止该进程。待其退出后重新构建并用 demo 帧验证。
+  - 修复过的坑：`Clay_Color` 是 `float` 不是 `uint8_t`（用 `%u` 会全输出 0）；`Clay_SetMeasureTextFunction` 第三参是 `void*` 不是 `uintptr_t`。
 - [ ] **阶段 2 文本一致性验证**：A 方案对比 guest 度量与浏览器实际绘制；失败则切 B 并在本文记录。
 - [ ] **阶段 3 guest WM 最小实现**：窗口创建/销毁/移动/z 序/焦点。验收：两个窗口可切换焦点、拖动。
 - [ ] **阶段 4 输入闭环**：浏览器原始输入 → guest → Clay pointer state。验收：hover/click 在浏览器画面生效，文本输入可达焦点窗口。
@@ -112,7 +118,7 @@ created → mapped（可见）→ focused / unfocused
 - 设计起点：本文 + `docs/arch-跨端图绘指令流.md`（现有指令流架构）+ `docs/task-multi-client-cursor.md`（多客户端指针）。
 - Clay 源码：`H:\github_repos\clay\clay.h`、`README.md`、`renderers/terminal/clay_renderer_terminal_ansi.c`（最简非像素 renderer 参考）。
 - VM 环境：`H:\github_repos\RVVM`，token 在 `release.test.windows.x86_64\runtime\supervisor\token`。
-- 下一动作：阶段 1，实现 Clay `RenderCommandArray` → 跨端原语 adapter，输出 `{type:'frame', frameId, commands}`。
+- 下一动作：阶段 1 收尾——待 PID 24704 退出后重新构建，用 `vm-desktop/demo_frame.json` 在浏览器验证等价布局；随后进入阶段 2 文本一致性验证。
 
 ## 已知限制
 

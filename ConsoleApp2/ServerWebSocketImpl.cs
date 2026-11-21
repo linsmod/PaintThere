@@ -207,6 +207,11 @@ public class WebSocketServerImpl : IDisposable
                 }
                 return Task.CompletedTask;
             }
+            if (message.IndexOf("\"type\":\"frame\"", StringComparison.Ordinal) >= 0)
+            {
+                // 纯传输转发：WS 消息体是绘制原语帧，服务端不解释其语义。
+                return BroadcastTextAsync(message);
+            }
             OnMessageReceived(webSocket, message);
             return Task.CompletedTask;
         }
@@ -226,6 +231,18 @@ public class WebSocketServerImpl : IDisposable
         public double x { get; set; }
         public double y { get; set; }
         public bool visible { get; set; }
+    }
+
+    public Task BroadcastTextAsync(string text)
+    {
+        var segment = new ArraySegment<byte>(Encoding.UTF8.GetBytes(text));
+        var tasks = new List<Task>();
+        foreach (var kv in _clients)
+        {
+            if (kv.Key.State != WebSocketState.Open) continue;
+            tasks.Add(SendCursorSnapshotAsync(kv.Key, kv.Value, segment));
+        }
+        return Task.WhenAll(tasks);
     }
 
     public Task BroadcastCursorsAsync()

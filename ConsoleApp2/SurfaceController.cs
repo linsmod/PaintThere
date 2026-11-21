@@ -1,6 +1,7 @@
 ﻿using Aps反向代理;
 using Newtonsoft.Json;
 using RemoteForm.DOM;
+using RemoteForm.Paint;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -8,6 +9,7 @@ using System.Drawing;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Xml;
@@ -20,8 +22,9 @@ public class SurfaceController
     private Form form;
     private static ServerWebSocket _webSocketServer = new ServerWebSocket(8081);
     private Timer _debounceTimer;
-    private const int DesiredFrameRate = 30; // 目标帧率
+    private const int DesiredFrameRate = 60; // 目标帧率（优化版，压力大可降回 30）
     private const int MillisecondsPerFrame = 1000 / DesiredFrameRate; // 每帧的时间间隔
+    private int _isUpdating; // 防止定时器重入
 
     // 事件分发器
     private readonly EventDispatcher _eventDispatcher = new EventDispatcher();
@@ -42,38 +45,46 @@ public class SurfaceController
     }
     private async void DebounceTimer_Elapsed(object sender, EventArgs e)
     {
-        await UpdateRemote();
+        // 上一帧未处理完则丢弃本次触发，避免 async void 重入导致任务堆积
+        if (Interlocked.Exchange(ref _isUpdating, 1) == 1)
+            return;
+        try
+        {
+            await UpdateRemote();
+        }
+        finally
+        {
+            Interlocked.Exchange(ref _isUpdating, 0);
+        }
     }
 
     private async Task UpdateRemote()
     {
-        if (_webSocketServer.IsRunning)
-        {
-            try
-            {
-                Form form = Utility.GetTopMostForm();
-                if (form == null)
-                {
-                    await _webSocketServer.SendCommandsToClient(new List<string>(), Guid.Empty);
-                }
-                else
-                {
-                    Guid formId = GetFormID(form);
-                    XElement formElement = await FormXmlSerializer.SerializeAsync(form);
+        if (!_webSocketServer.IsRunning)
+            return;
 
-                    var paint_commands = PaintCommandGenerator.Generate(formElement);
-                    if (paint_commands == this.commands)
-                    {
-                        return;
-                    }
-                    this.commands = paint_commands;
-                    await _webSocketServer.SendCommandsToClient(commands, formId);
-                }
-            }
-            catch (Exception ex)
+        try
+        {
+            Form form = Utility.GetTopMostForm();
+            if (form == null)
             {
-                MessageBox.Show(ex.ToString());
+                await _webSocketServer.SendCommandsToClient(new List<PaintCommand>(), Guid.Empty);
+                return;
             }
+
+            Guid formId = GetFormID(form);
+            // 直接遍历控件树生成结构化指令，跳过 XML 中间层
+            var paintCommands = FastPaintCommandGenerator.Generate(form);
+            // 值相等才跳过（原引用比较永远为 false，导致空转发送）
+            if (paintCommands.SequenceEqual(this.commands))
+                return;
+
+            this.commands = paintCommands;
+            await _webSocketServer.SendCommandsToClient(paintCommands, formId);
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine(ex.ToString());
         }
     }
 
@@ -424,7 +435,7 @@ public class SurfaceController
     }
     public double dpiScale = 1.5;
     private bool _showRemoteCursor;
-    private List<string> commands;
+    private List<PaintCommand> commands;
 
     private object[] CreateLinkLabelLinkClickedEventArgs(object sender, int button, LinkLabel.Link link)
     {

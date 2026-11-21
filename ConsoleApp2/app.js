@@ -401,6 +401,18 @@ function wrapText(text, maxWidth, font) {
     return lines;
 }
 
+// 结构化指令分发表：避免 eval 解析字符串
+const commandHandlers = {
+    setBounds,
+    drawBackground,
+    drawLabel,
+    drawButton,
+    drawCheckBox,
+    drawLinkLabel,
+    drawEnhancedTextBox,
+    drawControl
+};
+
 // ES模块导出
 export {
     initCanvas,
@@ -411,7 +423,8 @@ export {
     drawCheckBox,
     drawLinkLabel,
     drawEnhancedTextBox,
-    drawControl
+    drawControl,
+    commandHandlers
 };
 
 // CommonJS兼容

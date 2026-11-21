@@ -1,10 +1,12 @@
-﻿import { initCanvas, setBounds, drawBackground, drawLabel, drawButton, drawCheckBox, drawLinkLabel, drawEnhancedTextBox, drawControl } from './app.js';
+﻿import { initCanvas, commandHandlers } from './app.js';
 
 // 全局变量
 let canvas = null;
 let ctx = null;
-let paint_commands = null;
-const DEBOUNCE_INTERVAL = 1000 / 30; // 防抖间隔（毫秒）
+let pendingFrame = null;     // 只保留最新帧，旧帧直接丢弃
+let lastCommands = [];       // 上一帧指令，用于增量 diff
+let lastFrameSignature = '';
+const DEBOUNCE_INTERVAL = 1000 / 30; // 事件回传防抖间隔（毫秒）
 let ws = null; // WebSocket 连接
 let animationFrameId = 0
 let lastDisconnectTime = 0;
@@ -23,6 +25,25 @@ function endUpdate(id) {
     winFormId = id;
     isUpdating = false;
     console.log('end update.')
+}
+
+// 结构化指令直接调用函数；字符串指令保留 eval 以兼容旧服务端
+const handlers = { ...commandHandlers };
+handlers['#beginUpdate'] = beginUpdate;
+handlers['#endUpdate'] = endUpdate;
+
+function executeCommand(command, structured) {
+    if (structured) {
+        const fn = handlers[command.cmd];
+        if (fn) {
+            try { fn(...command.args); }
+            catch (e) { console.error('command failed:', command.cmd, e); }
+        }
+    } else {
+        const code = command.startsWith('#') ? command.substring(1) : command;
+        try { eval(code); }
+        catch (e) { console.error('eval failed:', code, e); }
+    }
 }
 
 function initApp() {
@@ -237,8 +258,8 @@ function startWebSocket() {
 
     ws.onmessage = (event) => {
         try {
-            paint_commands = JSON.parse(event.data);
-            update();
+            // 只保存最新帧，渲染交给 requestAnimationFrame 统一处理
+            pendingFrame = JSON.parse(event.data);
         } catch (error) {
             console.error('Failed to parse message:', error);
         }
@@ -258,30 +279,94 @@ function startWebSocket() {
     };
 }
 
-// 解析 XML 并渲染表单
-let fps = 30;
-function update() {
-    const delta = performance.now() - _lastUpdateTime;
-    if (delta > 1000 / fps) {
-        let copied = paint_commands;
-        if (!copied) return;
-
-        // 清空 Canvas
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        copied.forEach(command => eval(command.startsWith('#') ? command.substring(1) : command));
-
-        // skip commands which should only applied once
-        copied = copied.filter(x => !x.startsWith('#'));
-        paint_commands = copied;
+// 增量渲染：对比上一帧，只重画变化控件的脏矩形区域
+function argsEqual(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
     }
+    return true;
+}
+
+function unionRects(rects) {
+    if (!rects.length) return null;
+    let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    for (const r of rects) {
+        if (!r || r.length < 4) continue;
+        x1 = Math.min(x1, r[0]);
+        y1 = Math.min(y1, r[1]);
+        x2 = Math.max(x2, r[0] + r[2]);
+        y2 = Math.max(y2, r[1] + r[3]);
+    }
+    if (x1 === Infinity) return null;
+    x1 = Math.max(0, Math.floor(x1));
+    y1 = Math.max(0, Math.floor(y1));
+    x2 = Math.min(canvas.width, Math.ceil(x2));
+    y2 = Math.min(canvas.height, Math.ceil(y2));
+    return [x1, y1, x2 - x1, y2 - y1];
+}
+
+function applyFrame() {
+    const frame = pendingFrame;
+    if (!frame) return;
+    pendingFrame = null;
+
+    const structured = frame.length > 0 && typeof frame[0] === 'object' && frame[0] !== null;
+    const signature = structured
+        ? frame.map(c => (c.id || '') + ':' + c.cmd + ':' + JSON.stringify(c.args)).join('|')
+        : frame.join('\n');
+    if (signature === lastFrameSignature) return; // 双保险：服务端已做值去重
+    lastFrameSignature = signature;
+
+    if (!structured) {
+        // 旧协议：全量清空 + eval
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        for (const command of frame) executeCommand(command, false);
+        return;
+    }
+
+    // 结构化协议：收集变化的脏矩形
+    const dirty = [];
+    const oldById = new Map();
+    for (const c of lastCommands) if (c.id) oldById.set(c.id, c);
+    const newIds = new Set();
+
+    for (const c of frame) {
+        if (c.id) {
+            newIds.add(c.id);
+            const old = oldById.get(c.id);
+            if (!old || old.cmd !== c.cmd || !argsEqual(old.args, c.args)) {
+                if (c.rect) dirty.push(c.rect);
+                if (old && old.rect) dirty.push(old.rect); // 文本变短时旧区域也要擦除
+            }
+        } else if (c.cmd === 'setBounds' || c.cmd === 'drawBackground') {
+            dirty.push([0, 0, canvas.width, canvas.height]);
+        }
+        // #beginUpdate / #endUpdate 不影响画面
+    }
+    for (const [id, old] of oldById) {
+        if (!newIds.has(id) && old.rect) dirty.push(old.rect); // 控件消失
+    }
+
+    const region = unionRects(dirty);
+    if (region) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(region[0], region[1], region[2], region[3]);
+        ctx.clip();
+        ctx.clearRect(region[0], region[1], region[2], region[3]);
+        for (const c of frame) executeCommand(c, true);
+        ctx.restore();
+    }
+    lastCommands = frame;
 }
 
 import { drawDisconnectOverlay } from "./connection.js"
-// 启动渲染循环
+// 启动渲染循环：渲染完全跟随 requestAnimationFrame，不再做二次 30fps 节流
 function startRendering() {
     function renderLoop() {
         if (isDisconnected) {
-            paint_commands = null;
+            pendingFrame = null;
             loadingSplash.update(canvas, ctx);
             //drawDisconnectOverlay(ctx, canvas);
 
@@ -293,7 +378,7 @@ function startRendering() {
             //ctx.fillText(`已断开 ${disconnectDuration}秒`, canvas.width / 2, canvas.height / 2 + 70);
         }
         else {
-            update();
+            applyFrame();
         }
         animationFrameId = requestAnimationFrame(renderLoop);
     }

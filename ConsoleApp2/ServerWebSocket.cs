@@ -1,4 +1,6 @@
 ﻿using Newtonsoft.Json;
+using RemoteForm.Paint;
+using System.Collections.Generic;
 using System.Net.WebSockets;
 using System.Net;
 using System.Text;
@@ -32,10 +34,9 @@ public class ServerWebSocket
         await impl.StartAsync(_port, loadingSplash, CancellationToken.None);
     }
 
-    public async Task SendCommandsToClient(object data, Guid formId)
+    public async Task SendCommandsToClient(List<PaintCommand> commands, Guid formId)
     {
-        var commandsJson = JsonConvert.SerializeObject(data);
-        await impl.BroadcastAsync(commandsJson, formId, CancellationToken.None);
+        await impl.BroadcastAsync(commands, formId, CancellationToken.None);
     }
 
     public void Stop()

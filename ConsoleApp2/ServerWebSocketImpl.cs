@@ -1,4 +1,5 @@
 ﻿using Newtonsoft.Json;
+using RemoteForm.Paint;
 using System;
 using System.Buffers;
 using System.Collections.Concurrent;
@@ -12,6 +13,7 @@ using System.Threading.Tasks;
 
 public class WebSocketServerImpl : IDisposable
 {
+    private const double DesiredMaxFps = 60;
     private readonly ConcurrentDictionary<WebSocket, ClientContext> _clients = new();
     private readonly ArrayPool<byte> _bufferPool = ArrayPool<byte>.Shared;
     private readonly int _receiveBufferSize = 1024 * 4; // 4KB
@@ -206,11 +208,11 @@ public class WebSocketServerImpl : IDisposable
             true,
             cancellationToken);
     }
-    public async Task BroadcastAsync(string message, Guid formId, CancellationToken cancellationToken)
+    public async Task BroadcastAsync(List<PaintCommand> commands, Guid formId, CancellationToken cancellationToken)
     {
-        var now = DateTime.Now;
-        message = WrapWithUpdateCommands(message, formId);
-        var buffer = Encoding.UTF8.GetBytes(message);
+        var now = DateTime.UtcNow;
+        var payload = WrapWithUpdateCommands(commands, formId);
+        var buffer = Encoding.UTF8.GetBytes(payload);
         var segment = new ArraySegment<byte>(buffer);
         var serialized = new Serialized(formId, segment);
 
@@ -220,10 +222,11 @@ public class WebSocketServerImpl : IDisposable
                 continue;
 
             var context = client.Value;
-            var isRateLimited = (now - context.LastActivity).TotalMicroseconds < 1000 / 10;
+            // 原实现用 TotalMicroseconds < 100 且 Now/UtcNow 混用，限流几乎失效
+            var isRateLimited = (now - context.LastActivity).TotalMilliseconds < 1000.0 / DesiredMaxFps;
             if (isRateLimited)
                 continue;
-            if (client.Value.LastSent.Equals(serialized))
+            if (context.LastSent.Equals(serialized))
                 continue;
             try
             {
@@ -244,12 +247,16 @@ public class WebSocketServerImpl : IDisposable
         }
     }
 
-    private string WrapWithUpdateCommands(string originalMessage, Guid formId)
+    private string WrapWithUpdateCommands(List<PaintCommand> commands, Guid formId)
     {
-        var commands = JsonConvert.DeserializeObject<List<string>>(originalMessage);
-        commands.Insert(0, $"#beginUpdate('{formId}')");
-        commands.Add($"#endUpdate('{formId}')"); // 使用 Add 而不是 Append
-        return JsonConvert.SerializeObject(commands);
+        // 直接构造对象后序列化一次；原实现先反序列化再序列化，白做两遍 JSON
+        var payload = new List<PaintCommand>(commands.Count + 2)
+        {
+            new PaintCommand { Cmd = "#beginUpdate", Args = new object[] { formId.ToString() } }
+        };
+        payload.AddRange(commands);
+        payload.Add(new PaintCommand { Cmd = "#endUpdate", Args = new object[] { formId.ToString() } });
+        return JsonConvert.SerializeObject(payload);
     }
 
     private async Task SendAsync(Guid formId, ArraySegment<byte> segment, bool endOfMessage, Serialized serialized, KeyValuePair<WebSocket, ClientContext> client, CancellationToken cancellationToken)

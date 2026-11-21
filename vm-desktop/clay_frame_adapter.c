@@ -12,6 +12,7 @@ struct ClayFrameBuffer {
     char *data;
     size_t length;
     size_t capacity;
+    int commandCount;
 };
 
 static int buffer_reserve(ClayFrameBuffer *b, size_t extra) {
@@ -190,8 +191,97 @@ size_t ClayFrameBuffer_Length(const ClayFrameBuffer *b) {
 void ClayFrameBuffer_Clear(ClayFrameBuffer *b) {
     if (b) {
         b->length = 0;
+        b->commandCount = 0;
         if (b->data) b->data[0] = '\0';
     }
+}
+
+void ClayFrame_Begin(ClayFrameBuffer *out, uint32_t frameId) {
+    if (!out) return;
+    ClayFrameBuffer_Clear(out);
+    buffer_putf(out, "{\"type\":\"frame\",\"frameId\":%u,\"commands\":[", frameId);
+}
+
+void ClayFrame_AppendRaw(ClayFrameBuffer *out, const char *rawCommand) {
+    if (!out || !rawCommand || !*rawCommand) return;
+    if (out->commandCount++) buffer_puts(out, ",");
+    buffer_puts(out, rawCommand);
+}
+
+void ClayFrame_End(ClayFrameBuffer *out) {
+    if (out) buffer_puts(out, "]}");
+}
+
+static void append_clay_commands(
+    ClayFrameBuffer *out,
+    const Clay_RenderCommand *commands,
+    int commandCount,
+    int offsetX,
+    int offsetY,
+    const char *(*fontResolver)(uint16_t),
+    const char *(*imgResolver)(const void *)) {
+    for (int i = 0; i < commandCount; i++) {
+        Clay_RenderCommand rc = commands[i];
+        rc.boundingBox.x += (float)offsetX;
+        rc.boundingBox.y += (float)offsetY;
+        if (rc.commandType == CLAY_RENDER_COMMAND_TYPE_NONE) continue;
+        if (out->commandCount++) buffer_puts(out, ",");
+        switch (rc.commandType) {
+            case CLAY_RENDER_COMMAND_TYPE_RECTANGLE:
+                append_rect_command(out, &rc, "drawRect",
+                                    rc.renderData.rectangle.backgroundColor,
+                                    rc.renderData.rectangle.cornerRadius);
+                break;
+            case CLAY_RENDER_COMMAND_TYPE_BORDER:
+                append_border_command(out, &rc);
+                break;
+            case CLAY_RENDER_COMMAND_TYPE_TEXT:
+                append_text_command(out, &rc, fontResolver);
+                break;
+            case CLAY_RENDER_COMMAND_TYPE_IMAGE:
+                append_image_command(out, &rc, imgResolver);
+                break;
+            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START:
+                append_command_prefix(out, rc.id, "clipPush");
+                append_box_args(out, rc.boundingBox);
+                append_command_suffix(out, rc.boundingBox);
+                break;
+            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:
+                append_command_prefix(out, rc.id, "clipPop");
+                append_command_suffix(out, rc.boundingBox);
+                break;
+            case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START:
+                append_command_prefix(out, rc.id, "overlayPush");
+                append_color(out, rc.renderData.overlayColor.color);
+                append_command_suffix(out, rc.boundingBox);
+                break;
+            case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_END:
+                append_command_prefix(out, rc.id, "overlayPop");
+                append_command_suffix(out, rc.boundingBox);
+                break;
+            case CLAY_RENDER_COMMAND_TYPE_CUSTOM:
+                append_command_prefix(out, rc.id, "drawRect");
+                append_bounding_box(out, rc.boundingBox);
+                buffer_puts(out, ",\"rgba(255,0,255,1)\",0");
+                append_command_suffix(out, rc.boundingBox);
+                break;
+            case CLAY_RENDER_COMMAND_TYPE_NONE:
+                break;
+        }
+    }
+}
+
+void ClayFrame_AppendCommands(
+    ClayFrameBuffer *out,
+    const void *renderCommands,
+    int commandCount,
+    int offsetX,
+    int offsetY,
+    const char *(*fontResolver)(uint16_t),
+    const char *(*imgResolver)(const void *)) {
+    if (!out || !renderCommands) return;
+    append_clay_commands(out, (const Clay_RenderCommand *)renderCommands,
+                         commandCount, offsetX, offsetY, fontResolver, imgResolver);
 }
 
 void ClayFrame_Build(
@@ -202,58 +292,8 @@ void ClayFrame_Build(
     const char *(*fontResolver)(uint16_t),
     const char *(*imgResolver)(const void *)) {
     if (!out || !renderCommands) return;
-    const Clay_RenderCommand *commands = (const Clay_RenderCommand *)renderCommands;
-
-    ClayFrameBuffer_Clear(out);
-    buffer_putf(out, "{\"type\":\"frame\",\"frameId\":%u,\"commands\":[", frameId);
-
-    int appended = 0;
-    for (int i = 0; i < commandCount; i++) {
-        const Clay_RenderCommand *rc = &commands[i];
-        if (appended++) buffer_puts(out, ",");
-        switch (rc->commandType) {
-            case CLAY_RENDER_COMMAND_TYPE_NONE:
-                appended--;
-                break;
-            case CLAY_RENDER_COMMAND_TYPE_RECTANGLE:
-                append_rect_command(out, rc, "drawRect",
-                                    rc->renderData.rectangle.backgroundColor,
-                                    rc->renderData.rectangle.cornerRadius);
-                break;
-            case CLAY_RENDER_COMMAND_TYPE_BORDER:
-                append_border_command(out, rc);
-                break;
-            case CLAY_RENDER_COMMAND_TYPE_TEXT:
-                append_text_command(out, rc, fontResolver);
-                break;
-            case CLAY_RENDER_COMMAND_TYPE_IMAGE:
-                append_image_command(out, rc, imgResolver);
-                break;
-            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START:
-                append_command_prefix(out, rc->id, "clipPush");
-                append_box_args(out, rc->boundingBox);
-                append_command_suffix(out, rc->boundingBox);
-                break;
-            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:
-                append_command_prefix(out, rc->id, "clipPop");
-                append_command_suffix(out, rc->boundingBox);
-                break;
-            case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START:
-                append_command_prefix(out, rc->id, "overlayPush");
-                append_color(out, rc->renderData.overlayColor.color);
-                append_command_suffix(out, rc->boundingBox);
-                break;
-            case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_END:
-                append_command_prefix(out, rc->id, "overlayPop");
-                append_command_suffix(out, rc->boundingBox);
-                break;
-            case CLAY_RENDER_COMMAND_TYPE_CUSTOM:
-                append_command_prefix(out, rc->id, "drawRect");
-                append_bounding_box(out, rc->boundingBox);
-                buffer_puts(out, ",\"rgba(255,0,255,1)\",0");
-                append_command_suffix(out, rc->boundingBox);
-                break;
-        }
-    }
-    buffer_puts(out, "]}");
+    ClayFrame_Begin(out, frameId);
+    append_clay_commands(out, (const Clay_RenderCommand *)renderCommands,
+                         commandCount, 0, 0, fontResolver, imgResolver);
+    ClayFrame_End(out);
 }

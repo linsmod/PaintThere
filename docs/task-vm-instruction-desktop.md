@@ -113,7 +113,12 @@ created → mapped（可见）→ focused / unfocused
   - `ConsoleApp2/font_wasm.js`：加载 TTF base64、光栅化文本为 RGBA、染色后绘制；`app.js` 的 `drawText` 改走此路径，新增 `loadFont` 命令，未就绪时由 frame 重放补齐。
   - 验证：native `font_probe` 与 wasm 对三段文本度量完全一致（Hello World=91、跨端图绘指令流=70、长英文=247）；浏览器中 wasm 光栅化中文结果 `w=74,h=23,alpha=378` 与 Node 一致；端到端 SSE 帧渲染标题，蓝色文字像素 206，console 无错误，截图 `vm-desktop/font_render.png`。
   - Emscripten 安装：`H:\github_repos\emsdk`（emcc 7.0.0，装在 H 盘因 C 盘空间不足）；新 shell 需先设置 PATH/EMSDK 环境变量，构建命令见 tools/INDEX.md。
-- [ ] **阶段 3 guest WM 最小实现**：窗口创建/销毁/移动/z 序/焦点。验收：两个窗口可切换焦点、拖动。
+- [x] **阶段 3 guest WM 最小实现**：窗口创建/销毁/移动/z 序/焦点，端到端验证通过。
+  - `vm-desktop/vm_wm.c/.h`：窗口数组（id/title/rect/z/focus/clayCtx/layout）、z 序命中测试、焦点提升、标题栏拖动、原始输入解析（kind/x/y/button）、多窗口帧合成（背景 → 各窗口装饰 → Clay 内容按窗口偏移）。
+  - `vm-desktop/clay_frame_adapter.c/.h` 扩展 `ClayFrame_Begin/AppendCommands/AppendRaw/End`，支持分块构建与坐标偏移。
+  - `vm-desktop/demo_wm.c`：两个 Clay 窗口 + SSE 服务；测试页发送 mousedown/mousemove/mouseup 并换算逻辑坐标。
+  - 验证：浏览器渲染双窗口（背景 307200、焦点标题蓝 11485、非焦点标题灰 6188）；点击 B 标题栏后服务端 `focus=2`，蓝/灰像素随焦点变化；拖动 B 后其 body 坐标从 (302,228) 变为 (371,294)，与鼠标位移一致。截图 `wm_two_windows.png`、`wm_after_drag.png`。
+  - 修复过的坑：测试页需发送 `mousedown/mousemove/mouseup` 而非笼统 `mouse`；坐标需从 CSS 像素换算到 800×600 逻辑坐标。
 - [ ] **阶段 4 输入闭环**：浏览器原始输入 → guest → Clay pointer state。验收：hover/click 在浏览器画面生效，文本输入可达焦点窗口。
 - [ ] **阶段 5 多客户端与指针**：复用彩色指针 + guest 焦点仲裁。验收：双客户端互见，焦点唯一。
 - [ ] **阶段 6 性能优化**：retained diff、脏矩形、frameId 绑定、限流。验收：60fps 下延迟可接受。
@@ -125,7 +130,7 @@ created → mapped（可见）→ focused / unfocused
 - 设计起点：本文 + `docs/arch-跨端图绘指令流.md`（现有指令流架构）+ `docs/task-multi-client-cursor.md`（多客户端指针）。
 - Clay 源码：`H:\github_repos\clay\clay.h`、`README.md`、`renderers/terminal/clay_renderer_terminal_ansi.c`（最简非像素 renderer 参考）。
 - VM 环境：`H:\github_repos\RVVM`，token 在 `release.test.windows.x86_64\runtime\supervisor\token`。
-- 下一动作：阶段 3，guest WM 最小实现——窗口创建/销毁/移动/z 序/焦点，输出合并后的帧。字体方案已定，不再需要 Canvas 度量对比。
+- 下一动作：阶段 4，输入闭环——把浏览器 hover/click 原始事件喂给焦点窗口的 Clay pointer state，验证按钮 hover/click 在合成画面生效。
 
 ## 已知限制
 

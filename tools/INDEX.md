@@ -7,6 +7,8 @@
   `emcc -O2 -s EXPORTED_FUNCTIONS='["_loadFont","_measureText","_rasterizeText","_alloc","_freeMem"]' -s EXPORTED_RUNTIME_METHODS='["HEAPU8","HEAPU32"]' -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_ES6=1 -s EXPORT_NAME=StbFontWasm -s ENVIRONMENT=web,node -I<mystbfont-dir> stb_font_wasm.c -o stb_font_wasm.mjs`
 - `vm-desktop/font_probe.c` — native stb_truetype 度量探针，用于与 wasm 对比。
 - `vm-desktop/test_wasm_font.mjs` — wasm 度量/光栅化测试脚本。
+- `vm-desktop/vm_wm.c/.h` — guest 最小 WM：窗口树/z 序/焦点/标题栏拖动/多窗口帧合成。
+- `vm-desktop/demo_wm.c` — 双窗口 WM demo。构建：`gcc -std=c11 -I<clay-dir> -I. demo_wm.c clay_frame_adapter.c vm_wm.c vm_server.c -lws2_32 -o demo_wm.exe`；运行 `./demo_wm 9000 ../ConsoleApp2`。截图 `wm_two_windows.png` / `wm_after_drag.png`。
 - `vm-desktop/vm_server.c/.h` — C 跨平台 HTTP 服务：`GET /events` SSE 推帧、`POST /input` 收原始输入、白名单静态资源。
 - `vm-desktop/demo_server.c` — SSE 服务 demo。构建：`gcc -std=c11 -I<clay-dir> -I. demo_server.c demo_layout.c clay_frame_adapter.c vm_server.c -lws2_32 -o demo_server.exe`；运行：`./demo_server 9000 ../ConsoleApp2`。本机 clay 目录 `H:\github_repos\clay`；验证截图 `vm-desktop/demo_render.png`。
 

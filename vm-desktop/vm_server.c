@@ -70,9 +70,14 @@ static const char VM_INDEX_HTML[] =
     "for(const c of f.commands){const fn=commandHandlers[c.cmd];"
     "if(fn)fn(...c.args);}}catch(err){console.error('frame error',err)}};"
     "es.onerror=()=>console.warn('SSE disconnected');"
-    "document.addEventListener('click',(e)=>{"
+    "const send=(kind,e)=>{const r=cv.getBoundingClientRect();"
+    "const x=Math.round((e.clientX-r.left)/r.width*cv.width);"
+    "const y=Math.round((e.clientY-r.top)/r.height*cv.height);"
     "fetch('/input',{method:'POST',headers:{'Content-Type':'application/json'},"
-    "body:JSON.stringify({type:'input',kind:'mouse',x:e.clientX,y:e.clientY})})});"
+    "body:JSON.stringify({type:'input',kind:kind,x:x,y:y,button:e.button})})};"
+    "cv.addEventListener('mousedown',(e)=>send('mousedown',e));"
+    "document.addEventListener('mousemove',(e)=>send('mousemove',e));"
+    "document.addEventListener('mouseup',(e)=>send('mouseup',e));"
     "</script></body></html>";
 
 static void vm_send_all(vm_socket fd, const char *data, size_t len) {

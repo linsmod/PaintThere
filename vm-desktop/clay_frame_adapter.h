@@ -28,6 +28,21 @@ void ClayFrame_Build(
     const char *(*fontResolver)(uint16_t fontId),
     const char *(*imgResolver)(const void *imageData));
 
+/* Incremental frame building (for composite/Wm use):
+     Begin -> AppendCommands (per window, with offset) / AppendRaw -> End */
+void ClayFrame_Begin(ClayFrameBuffer *out, uint32_t frameId);
+void ClayFrame_AppendCommands(
+    ClayFrameBuffer *out,
+    const void *renderCommands,
+    int commandCount,
+    int offsetX,
+    int offsetY,
+    const char *(*fontResolver)(uint16_t fontId),
+    const char *(*imgResolver)(const void *imageData));
+/* rawCommand is a complete JSON object without surrounding frame wrapper. */
+void ClayFrame_AppendRaw(ClayFrameBuffer *out, const char *rawCommand);
+void ClayFrame_End(ClayFrameBuffer *out);
+
 #ifdef __cplusplus
 }
 #endif

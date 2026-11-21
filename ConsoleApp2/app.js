@@ -82,12 +82,102 @@ function getTintedImage(imgId, tint) {
     return off;
 }
 
-function drawImg(imgId, x, y, w, h, tint) {
+function drawImg(imgId, x, y, w, h, tint, cornerRadius = 0) {
     const target = drawImgCtx || ctx;
     if (!target) return;
     const src = getTintedImage(imgId, tint);
     if (!src) return; // 资源未就绪时静默跳过，不打断既有渲染
-    target.drawImage(src, x, y, w || src.width, h || src.height);
+    const dw = w || src.width, dh = h || src.height;
+    if (cornerRadius > 0) {
+        target.save();
+        target.beginPath();
+        if (target.roundRect) target.roundRect(x, y, dw, dh, cornerRadius);
+        else target.rect(x, y, dw, dh);
+        target.clip();
+    }
+    target.drawImage(src, x, y, dw, dh);
+    if (cornerRadius > 0) target.restore();
+}
+
+// VM 指令化桌面绘制原语：只做绘制，不含任何窗口/桌面语义
+const fontTable = new Map();
+function registerFont(fontId, family) { fontTable.set(fontId, family); }
+const primitiveClipStack = [];
+const overlayStack = [];
+
+function applyOverlay(x, y, w, h) {
+    if (!overlayStack.length) return;
+    ctx.save();
+    ctx.fillStyle = resolveColor(overlayStack[overlayStack.length - 1]);
+    ctx.fillRect(x, y, w, h);
+    ctx.restore();
+}
+
+function clear(x, y, w, h) {
+    if (x === undefined) ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    else ctx.clearRect(x, y, w, h);
+}
+
+function drawRect(x, y, w, h, color, cornerRadius = 0) {
+    ctx.save();
+    ctx.fillStyle = resolveColor(color);
+    if (cornerRadius > 0) {
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(x, y, w, h, cornerRadius);
+        else ctx.rect(x, y, w, h);
+        ctx.fill();
+    } else {
+        ctx.fillRect(x, y, w, h);
+    }
+    ctx.restore();
+    applyOverlay(x, y, w, h);
+}
+
+function drawBorder(x, y, w, h, color, widths, cornerRadius = 0) {
+    const [l, r, t, b] = widths || [0, 0, 0, 0];
+    ctx.save();
+    ctx.fillStyle = resolveColor(color);
+    if (l > 0) ctx.fillRect(x, y, l, h);
+    if (r > 0) ctx.fillRect(x + w - r, y, r, h);
+    if (t > 0) ctx.fillRect(x, y, w, t);
+    if (b > 0) ctx.fillRect(x, y + h - b, w, b);
+    ctx.restore();
+    applyOverlay(x, y, w, h);
+}
+
+function drawText(x, y, w, h, text, fontId, fontSize, color, letterSpacing = 0, lineHeight = 0) {
+    const family = fontTable.get(fontId) || 'sans-serif';
+    ctx.save();
+    ctx.font = `${fontSize}px ${family}`;
+    ctx.fillStyle = resolveColor(color);
+    ctx.textBaseline = 'top';
+    if (letterSpacing && 'letterSpacing' in ctx) ctx.letterSpacing = `${letterSpacing}px`;
+    const lh = lineHeight || fontSize;
+    String(text).split('\n').forEach((line, i) => ctx.fillText(line, x, y + i * lh));
+    ctx.restore();
+    applyOverlay(x, y, w, h);
+}
+
+function clipPush(x, y, w, h) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(x, y, w, h);
+    ctx.clip();
+    primitiveClipStack.push(true);
+}
+
+function clipPop() {
+    if (!primitiveClipStack.length) return;
+    primitiveClipStack.pop();
+    ctx.restore();
+}
+
+function overlayPush(color) { overlayStack.push(color); }
+function overlayPop() { if (overlayStack.length) overlayStack.pop(); }
+
+function drainPrimitiveState() {
+    while (primitiveClipStack.length) { primitiveClipStack.pop(); ctx.restore(); }
+    overlayStack.length = 0;
 }
 
 let bounds = {
@@ -465,7 +555,15 @@ const commandHandlers = {
     drawEnhancedTextBox,
     drawControl,
     loadImg,
-    drawImg
+    drawImg,
+    clear,
+    drawRect,
+    drawBorder,
+    drawText,
+    clipPush,
+    clipPop,
+    overlayPush,
+    overlayPop
 };
 
 // ES模块导出
@@ -482,6 +580,16 @@ export {
     loadImg,
     drawImg,
     setDrawImgTarget,
+    registerFont,
+    drainPrimitiveState,
+    clear,
+    drawRect,
+    drawBorder,
+    drawText,
+    clipPush,
+    clipPop,
+    overlayPush,
+    overlayPop,
     commandHandlers
 };
 

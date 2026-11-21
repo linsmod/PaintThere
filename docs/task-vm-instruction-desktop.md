@@ -93,7 +93,11 @@ created → mapped（可见）→ focused / unfocused
 
 ## 分阶段实施与验收
 
-- [ ] **阶段 0 协议定稿**：绘制原语 JSON schema、`frameId`、原始输入事件 schema。验收：本文定稿，前端 `app.js` 原语清单对齐。
+- [x] **阶段 0 协议定稿**：绘制原语 JSON schema、`frameId`、原始输入事件 schema。验收：本文定稿，前端 `app.js` 原语清单对齐。
+  - 协议设计见 `docs/design-vm-draw-protocol.md`（冻结设计）。
+  - `app.js` 已注册原语：`clear` / `drawRect` / `drawBorder` / `drawText` / `drawImg` / `clipPush` / `clipPop` / `overlayPush` / `overlayPop`，并导出 `registerFont` / `drainPrimitiveState`。
+  - `main.js` 已识别 `{type:'frame', frameId, commands}` envelope，记录 `currentFrameId`，上行事件带 `frameId` 标记，帧边界清理原语状态栈。
+  - 验证：两个项目 `dotnet build` 通过；未做浏览器运行时验证（阶段 1 起配合 adapter）。
 - [ ] **阶段 1 adapter**：Clay `RenderCommandArray` → 跨端指令。验收：单窗口 demo，浏览器显示与 Clay terminal renderer 等价布局。
 - [ ] **阶段 2 文本一致性验证**：A 方案对比 guest 度量与浏览器实际绘制；失败则切 B 并在本文记录。
 - [ ] **阶段 3 guest WM 最小实现**：窗口创建/销毁/移动/z 序/焦点。验收：两个窗口可切换焦点、拖动。
@@ -108,7 +112,7 @@ created → mapped（可见）→ focused / unfocused
 - 设计起点：本文 + `docs/arch-跨端图绘指令流.md`（现有指令流架构）+ `docs/task-multi-client-cursor.md`（多客户端指针）。
 - Clay 源码：`H:\github_repos\clay\clay.h`、`README.md`、`renderers/terminal/clay_renderer_terminal_ansi.c`（最简非像素 renderer 参考）。
 - VM 环境：`H:\github_repos\RVVM`，token 在 `release.test.windows.x86_64\runtime\supervisor\token`。
-- 下一动作：阶段 0，先定绘制原语 JSON schema 并与现有 `PaintCommand` 对齐。
+- 下一动作：阶段 1，实现 Clay `RenderCommandArray` → 跨端原语 adapter，输出 `{type:'frame', frameId, commands}`。
 
 ## 已知限制
 

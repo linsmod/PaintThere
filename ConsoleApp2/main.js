@@ -1,4 +1,4 @@
-﻿import { initCanvas, commandHandlers, loadImg, drawImg, setDrawImgTarget } from './app.js';
+﻿import { initCanvas, commandHandlers, loadImg, drawImg, setDrawImgTarget, drainPrimitiveState } from './app.js';
 
 // eval 兼容路径需要这些函数在当前作用域可见（旧协议字符串指令用）
 const { setBounds, drawBackground, drawLabel, drawButton, drawCheckBox,
@@ -10,6 +10,7 @@ let ctx = null;
 let pendingFrame = null;     // 只保留最新帧，旧帧直接丢弃
 let lastCommands = [];       // 上一帧指令，用于增量 diff
 let lastFrameSignature = '';
+let currentFrameId = 0;      // 最新收到的 frameId，仅作标记，不阻塞输入
 let cursorCanvas = null;
 let cursorCtx = null;
 let myClientId = null;
@@ -127,6 +128,7 @@ function handleEvent(e) {
         return;
     const eventData = createDomEvent(e);
     eventData.winFormId = winFormId;
+    eventData.frameId = currentFrameId; // VM 协议标记：客户端处理输入时所见的最新帧
     sendEventToServer(eventData);
 }
 
@@ -280,6 +282,10 @@ function startWebSocket() {
             if (Array.isArray(data)) {
                 // 只保存最新帧，渲染交给 requestAnimationFrame 统一处理
                 pendingFrame = data;
+            } else if (data && data.type === 'frame') {
+                // VM 指令化桌面帧：命令数组与既有 PaintCommand 同形
+                pendingFrame = Array.isArray(data.commands) ? data.commands : [];
+                if (Number.isInteger(data.frameId)) currentFrameId = data.frameId;
             } else if (data && data.type === 'welcome') {
                 myClientId = data.clientId;
                 myColor = data.color;
@@ -337,6 +343,9 @@ function unionRects(rects) {
 }
 
 function applyFrame() {
+    // 每帧清理上一帧可能未配对的 clip/overlay，防止状态泄漏到后续帧
+    drainPrimitiveState();
+
     const frame = pendingFrame;
     if (!frame) return;
     pendingFrame = null;

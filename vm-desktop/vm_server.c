@@ -57,11 +57,9 @@ struct VmServer {
 };
 
 /* Minimal HTTP index: loads the real app.js primitives from webRoot. */
-/* 浏览器页面只提供样式，渲染逻辑与 C 宿主共用 assets/vm_renderer.js。 */
+/* HTML 只加载 JS；所有 DOM/样式由 vm_renderer.js 统一创建，与 C 宿主可比。 */
 static const char VM_INDEX_HTML[] =
     "<!DOCTYPE html><html><head><meta charset='utf-8'><title>VM Frame</title>"
-    "<style>body{margin:0;background:#1e2026}#stage{position:relative;width:800px;height:600px;margin:20px auto;"
-    "box-shadow:0 8px 32px rgba(0,0,0,.5)}#stage canvas{position:absolute;left:0;top:0}</style>"
     "<script type='module' src='/vm_renderer.js'></script></head><body></body></html>";
 
 static void vm_send_all(vm_socket fd, const char *data, size_t len) {

@@ -47,7 +47,27 @@ async function boot() {
   cv.id = 'c';
   stage.appendChild(cv);
 
+  // 样式全部由 JS 设置，HTML 只负责加载本模块。
+  // 覆盖 app.js 写入的 1/1.5 CSS 缩放：两端都按 1:1 物理像素显示，便于对比。
+  document.body.style.margin = '0px';
+  stage.style.width = WIDTH + 'px';
+  stage.style.height = HEIGHT + 'px';
+  stage.style.position = 'relative';
+  stage.style.margin = '0px';
+  const setupLayer = (canvas) => {
+    canvas.style.width = WIDTH + 'px';
+    canvas.style.height = HEIGHT + 'px';
+    canvas.style.position = 'absolute';
+    canvas.style.left = '0px';
+    canvas.style.top = '0px';
+  };
+  setupLayer(bg);
+  setupLayer(cv);
+
   initCanvas(cv, '#FFFFFF', WIDTH, HEIGHT);
+  setupLayer(bg);
+  setupLayer(cv);
+  cv.width = WIDTH; cv.height = HEIGHT;
   setLayerCanvas('bg', bg);
   replayBackgroundPrograms();
 

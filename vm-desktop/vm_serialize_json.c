@@ -237,8 +237,11 @@ char *VmSerialize_DeltaFrameJson(const VmDisplayList *list, const VmDisplayDelta
         if (i) puts_(&b, ",");
         emit_command(&b, &list->commands[i]);
     }
-    puts_(&b, "],\"dirty\":[");
+    /* dirty 是单个矩形 [x,y,w,h]；没有脏区时是空数组 []。
+       注意不要再套一层 []，否则前端拿到的是 [[x,y,w,h]]，长度 1 会被当成无效。 */
+    puts_(&b, "],\"dirty\":");
     if (delta->hasDirty) rect_json(&b, delta->dirty);
-    puts_(&b, "]}");
+    else puts_(&b, "[]");
+    puts_(&b, "}");
     return b.data;
 }

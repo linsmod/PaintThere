@@ -179,6 +179,8 @@ void VmDisplay_Diff(const VmDisplayList *prev, const VmDisplayList *current, VmD
             if (delta->changedCount < VM_DISPLAY_MAX_COMMANDS)
                 delta->changed[delta->changedCount++] = *c;
             VmDisplay_AddDirty(delta, c->rect);
+            /* 旧位置也要擦：指针、移动中的窗口只重绘新矩形会留下拖影。 */
+            if (old) VmDisplay_AddDirty(delta, old->rect);
         }
     }
 

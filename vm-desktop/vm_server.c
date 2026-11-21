@@ -57,49 +57,12 @@ struct VmServer {
 };
 
 /* Minimal HTTP index: loads the real app.js primitives from webRoot. */
+/* 浏览器页面只提供样式，渲染逻辑与 C 宿主共用 assets/vm_renderer.js。 */
 static const char VM_INDEX_HTML[] =
     "<!DOCTYPE html><html><head><meta charset='utf-8'><title>VM Frame</title>"
     "<style>body{margin:0;background:#1e2026}#stage{position:relative;width:800px;height:600px;margin:20px auto;"
-    "box-shadow:0 8px 32px rgba(0,0,0,.5)}#stage canvas{position:absolute;left:0;top:0}</style></head><body>"
-    "<div id='stage'><canvas id='bg' width='800' height='600'></canvas><canvas id='c' width='800' height='600'></canvas></div>"
-    "<script type='module'>"
-    "import { initCanvas, commandHandlers, setLayerCanvas, replayBackgroundPrograms, applyFrameDiff, applyIncrementalFrame } from './app.js';"
-    "import { loadFont } from './font_wasm.js';"
-    "const cv=document.getElementById('c'); initCanvas(cv,'#FFFFFF',800,600);"
-    "setLayerCanvas('bg',document.getElementById('bg'));"
-    "replayBackgroundPrograms();"
-    "const fr=await fetch('./font.ttf');const fb=new Uint8Array(await fr.arrayBuffer());"
-    "let bs='';for(let i=0;i<fb.length;i+=8192)bs+=String.fromCharCode(...fb.subarray(i,i+8192));"
-    "await loadFont(0,btoa(bs));await loadFont(1,btoa(bs));"
-    "const es=new EventSource('/events');"
-    "es.addEventListener('resources',(e)=>{try{const list=JSON.parse(e.data);"
-    "for(const c of list){const fn=commandHandlers[c.cmd];if(fn)fn(...c.args);}"
-    "replayBackgroundPrograms();}catch(err){console.error('resource error',err)}});"
-    "es.addEventListener('fullframe',(e)=>{try{const f=JSON.parse(e.data);"
-    "applyFrameDiff(f.commands,cv);}catch(err){console.error('fullframe error',err)}});"
-    "es.onmessage=(e)=>{try{const f=JSON.parse(e.data);"
-    "if(f.incremental)applyIncrementalFrame(f,cv);else applyFrameDiff(f.commands,cv);}"
-    "catch(err){console.error('frame error',err)}};"
-    "es.onerror=()=>console.warn('SSE disconnected');"
-    "let cid=sessionStorage.getItem('vmCid');"
-    "if(!cid){cid=Math.random().toString(36).slice(2);sessionStorage.setItem('vmCid',cid)}"
-    "const palette=['#F44336','#2196F3','#4CAF50','#FF9800','#9C27B0','#00BCD4'];"
-    "let h=0;for(let i=0;i<cid.length;i++)h=(h*31+cid.charCodeAt(i))|0;"
-    "const color=palette[Math.abs(h)%palette.length];"
-    "console.log('client',cid,color);"
-    "const send=(kind,e)=>{const r=cv.getBoundingClientRect();"
-    "const x=Math.round((e.clientX-r.left)/r.width*cv.width);"
-    "const y=Math.round((e.clientY-r.top)/r.height*cv.height);"
-    "fetch('/input',{method:'POST',headers:{'Content-Type':'application/json'},"
-    "body:JSON.stringify({type:'input',kind:kind,x:x,y:y,button:e.button,clientId:cid,color:color})})};"
-    "cv.addEventListener('mousedown',(e)=>send('mousedown',e));"
-    "document.addEventListener('mousemove',(e)=>send('mousemove',e));"
-    "document.addEventListener('mouseup',(e)=>send('mouseup',e));"
-    "const sendKey=(kind,e)=>{fetch('/input',{method:'POST',headers:{'Content-Type':'application/json'},"
-    "body:JSON.stringify({type:'input',kind:kind,key:e.key,code:e.code,clientId:cid,color:color})})};"
-    "document.addEventListener('keydown',(e)=>{if(e.key.length===1||e.key==='Backspace'||e.key==='Enter')sendKey('keydown',e)});"
-    "document.addEventListener('keyup',(e)=>{if(e.key.length===1||e.key==='Backspace'||e.key==='Enter')sendKey('keyup',e)});"
-    "</script></body></html>";
+    "box-shadow:0 8px 32px rgba(0,0,0,.5)}#stage canvas{position:absolute;left:0;top:0}</style>"
+    "<script type='module' src='/vm_renderer.js'></script></head><body></body></html>";
 
 static void vm_send_all(vm_socket fd, const char *data, size_t len) {
     size_t sent = 0;
@@ -135,7 +98,8 @@ static void vm_send_response(vm_socket fd, int code, const char *reason,
 
 static int vm_safe_join(char *out, size_t cap, const char *root, const char *name) {
     if (strcmp(name, "app.js") != 0 && strcmp(name, "systemColors.js") != 0 &&
-        strcmp(name, "index.html") != 0 && strcmp(name, "font_wasm.js") != 0 &&
+        strcmp(name, "index.html") != 0 && strcmp(name, "vm_renderer.js") != 0 &&
+        strcmp(name, "font_wasm.js") != 0 &&
         strcmp(name, "stb_font_wasm.mjs") != 0 && strcmp(name, "stb_font_wasm.wasm") != 0 &&
         strcmp(name, "font.ttf") != 0) return 0;
     int n = snprintf(out, cap, "%s/%s", root, name);
@@ -149,7 +113,8 @@ static void vm_serve_static(VmServer *s, vm_socket fd, const char *path) {
                          VM_INDEX_HTML, sizeof(VM_INDEX_HTML) - 1);
         return;
     }
-    if (strcmp(path, "/app.js") == 0) name = "app.js";
+    if (strcmp(path, "/vm_renderer.js") == 0) name = "vm_renderer.js";
+    else if (strcmp(path, "/app.js") == 0) name = "app.js";
     else if (strcmp(path, "/systemColors.js") == 0) name = "systemColors.js";
     else if (strcmp(path, "/font_wasm.js") == 0) name = "font_wasm.js";
     else if (strcmp(path, "/stb_font_wasm.mjs") == 0) name = "stb_font_wasm.mjs";

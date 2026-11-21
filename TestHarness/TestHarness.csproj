@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <RootNamespace>TestHarness</RootNamespace>
+    <AssemblyName>TestHarness</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <!-- 仅复用“图绘指令流”核心，不含 APNs 推送业务 -->
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="TestForm.cs" />
+    <Compile Include="../ConsoleApp2/SurfaceController.cs" Link="Core/SurfaceController.cs" />
+    <Compile Include="../ConsoleApp2/ServerWebSocket.cs" Link="Core/ServerWebSocket.cs" />
+    <Compile Include="../ConsoleApp2/ServerWebSocketImpl.cs" Link="Core/ServerWebSocketImpl.cs" />
+    <Compile Include="../ConsoleApp2/StaticFileServer.cs" Link="Core/StaticFileServer.cs" />
+    <Compile Include="../ConsoleApp2/OverlayPanel.cs" Link="Core/OverlayPanel.cs" />
+    <Compile Include="../ConsoleApp2/Utility.cs" Link="Core/Utility.cs" />
+    <Compile Include="../ConsoleApp2/FastPaintCommandGenerator.cs" Link="Core/FastPaintCommandGenerator.cs" />
+    <Compile Include="../ConsoleApp2/PaintCommand.cs" Link="Core/PaintCommand.cs" />
+    <Compile Include="../ConsoleApp2/DOM/DOMEventModels.cs" Link="Core/DOM/DOMEventModels.cs" />
+    <Compile Include="../ConsoleApp2/DOM/DOMEventConverter.cs" Link="Core/DOM/DOMEventConverter.cs" />
+    <Compile Include="../ConsoleApp2/DOM/DOMEventSerializer.cs" Link="Core/DOM/DOMEventSerializer.cs" />
+  </ItemGroup>
+
+  <!-- 前端资源 -->
+  <ItemGroup>
+    <None Include="../ConsoleApp2/index.html" Link="index.html" CopyToOutputDirectory="Always" />
+    <None Include="../ConsoleApp2/app.js" Link="app.js" CopyToOutputDirectory="Always" />
+    <None Include="../ConsoleApp2/main.js" Link="main.js" CopyToOutputDirectory="Always" />
+    <None Include="../ConsoleApp2/connection.js" Link="connection.js" CopyToOutputDirectory="Always" />
+    <None Include="../ConsoleApp2/loadingSplash.js" Link="loadingSplash.js" CopyToOutputDirectory="Always" />
+    <None Include="../ConsoleApp2/systemColors.js" Link="systemColors.js" CopyToOutputDirectory="Always" />
+    <None Include="../ConsoleApp2/cursor.png" Link="cursor.png" CopyToOutputDirectory="Always" />
+  </ItemGroup>
+
+</Project>

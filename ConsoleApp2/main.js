@@ -1,5 +1,9 @@
 ﻿import { initCanvas, commandHandlers } from './app.js';
 
+// eval 兼容路径需要这些函数在当前作用域可见（旧协议字符串指令用）
+const { setBounds, drawBackground, drawLabel, drawButton, drawCheckBox,
+    drawLinkLabel, drawEnhancedTextBox, drawControl } = commandHandlers;
+
 // 全局变量
 let canvas = null;
 let ctx = null;

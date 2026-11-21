@@ -76,7 +76,7 @@ public class SurfaceController
             // 直接遍历控件树生成结构化指令，跳过 XML 中间层
             var paintCommands = FastPaintCommandGenerator.Generate(form);
             // 值相等才跳过（原引用比较永远为 false，导致空转发送）
-            if (paintCommands.SequenceEqual(this.commands))
+            if (this.commands != null && paintCommands.SequenceEqual(this.commands))
                 return;
 
             this.commands = paintCommands;

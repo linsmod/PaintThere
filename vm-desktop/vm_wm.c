@@ -293,8 +293,7 @@ void VmWm_BuildFrame(VmWm *wm, ClayFrameBuffer *out, uint32_t frameId,
     ClayFrame_Begin(out, frameId);
 
     char idbuf[64];
-    snprintf(idbuf, sizeof(idbuf), "wm_bg");
-    append_rect_cmd(out, idbuf, 0, 0, wm->width, wm->height, "rgba(30,32,38,1)", 0);
+    /* Desktop background is no longer sent per-frame; it is a draw program on the bg layer. */
 
     /* z order bottom -> top */
     for (int z = 1; z < wm->nextZ; z++) {
@@ -303,9 +302,10 @@ void VmWm_BuildFrame(VmWm *wm, ClayFrameBuffer *out, uint32_t frameId,
             if (win->z != z || win->minimized) continue;
 
             snprintf(idbuf, sizeof(idbuf), "w%d_body", win->id);
+            /* styleId instead of literal color: geometry only per frame. */
             append_rect_cmd(out, idbuf, win->x + 2, win->y + VM_WM_TITLE_HEIGHT,
                             win->w - 4, win->h - VM_WM_TITLE_HEIGHT - 2,
-                            "rgba(250,250,252,1)", 0);
+                            "s_window", 0);
 
             snprintf(idbuf, sizeof(idbuf), "w%d_title", win->id);
             append_rect_cmd(out, idbuf, win->x + 2, win->y + 2,

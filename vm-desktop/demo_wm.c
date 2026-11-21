@@ -14,6 +14,13 @@
 static VmWm *g_wm;
 static ClayFrameBuffer *g_frame;
 static unsigned int g_frameId;
+static int g_dirty = 1;   /* adaptive frame rate: only publish on change */
+static char g_resources[4096];
+
+static const char *ResourceProvider(void *userData) {
+    (void)userData;
+    return g_resources;
+}
 
 static const char *ResolveFont(uint16_t fontId) {
     (void)fontId;
@@ -103,6 +110,8 @@ static Clay_RenderCommandArray LayoutB(void *userData) {
 
 static const char *FrameProvider(void *userData, unsigned int *frameId) {
     (void)userData;
+    if (!g_dirty) return NULL;  /* adaptive: no change, no frame */
+    g_dirty = 0;
     VmWm_BuildFrame(g_wm, g_frame, g_frameId, ResolveFont);
     *frameId = g_frameId++;
     return ClayFrameBuffer_Data(g_frame);
@@ -111,6 +120,7 @@ static const char *FrameProvider(void *userData, unsigned int *frameId) {
 static void InputHandler(const char *body, size_t length, void *userData) {
     (void)userData;
     int changed = VmWm_HandleInput(g_wm, body, length);
+    g_dirty = 1;  /* pointer moved or window state changed -> publish a new frame */
     printf("[input] changed=%d focus=%d %.*s\n", changed, g_wm->focusId, (int)length, body);
     fflush(stdout);
 }
@@ -122,6 +132,17 @@ int main(int argc, char **argv) {
     g_wm = VmWm_Create(800, 600);
     g_frame = ClayFrameBuffer_Create();
     if (!g_wm || !g_frame) return 1;
+
+    /* One-time resources: desktop gradient pattern, window style, background program. */
+    snprintf(g_resources, sizeof(g_resources),
+             "["
+             "{\"cmd\":\"definePattern\",\"args\":[\"p_desktop\",{\"type\":\"gradient\",\"from\":\"rgba(24,26,32,1)\",\"to\":\"rgba(48,54,66,1)\",\"direction\":\"diagonal\"}]},"
+             "{\"cmd\":\"definePattern\",\"args\":[\"p_window\",{\"type\":\"solid\",\"color\":\"rgba(250,250,252,1)\"}]},"
+             "{\"cmd\":\"defineStyle\",\"args\":[\"s_desktop\",{\"bgPattern\":\"p_desktop\"}]},"
+             "{\"cmd\":\"defineStyle\",\"args\":[\"s_window\",{\"bgPattern\":\"p_window\"}]},"
+             "{\"cmd\":\"defineDrawProgram\",\"args\":[\"prog_desktop\",[{\"cmd\":\"drawRect\",\"args\":[0,0,800,600,\"s_desktop\",0]}],\"bg\"]},"
+             "{\"cmd\":\"startDrawProgram\",\"args\":[\"prog_desktop\",\"once\"]}"
+             "]");
 
     VmWindow *a = VmWm_AddWindow(g_wm, 1, "Window A", 60, 60, 360, 260, LayoutA, &g_appA);
     VmWindow *b = VmWm_AddWindow(g_wm, 2, "Window B", 300, 200, 360, 260, LayoutB, NULL);
@@ -136,6 +157,7 @@ int main(int argc, char **argv) {
     }
     VmServer_SetFrameProvider(server, FrameProvider, NULL);
     VmServer_SetInputHandler(server, InputHandler, NULL);
+    VmServer_SetResourceProvider(server, ResourceProvider, NULL);
 
     printf("WM demo on http://127.0.0.1:%u/ (two windows, focus + drag)\n", port);
     fflush(stdout);

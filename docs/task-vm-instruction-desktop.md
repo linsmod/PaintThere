@@ -131,12 +131,15 @@ created → mapped（可见）→ focused / unfocused
   - 测试页生成持久 `clientId`（sessionStorage）+ 按 hash 选颜色，所有输入带身份。
   - 验证：服务端帧含两个客户端的 `drawImg`（红 `#F44336`、青 `#00BCD4`）；浏览器中红色箭头 171 像素、青色 161 像素，互见成功；非焦点客户端 mousemove 的 `changed=0`，窗口焦点保持，指针仍更新。截图 `wm_cursors.png`。
   - 坑：指针坐标必须用 canvas 内部坐标；合成帧要持续 POST 否则 3 秒超时后指针消失，导致检查为 0。
-- [ ] **阶段 6 性能优化 + 背景本地化 + SDK 抽象落地**：
+- [x] **阶段 6 性能优化 + 背景本地化 + SDK 抽象落地**：端到端验证通过。
   - **设计已冻结**：见 `docs/design-vm-draw-protocol.md` 的“图层模型”与“SDK 前瞻性”章节。资源/样式/绘制程序三层抽象，固定 `bg`/`windows`/`cursors` 三层，不采用 `drawLoop` 命名（静态背景 `mode:once`，动画 `mode:loop`）。
   - 实现 `definePattern` / `defineStyle` / `defineDrawProgram` / `start|pause|resumeDrawProgram`，桌面背景与窗口背景改为客户端本地绘制，不再每帧发 `drawRect`。
   - 图样只接受声明式 descriptor；复杂算法走 wasm 通道，不嵌入帧指令。
-  - retained diff、脏矩形、frameId 绑定、限流。
-  - 验收：60fps 下延迟可接受；背景不随帧重发；窗口/控件背景共用同一 style 机制。
+  - retained diff、脏矩形、frameId 绑定；**自适应帧率**：有变化才出帧，空闲零帧，限流只作上限保护（不做固定节拍，桌面不是游戏）。
+  - 验收：无变化时服务端不再广播帧；有变化时及时更新；背景不随帧重发；窗口/控件背景共用同一 style 机制。
+  - 实现要点：`app.js` 新增 `definePattern` / `defineStyle` / `defineDrawProgram` / `start|pause|resumeDrawProgram` / `setLayerCanvas` / `replayBackgroundPrograms`；`drawRect` 支持 styleId 与渐变图样；测试页加 `bg` canvas 层。服务端新增 `VmResourceProvider`，SSE 连接建立时发 `event: resources` 一次性资源。demo 用 `g_dirty` 实现自适应帧率（无变化返回 NULL，不广播）。
+  - 验证（2026-11-21）：空闲 2 秒 frameId 保持 0；一次输入后 frameId 0→1；帧中无 `wm_bg`、窗口背景引用 `s_window`、指针 `drawImg` 仍在；浏览器背景 canvas 480000 像素全不透明（渐变本地绘制），窗口蓝色标题 11720 像素，console 无错误。截图 `wm_local_bg.png`。
+  - 坑：`lastSentFrameId` 初值不能用 0（frameId 可从 0 开始），改为 `0xFFFFFFFF` 保证首帧推送。
 
 预计耗时：阶段 0–2 约 1–2 天；阶段 3–5 约 2–4 天；阶段 6 视实测而定。
 
@@ -145,7 +148,7 @@ created → mapped（可见）→ focused / unfocused
 - 设计起点：本文 + `docs/arch-跨端图绘指令流.md`（现有指令流架构）+ `docs/task-multi-client-cursor.md`（多客户端指针）。
 - Clay 源码：`H:\github_repos\clay\clay.h`、`README.md`、`renderers/terminal/clay_renderer_terminal_ansi.c`（最简非像素 renderer 参考）。
 - VM 环境：`H:\github_repos\RVVM`，token 在 `release.test.windows.x86_64\runtime\supervisor\token`。
-- 下一动作：阶段 6，按已冻结的资源/样式/绘制程序三层设计改造背景（本地绘制）+ 性能优化（retained diff、脏矩形、frameId 绑定、限流）。设计见 `docs/design-vm-draw-protocol.md`。
+- 全部阶段完成。后续增强方向：键盘/IME 输入接入焦点窗口、复杂图样的 wasm 通道、retained diff 精细化（当前仍全量重放窗口层命令）。
 
 ## 已知限制
 

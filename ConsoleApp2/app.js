@@ -45,7 +45,105 @@ function initCanvas(canvas, color, designWidth, designHeight) {
 const imageCache = new Map();
 // 染色缓存：`imgId|tint` -> HTMLCanvasElement
 const tintedCache = new Map();
+const patternCache = new Map();  // patternId -> descriptor
+const styleCache = new Map();    // styleId -> {bgPattern?, ...}
+const programCache = new Map();  // programId -> {commands, layerId, mode, running}
+const layerCanvases = new Map(); // layerId -> canvas
 let drawImgCtx = null;
+
+function resolvePaint(value, fallback) {
+    if (typeof value === 'string' && styleCache.has(value)) {
+        const style = styleCache.get(value);
+        if (style.bgPattern && patternCache.has(style.bgPattern)) {
+            return patternToFill(patternCache.get(style.bgPattern), fallback);
+        }
+        if (style.textColor) return style.textColor;
+    }
+    return value === undefined ? fallback : value;
+}
+
+function patternToFill(desc, fallback) {
+    if (!desc || typeof desc !== 'object') return fallback;
+    if (desc.type === 'solid') return desc.color || fallback;
+    if (desc.type === 'gradient') {
+        // Return a CanvasGradient needs ctx; handled at draw time via applyPattern.
+        return desc;
+    }
+    if (desc.type === 'image' && imageCache.has(desc.imgId)) {
+        const entry = imageCache.get(desc.imgId);
+        return entry.ready ? entry.image : (desc.color || fallback);
+    }
+    return fallback;
+}
+
+function setLayerCanvas(layerId, canvas) {
+    layerCanvases.set(layerId, canvas);
+}
+
+function definePattern(patternId, descriptor) {
+    if (descriptor && typeof descriptor === 'object') patternCache.set(patternId, descriptor);
+}
+
+function defineStyle(styleId, config) {
+    if (config && typeof config === 'object') styleCache.set(styleId, config);
+}
+
+function defineDrawProgram(programId, commands, layerId) {
+    programCache.set(programId, {
+        commands: Array.isArray(commands) ? commands : [],
+        layerId: layerId || 'windows',
+        mode: 'once',
+        running: false,
+    });
+}
+
+function runProgram(programId, targetCtx) {
+    const p = programCache.get(programId);
+    if (!p || !targetCtx) return;
+    const prevCtx = ctx;
+    ctx = targetCtx;
+    try {
+        for (const c of p.commands) {
+            const fn = commandHandlers[c.cmd];
+            if (fn) { try { fn(...c.args); } catch (e) { console.error('program cmd failed:', c.cmd, e); } }
+        }
+    } finally {
+        ctx = prevCtx;
+    }
+}
+
+function startDrawProgram(programId, mode) {
+    const p = programCache.get(programId);
+    if (!p) return;
+    p.mode = mode || 'once';
+    p.running = true;
+    const layerCanvas = layerCanvases.get(p.layerId);
+    runProgram(programId, layerCanvas ? layerCanvas.getContext('2d') : ctx);
+}
+
+function pauseDrawProgram(programId) {
+    const p = programCache.get(programId);
+    if (p) p.running = false;
+}
+
+function resumeDrawProgram(programId) {
+    const p = programCache.get(programId);
+    if (!p) return;
+    p.running = true;
+    const layerCanvas = layerCanvases.get(p.layerId);
+    runProgram(programId, layerCanvas ? layerCanvas.getContext('2d') : ctx);
+}
+
+/* Called by the frame loop to replay 'once' programs bound to background layer. */
+function replayBackgroundPrograms() {
+    const bgCanvas = layerCanvases.get('bg');
+    if (!bgCanvas) return;
+    const bgCtx = bgCanvas.getContext('2d');
+    bgCtx.clearRect(0, 0, bgCanvas.width, bgCanvas.height);
+    for (const [id, p] of programCache) {
+        if (p.running && p.layerId === 'bg') runProgram(id, bgCtx);
+    }
+}
 
 function setDrawImgTarget(target) {
     drawImgCtx = target;
@@ -124,7 +222,15 @@ function clear(x, y, w, h) {
 
 function drawRect(x, y, w, h, color, cornerRadius = 0) {
     ctx.save();
-    ctx.fillStyle = resolveColor(color);
+    const paint = resolvePaint(color, '#FFFFFF');
+    if (paint && typeof paint === 'object' && paint.type === 'gradient') {
+        const g = ctx.createLinearGradient(x, y, x + w, y + h);
+        g.addColorStop(0, paint.from || '#FFFFFF');
+        g.addColorStop(1, paint.to || '#000000');
+        ctx.fillStyle = g;
+    } else {
+        ctx.fillStyle = resolveColor(paint);
+    }
     if (cornerRadius > 0) {
         ctx.beginPath();
         if (ctx.roundRect) ctx.roundRect(x, y, w, h, cornerRadius);
@@ -568,6 +674,14 @@ const commandHandlers = {
     drawImg,
     loadFont,
     setTextNeedsReplay,
+    setLayerCanvas,
+    definePattern,
+    defineStyle,
+    defineDrawProgram,
+    startDrawProgram,
+    pauseDrawProgram,
+    resumeDrawProgram,
+    replayBackgroundPrograms,
     clear,
     drawRect,
     drawBorder,
@@ -594,6 +708,14 @@ export {
     loadFont,
     setDrawImgTarget,
     setTextNeedsReplay,
+    setLayerCanvas,
+    definePattern,
+    defineStyle,
+    defineDrawProgram,
+    startDrawProgram,
+    pauseDrawProgram,
+    resumeDrawProgram,
+    replayBackgroundPrograms,
     registerFont,
     drainPrimitiveState,
     clear,

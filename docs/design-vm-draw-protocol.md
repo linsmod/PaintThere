@@ -23,7 +23,17 @@
 
 - `frameId`：单调递增整数，仅用于帧同步，不含窗口语义。
 - `commands`：`PaintCommand` 同形 `{id, cmd, args, rect}`，顺序即 z 序（与 Clay `RenderCommandArray` 一致）。
+- `resources`（可选，仅首帧或资源变更帧携带）：一次性下发的 `definePattern` / `defineStyle` / `defineDrawProgram` 命令，客户端按 id 缓存，不随普通帧重复。
 - `id` 用于 retained diff；`rect` 用于脏矩形，可省略（省略时按整屏处理）。
+
+### 帧率策略：自适应，不固定
+
+桌面不是游戏，不追求恒定帧率：
+
+- **有变化才出帧**：guest 只在窗口状态、指针位置、hover/click 发生变化时递增 `frameId` 并广播；无变化时静默。
+- **限流只作上限保护**：输入高峰（如快速 mousemove）可做节流上限（如 60Hz），但不是固定节拍；空闲时零帧。
+- **首帧必达**：新客户端连接时 `lastSentFrameId=0`，服务端立即推送当前帧 + `resources`，保证状态完整。
+- **retained diff 与脏矩形**：前端按 `id` 比较命令，只重画变化区域；背景层由 draw program 本地重放，不走每帧指令流。
 
 现有 WinForms 控件帧（纯数组）与多客户端指针帧（`type:'cursors'`）保持原样；VM 帧用 `type:'frame'` 区分，三者共存于同一 WebSocket。
 

@@ -47,6 +47,8 @@ struct VmServer {
     void *frameUserData;
     VmInputHandler inputHandler;
     void *inputUserData;
+    VmResourceProvider resourceProvider;
+    void *resourceUserData;
     unsigned int currentFrameId;
     char currentFrame[VM_FRAME_BUFFER];
     int hasFrame;
@@ -55,17 +57,22 @@ struct VmServer {
 /* Minimal HTTP index: loads the real app.js primitives from webRoot. */
 static const char VM_INDEX_HTML[] =
     "<!DOCTYPE html><html><head><meta charset='utf-8'><title>VM Frame</title>"
-    "<style>body{margin:0;background:#1e2026}canvas{display:block;margin:20px auto;"
-    "box-shadow:0 8px 32px rgba(0,0,0,.5)}</style></head><body>"
-    "<canvas id='c' width='800' height='600'></canvas>"
+    "<style>body{margin:0;background:#1e2026}#stage{position:relative;width:800px;height:600px;margin:20px auto;"
+    "box-shadow:0 8px 32px rgba(0,0,0,.5)}#stage canvas{position:absolute;left:0;top:0}</style></head><body>"
+    "<div id='stage'><canvas id='bg' width='800' height='600'></canvas><canvas id='c' width='800' height='600'></canvas></div>"
     "<script type='module'>"
-    "import { initCanvas, commandHandlers } from './app.js';"
+    "import { initCanvas, commandHandlers, setLayerCanvas, replayBackgroundPrograms } from './app.js';"
     "import { loadFont } from './font_wasm.js';"
     "const cv=document.getElementById('c'); initCanvas(cv,'#FFFFFF',800,600);"
+    "setLayerCanvas('bg',document.getElementById('bg'));"
+    "replayBackgroundPrograms();"
     "const fr=await fetch('./font.ttf');const fb=new Uint8Array(await fr.arrayBuffer());"
     "let bs='';for(let i=0;i<fb.length;i+=8192)bs+=String.fromCharCode(...fb.subarray(i,i+8192));"
     "await loadFont(0,btoa(bs));await loadFont(1,btoa(bs));"
     "const es=new EventSource('/events');"
+    "es.addEventListener('resources',(e)=>{try{const list=JSON.parse(e.data);"
+    "for(const c of list){const fn=commandHandlers[c.cmd];if(fn)fn(...c.args);}"
+    "replayBackgroundPrograms();}catch(err){console.error('resource error',err)}});"
     "es.onmessage=(e)=>{try{const f=JSON.parse(e.data);"
     "for(const c of f.commands){const fn=commandHandlers[c.cmd];"
     "if(fn)fn(...c.args);}}catch(err){console.error('frame error',err)}};"
@@ -197,8 +204,16 @@ static void vm_handle_request(VmServer *s, VmClient *client) {
                      "Cache-Control: no-cache\r\n"
                      "Connection: keep-alive\r\n\r\n");
         client->isSse = 1;
-        client->lastSentFrameId = 0; /* force initial frame */
+        client->lastSentFrameId = 0xFFFFFFFFu; /* force initial frame (frameId may be 0) */
         client->recvLen = 0;
+        if (s->resourceProvider) {
+            const char *res = s->resourceProvider(s->resourceUserData);
+            if (res && *res) {
+                char event[VM_FRAME_BUFFER + 64];
+                int n = snprintf(event, sizeof(event), "event: resources\ndata: %s\n\n", res);
+                if (n > 0) vm_send_all(client->fd, event, (size_t)n);
+            }
+        }
         return;
     }
 
@@ -296,6 +311,12 @@ void VmServer_SetInputHandler(VmServer *s, VmInputHandler handler, void *userDat
     if (!s) return;
     s->inputHandler = handler;
     s->inputUserData = userData;
+}
+
+void VmServer_SetResourceProvider(VmServer *s, VmResourceProvider provider, void *userData) {
+    if (!s) return;
+    s->resourceProvider = provider;
+    s->resourceUserData = userData;
 }
 
 static void vm_poll_frames(VmServer *s) {

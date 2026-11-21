@@ -4,6 +4,8 @@
 #define CLAY_IMPLEMENTATION
 #include "clay.h"
 #include "clay_frame_adapter.h"
+#include "vm_display.h"
+#include "vm_serialize_json.h"
 #include "vm_wm.h"
 #include "vm_server.h"
 
@@ -12,14 +14,60 @@
 #include <string.h>
 
 static VmWm *g_wm;
-static ClayFrameBuffer *g_frame;
+static VmDisplayList g_frame;
 static unsigned int g_frameId;
 static int g_dirty = 1;   /* adaptive frame rate: only publish on change */
-static char g_resources[4096];
+static char *g_resourcesJson = NULL;
+
+/* Static nested program: desktop background rectangle. */
+static VmDisplayList g_desktopProgramCommands;
+
+static void BuildResources(void) {
+    VmDisplayList res;
+    VmDisplay_Init(&res);
+
+    VmDrawCommand *p = VmDisplay_Append(&res, VM_CMD_DEFINE_PATTERN, "def_p_desktop");
+    VmDisplay_CopyStr(p->args.definePattern.patternId, sizeof(p->args.definePattern.patternId), "p_desktop");
+    p->args.definePattern.type = VM_PATTERN_GRADIENT;
+    VmDisplay_CopyStr(p->args.definePattern.from, sizeof(p->args.definePattern.from), "rgba(24,26,32,1)");
+    VmDisplay_CopyStr(p->args.definePattern.to, sizeof(p->args.definePattern.to), "rgba(48,54,66,1)");
+    VmDisplay_CopyStr(p->args.definePattern.direction, sizeof(p->args.definePattern.direction), "diagonal");
+
+    p = VmDisplay_Append(&res, VM_CMD_DEFINE_PATTERN, "def_p_window");
+    VmDisplay_CopyStr(p->args.definePattern.patternId, sizeof(p->args.definePattern.patternId), "p_window");
+    p->args.definePattern.type = VM_PATTERN_SOLID;
+    VmDisplay_CopyStr(p->args.definePattern.color, sizeof(p->args.definePattern.color), "rgba(250,250,252,1)");
+
+    p = VmDisplay_Append(&res, VM_CMD_DEFINE_STYLE, "def_s_desktop");
+    VmDisplay_CopyStr(p->args.defineStyle.styleId, sizeof(p->args.defineStyle.styleId), "s_desktop");
+    VmDisplay_CopyStr(p->args.defineStyle.bgPattern, sizeof(p->args.defineStyle.bgPattern), "p_desktop");
+
+    p = VmDisplay_Append(&res, VM_CMD_DEFINE_STYLE, "def_s_window");
+    VmDisplay_CopyStr(p->args.defineStyle.styleId, sizeof(p->args.defineStyle.styleId), "s_window");
+    VmDisplay_CopyStr(p->args.defineStyle.bgPattern, sizeof(p->args.defineStyle.bgPattern), "p_window");
+
+    VmDisplay_Init(&g_desktopProgramCommands);
+    VmDrawCommand *bg = VmDisplay_Append(&g_desktopProgramCommands, VM_CMD_DRAW_RECT, "desktop_bg");
+    VmRect r = {0, 0, 800, 600};
+    bg->rect = r;
+    bg->args.drawRect.rect = r;
+    VmDisplay_CopyStr(bg->args.drawRect.paint, sizeof(bg->args.drawRect.paint), "s_desktop");
+
+    p = VmDisplay_Append(&res, VM_CMD_DEFINE_DRAW_PROGRAM, "def_prog_desktop");
+    VmDisplay_CopyStr(p->args.defineProgram.programId, sizeof(p->args.defineProgram.programId), "prog_desktop");
+    p->args.defineProgram.commands = &g_desktopProgramCommands;
+    VmDisplay_CopyStr(p->args.defineProgram.layerId, sizeof(p->args.defineProgram.layerId), "bg");
+
+    p = VmDisplay_Append(&res, VM_CMD_START_PROGRAM, "start_prog_desktop");
+    VmDisplay_CopyStr(p->args.programControl.programId, sizeof(p->args.programControl.programId), "prog_desktop");
+    VmDisplay_CopyStr(p->args.programControl.mode, sizeof(p->args.programControl.mode), "once");
+
+    g_resourcesJson = VmSerialize_CommandArrayJson(&res);
+}
 
 static const char *ResourceProvider(void *userData) {
     (void)userData;
-    return g_resources;
+    return g_resourcesJson ? g_resourcesJson : "[]";
 }
 
 static const char *ResolveFont(uint16_t fontId) {
@@ -144,13 +192,17 @@ static Clay_RenderCommandArray LayoutB(void *userData) {
     return Clay_EndLayout(0.016f);
 }
 
+static char *g_frameJson = NULL;
+
 static const char *FrameProvider(void *userData, unsigned int *frameId) {
     (void)userData;
     if (!g_dirty) return NULL;  /* adaptive: no change, no frame */
     g_dirty = 0;
-    VmWm_BuildFrame(g_wm, g_frame, g_frameId, ResolveFont);
+    VmWm_BuildFrame(g_wm, &g_frame, g_frameId, ResolveFont);
     *frameId = g_frameId++;
-    return ClayFrameBuffer_Data(g_frame);
+    free(g_frameJson);
+    g_frameJson = VmSerialize_FrameJson(&g_frame);
+    return g_frameJson;
 }
 
 static void InputHandler(const char *body, size_t length, void *userData) {
@@ -166,19 +218,9 @@ int main(int argc, char **argv) {
     const char *webRoot = argc > 2 ? argv[2] : "../ConsoleApp2";
 
     g_wm = VmWm_Create(800, 600);
-    g_frame = ClayFrameBuffer_Create();
-    if (!g_wm || !g_frame) return 1;
-
-    /* One-time resources: desktop gradient pattern, window style, background program. */
-    snprintf(g_resources, sizeof(g_resources),
-             "["
-             "{\"cmd\":\"definePattern\",\"args\":[\"p_desktop\",{\"type\":\"gradient\",\"from\":\"rgba(24,26,32,1)\",\"to\":\"rgba(48,54,66,1)\",\"direction\":\"diagonal\"}]},"
-             "{\"cmd\":\"definePattern\",\"args\":[\"p_window\",{\"type\":\"solid\",\"color\":\"rgba(250,250,252,1)\"}]},"
-             "{\"cmd\":\"defineStyle\",\"args\":[\"s_desktop\",{\"bgPattern\":\"p_desktop\"}]},"
-             "{\"cmd\":\"defineStyle\",\"args\":[\"s_window\",{\"bgPattern\":\"p_window\"}]},"
-             "{\"cmd\":\"defineDrawProgram\",\"args\":[\"prog_desktop\",[{\"cmd\":\"drawRect\",\"args\":[0,0,800,600,\"s_desktop\",0]}],\"bg\"]},"
-             "{\"cmd\":\"startDrawProgram\",\"args\":[\"prog_desktop\",\"once\"]}"
-             "]");
+    VmDisplay_Init(&g_frame);
+    if (!g_wm) return 1;
+    BuildResources();
 
     VmWindow *a = VmWm_AddWindow(g_wm, 1, "Window A", 60, 60, 360, 260, LayoutA, &g_appA);
     VmWindow *b = VmWm_AddWindow(g_wm, 2, "Window B", 300, 200, 360, 260, LayoutB, NULL);
@@ -200,7 +242,8 @@ int main(int argc, char **argv) {
     fflush(stdout);
     int result = VmServer_Run(server);
     VmServer_Free(server);
-    ClayFrameBuffer_Free(g_frame);
+    free(g_frameJson);
+    free(g_resourcesJson);
     VmWm_Free(g_wm);
     return result;
 }

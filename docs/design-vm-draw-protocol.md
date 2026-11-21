@@ -6,6 +6,24 @@
 
 跨端协议只有两类内容：**绘制原语**和**原始输入事件**。不暴露任何窗口/桌面 API（`createWindow` / `raise` / `focus` 等禁止）。窗口树、层叠、焦点、命中、事件分发全部在 guest 内部完成。
 
+## 内部模型与序列化分层（冻结）
+
+**内部不用 JSON**。JSON 只是序列化格式之一，未来可对接其它协议（二进制、共享内存等）。
+
+```text
+Clay RenderCommandArray
+  → VmDisplayList（内部结构体，协议无关）
+  → diff（结构体字段比较）
+  → serializer：JSON / 二进制 / 其它
+  → transport：SSE / WebSocket / 其它
+```
+
+- `vm_display.h/.c`：定义 `VmCmdType` / `VmDrawCommand` / `VmDisplayList` 及构造、追加、比较工具。所有命令参数是 typed 字段，不是 JSON 字符串。
+- `vm_display_diff.c`：按 id + typed 字段做 retained diff，产出变化命令与脏矩形。
+- `vm_serialize_json.c`：唯一负责把 `VmDisplayList` 序列化成 JSON 的地方。新增协议时只加 serializer，不动内部模型。
+- `clay_frame_adapter`：职责改为 Clay 命令 → `VmDisplayList`（填充结构体），不再直接生成 JSON。
+- `vm_wm`：合成结果是 `VmDisplayList`；首帧全量与后续增量都在结构体层表达。
+
 ## 传输 envelope
 
 下行帧（guest → 浏览器）：

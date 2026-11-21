@@ -148,7 +148,7 @@ created → mapped（可见）→ focused / unfocused
 - 设计起点：本文 + `docs/arch-跨端图绘指令流.md`（现有指令流架构）+ `docs/task-multi-client-cursor.md`（多客户端指针）。
 - Clay 源码：`H:\github_repos\clay\clay.h`、`README.md`、`renderers/terminal/clay_renderer_terminal_ansi.c`（最简非像素 renderer 参考）。
 - VM 环境：`H:\github_repos\RVVM`，token 在 `release.test.windows.x86_64\runtime\supervisor\token`。
-- 全部阶段完成；后续已完成**键盘输入闭环**与 **retained diff 精细化**（见下节）。剩余增强方向：复杂图样的 wasm 通道、guest 侧命令级 diff（当前仅前端 diff，guest 仍全量发命令）。
+- 全部阶段完成；后续已完成**键盘输入闭环**、**前端 retained diff**、**内部模型分层重构**（见下节）。剩余增强方向：guest 侧基于 `VmDisplayList` 的增量发布、复杂图样的 wasm 通道。
 
 ## 后续增强：键盘输入闭环（2026-11-21，已完成）
 
@@ -165,6 +165,17 @@ created → mapped（可见）→ focused / unfocused
 - SSE 测试页从裸遍历 `commandHandlers` 改为调用 `applyFrameDiff`；WebSocket 通道的 `main.js` 保留其已有的同类逻辑（含旧协议兼容与重放）。
 - 验证：`applyFrameDiff` 对相同帧首次返回 `true`、第二次 `false`；两命令帧只改其中一个时，仅变化区域被重画（取样像素变为新颜色）；端到端渲染正常（背景 480000、标题 11720、按钮 5600），console 无错误。
 - 未做：guest 侧命令级 diff（减少带宽）。当前 guest 仍每帧发全量命令，前端 diff 只减少重画。
+
+## 架构调整：内部模型与序列化分层（2026-11-21，已完成）
+
+- 用户明确要求：内部不用 JSON，JSON 只是序列化格式，未来可能对接其它协议。已回退早期在 JSON 字符串上做 diff 的未提交改动。
+- 设计冻结于 `docs/design-vm-draw-protocol.md` 的“内部模型与序列化分层”。
+- `vm_display.h/.c`：协议无关 `VmCmdType` / `VmDrawCommand` / `VmDisplayList`，typed 参数 + 自有字符串存储（`VmDisplay_CopyStr`），`VmDisplay_CommandEqual` 按结构体字段比较。
+- `vm_serialize_json.c`：唯一 JSON 感知模块，`VmSerialize_FrameJson` / `VmSerialize_CommandArrayJson`。未来其它协议只加 serializer。
+- `clay_frame_adapter`：职责改为 Clay 命令 → `VmDisplayList`，不再生成 JSON。
+- `vm_wm.c`：`VmWm_BuildFrame` 输出 `VmDisplayList`；`demo_wm.c` 用内部模型构造资源与帧，再序列化。
+- 验证：`test_display_diff.c` 单元测试 same=1/changed=0；`demo_frame` 序列化后 9 条命令颜色正确（修复 borrowed 字符串覆盖 bug：字段改为自有 `char[]`）；端到端渲染背景 480000、窗口 11720，console 无错误。截图 `wm_internal_model.png`。
+- 序列化注意：args 中矩形输出四个独立数字，`rect` 字段输出数组，与前端 handler 对齐。
 
 ## 已知限制
 

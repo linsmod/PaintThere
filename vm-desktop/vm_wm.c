@@ -253,79 +253,86 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     return changed;
 }
 
-static void append_rect_cmd(ClayFrameBuffer *out, const char *id,
+static void append_rect_cmd(VmDisplayList *out, const char *id,
                             int x, int y, int w, int h,
-                            const char *color, int radius) {
-    char buf[256];
-    snprintf(buf, sizeof(buf),
-             "{\"id\":\"%s\",\"cmd\":\"drawRect\",\"args\":[%d,%d,%d,%d,\"%s\",%d],"
-             "\"rect\":[%d,%d,%d,%d]}",
-             id, x, y, w, h, color, radius, x, y, w, h);
-    ClayFrame_AppendRaw(out, buf);
+                            const char *paint, int radius) {
+    VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_RECT, id);
+    if (!c) return;
+    VmRect r = {(float)x, (float)y, (float)w, (float)h};
+    c->rect = r;
+    c->args.drawRect.rect = r;
+    VmDisplay_CopyStr(c->args.drawRect.paint, sizeof(c->args.drawRect.paint), paint);
+    c->args.drawRect.cornerRadius = (float)radius;
 }
 
-static void append_border_cmd(ClayFrameBuffer *out, const char *id,
+static void append_border_cmd(VmDisplayList *out, const char *id,
                               int x, int y, int w, int h, const char *color) {
-    char buf[256];
-    snprintf(buf, sizeof(buf),
-             "{\"id\":\"%s\",\"cmd\":\"drawBorder\",\"args\":[%d,%d,%d,%d,\"%s\",[2,2,2,2],0],"
-             "\"rect\":[%d,%d,%d,%d]}",
-             id, x, y, w, h, color, x, y, w, h);
-    ClayFrame_AppendRaw(out, buf);
+    VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_BORDER, id);
+    if (!c) return;
+    VmRect r = {(float)x, (float)y, (float)w, (float)h};
+    c->rect = r;
+    c->args.drawBorder.rect = r;
+    VmDisplay_CopyStr(c->args.drawBorder.paint, sizeof(c->args.drawBorder.paint), color);
+    c->args.drawBorder.widths[0] = c->args.drawBorder.widths[1] = 2;
+    c->args.drawBorder.widths[2] = c->args.drawBorder.widths[3] = 2;
 }
 
-static void append_cursor_commands(VmWm *wm, ClayFrameBuffer *out) {
+static void append_cursor_commands(VmWm *wm, VmDisplayList *out) {
     if (wm->cursorCount <= 0) return;
-    char buf[512];
-    /* loadImg is idempotent on the frontend (cached by imgId). */
-    snprintf(buf, sizeof(buf),
-             "{\"id\":\"cursor_asset\",\"cmd\":\"loadImg\",\"args\":[\"cursor\",\"data:image/svg+xml;base64,%s\"],\"rect\":[0,0,0,0]}",
-             VM_CURSOR_SVG_B64);
-    ClayFrame_AppendRaw(out, buf);
+    VmDrawCommand *asset = VmDisplay_Append(out, VM_CMD_LOAD_IMG, "cursor_asset");
+    if (!asset) return;
+    static char dataUrl[512];
+    snprintf(dataUrl, sizeof(dataUrl), "data:image/svg+xml;base64,%s", VM_CURSOR_SVG_B64);
+    VmDisplay_CopyStr(asset->args.loadImg.imgId, sizeof(asset->args.loadImg.imgId), "cursor");
+    VmDisplay_CopyStr(asset->args.loadImg.dataUrl, sizeof(asset->args.loadImg.dataUrl), dataUrl);
 
     time_t now = time(NULL);
     for (int i = 0; i < wm->cursorCount; i++) {
         VmCursor *c = &wm->cursors[i];
         if (!c->visible || now - c->lastSeen > 3) continue;
-        snprintf(buf, sizeof(buf),
-                 "{\"id\":\"cursor_%s\",\"cmd\":\"drawImg\",\"args\":[\"cursor\",%d,%d,24,24,\"%s\",0],"
-                 "\"rect\":[%d,%d,24,24]}",
-                 c->id, c->x, c->y, c->color, c->x, c->y);
-        ClayFrame_AppendRaw(out, buf);
+        char id[80];
+        snprintf(id, sizeof(id), "cursor_%s", c->id);
+        VmDrawCommand *d = VmDisplay_Append(out, VM_CMD_DRAW_IMG, id);
+        if (!d) return;
+        VmRect r = {(float)c->x, (float)c->y, 24, 24};
+        d->rect = r;
+        VmDisplay_CopyStr(d->args.drawImg.imgId, sizeof(d->args.drawImg.imgId), "cursor");
+        d->args.drawImg.rect = r;
+        VmDisplay_CopyStr(d->args.drawImg.tint, sizeof(d->args.drawImg.tint), c->color);
+        d->args.drawImg.cornerRadius = 0;
     }
 }
 
-static void append_title_cmd(ClayFrameBuffer *out, const char *id,
+static void append_title_cmd(VmDisplayList *out, const char *id,
                              int x, int y, const char *title, const char *color) {
-    char buf[512];
-    /* id|fontId|fontSize|color|text — text is trusted demo title (no quotes). */
-    snprintf(buf, sizeof(buf),
-             "{\"id\":\"%s\",\"cmd\":\"drawText\",\"args\":[%d,%d,%d,%d,\"%s\",0,14,\"%s\",0,0],"
-             "\"rect\":[%d,%d,%d,%d]}",
-             id, x + 8, y + 6, 300, VM_WM_TITLE_HEIGHT - 6, title, color,
-             x, y, 300, VM_WM_TITLE_HEIGHT);
-    ClayFrame_AppendRaw(out, buf);
+    VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_TEXT, id);
+    if (!c) return;
+    VmRect r = {(float)x, (float)y, 300, VM_WM_TITLE_HEIGHT};
+    c->rect = r;
+    c->args.drawText.rect = (VmRect){(float)(x + 8), (float)(y + 6), 300, VM_WM_TITLE_HEIGHT - 6};
+    VmDisplay_CopyStr(c->args.drawText.text, sizeof(c->args.drawText.text), title);
+    c->args.drawText.fontId = 0;
+    c->args.drawText.fontSize = 14;
+    VmDisplay_CopyStr(c->args.drawText.color, sizeof(c->args.drawText.color), color);
 }
 
-void VmWm_BuildFrame(VmWm *wm, ClayFrameBuffer *out, uint32_t frameId,
+void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
                      const char *(*fontResolver)(uint16_t)) {
     if (!wm || !out) return;
-    ClayFrame_Begin(out, frameId);
+    VmDisplay_Clear(out);
+    out->frameId = frameId;
 
     char idbuf[64];
-    /* Desktop background is no longer sent per-frame; it is a draw program on the bg layer. */
+    /* Desktop background is a draw program on the bg layer, not sent per-frame. */
 
-    /* z order bottom -> top */
     for (int z = 1; z < wm->nextZ; z++) {
         for (int i = 0; i < wm->count; i++) {
             VmWindow *win = &wm->windows[i];
             if (win->z != z || win->minimized) continue;
 
             snprintf(idbuf, sizeof(idbuf), "w%d_body", win->id);
-            /* styleId instead of literal color: geometry only per frame. */
             append_rect_cmd(out, idbuf, win->x + 2, win->y + VM_WM_TITLE_HEIGHT,
-                            win->w - 4, win->h - VM_WM_TITLE_HEIGHT - 2,
-                            "s_window", 0);
+                            win->w - 4, win->h - VM_WM_TITLE_HEIGHT - 2, "s_window", 0);
 
             snprintf(idbuf, sizeof(idbuf), "w%d_title", win->id);
             append_rect_cmd(out, idbuf, win->x + 2, win->y + 2,
@@ -349,5 +356,4 @@ void VmWm_BuildFrame(VmWm *wm, ClayFrameBuffer *out, uint32_t frameId,
         }
     }
     append_cursor_commands(wm, out);
-    ClayFrame_End(out);
 }

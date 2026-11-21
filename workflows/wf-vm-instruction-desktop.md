@@ -37,8 +37,9 @@
 ```powershell
 # 构建 C demo（按需选一个）
 cd h:\github_repos\跨端图绘指令流\vm-desktop
-gcc -std=c11 -I"H:\github_repos\clay" -I. demo_wm.c clay_frame_adapter.c vm_wm.c vm_server.c -lws2_32 -o demo_wm.exe
-gcc -std=c11 -I"H:\github_repos\clay" -I. demo_frame.c demo_layout.c clay_frame_adapter.c -o demo_frame.exe
+gcc -std=c11 -I"H:\github_repos\clay" -I. demo_wm.c clay_frame_adapter.c vm_display.c vm_serialize_json.c vm_wm.c vm_server.c -lws2_32 -o demo_wm.exe
+gcc -std=c11 -I"H:\github_repos\clay" -I. demo_frame.c demo_layout.c clay_frame_adapter.c vm_display.c vm_serialize_json.c -o demo_frame.exe
+gcc -std=c11 -I. test_display_diff.c vm_display.c -o test_display_diff.exe
 
 # 编译 wasm 字体（先按上面设置 emsdk 环境变量）
 emcc -O2 -s EXPORTED_FUNCTIONS='["_loadFont","_measureText","_rasterizeText","_alloc","_freeMem"]' -s EXPORTED_RUNTIME_METHODS='["HEAPU8","HEAPU32"]' -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_ES6=1 -s EXPORT_NAME=StbFontWasm -s ENVIRONMENT=web,node -I"H:\github_repos\mystbfont_c" stb_font_wasm.c -o stb_font_wasm.mjs

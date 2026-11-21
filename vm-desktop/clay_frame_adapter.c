@@ -1,299 +1,150 @@
 #include "clay_frame_adapter.h"
 
-#include <stdarg.h>
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 
 /* clay.h is provided by the external Clay checkout; pass -I<clay-dir> at build time. */
 #include "clay.h"
 
-struct ClayFrameBuffer {
-    char *data;
-    size_t length;
-    size_t capacity;
-    int commandCount;
-};
-
-static int buffer_reserve(ClayFrameBuffer *b, size_t extra) {
-    size_t needed = b->length + extra + 1;
-    if (needed <= b->capacity) return 1;
-    size_t cap = b->capacity ? b->capacity : 1024;
-    while (cap < needed) {
-        if (cap > (size_t)-1 / 2) return 0;
-        cap *= 2;
-    }
-    char *p = (char *)realloc(b->data, cap);
-    if (!p) return 0;
-    b->data = p;
-    b->capacity = cap;
-    return 1;
-}
-
-static void buffer_puts(ClayFrameBuffer *b, const char *s) {
-    size_t n = strlen(s);
-    if (!buffer_reserve(b, n)) return;
-    memcpy(b->data + b->length, s, n);
-    b->length += n;
-    b->data[b->length] = '\0';
-}
-
-static void buffer_putf(ClayFrameBuffer *b, const char *fmt, ...) {
-    char tmp[256];
-    va_list args;
-    va_start(args, fmt);
-    int n = vsnprintf(tmp, sizeof(tmp), fmt, args);
-    va_end(args);
-    if (n <= 0) return;
-    if ((size_t)n < sizeof(tmp)) {
-        buffer_puts(b, tmp);
-        return;
-    }
-    char *big = (char *)malloc((size_t)n + 1);
-    if (!big) return;
-    va_start(args, fmt);
-    vsnprintf(big, (size_t)n + 1, fmt, args);
-    va_end(args);
-    buffer_puts(b, big);
-    free(big);
-}
-
-static void append_json_string(ClayFrameBuffer *b, const char *s, size_t len) {
-    buffer_puts(b, "\"");
-    for (size_t i = 0; i < len; i++) {
-        unsigned char c = (unsigned char)s[i];
-        switch (c) {
-            case '"': buffer_puts(b, "\\\""); break;
-            case '\\': buffer_puts(b, "\\\\"); break;
-            case '\b': buffer_puts(b, "\\b"); break;
-            case '\f': buffer_puts(b, "\\f"); break;
-            case '\n': buffer_puts(b, "\\n"); break;
-            case '\r': buffer_puts(b, "\\r"); break;
-            case '\t': buffer_puts(b, "\\t"); break;
-            default:
-                if (c < 0x20) buffer_putf(b, "\\u%04x", c);
-                else buffer_putf(b, "%c", c);
-        }
-    }
-    buffer_puts(b, "\"");
-}
-
-static void append_color(ClayFrameBuffer *b, Clay_Color color) {
-    buffer_putf(b, "\"rgba(%g,%g,%g,%.3f)\"",
-                color.r, color.g, color.b, color.a / 255.0f);
-}
-
-static void append_bounding_box(ClayFrameBuffer *b, Clay_BoundingBox box) {
-    buffer_putf(b, "[%g,%g,%g,%g]", box.x, box.y, box.width, box.height);
-}
-
-/* args expect four separate numbers, while rect uses the array form. */
-static void append_box_args(ClayFrameBuffer *b, Clay_BoundingBox box) {
-    buffer_putf(b, "%g,%g,%g,%g", box.x, box.y, box.width, box.height);
-}
-
-static void append_command_prefix(ClayFrameBuffer *b, uint32_t id, const char *cmd) {
-    buffer_putf(b, "{\"id\":\"%u\",\"cmd\":\"%s\",\"args\":[", id, cmd);
-}
-
-static void append_command_suffix(ClayFrameBuffer *b, Clay_BoundingBox box) {
-    buffer_puts(b, "],\"rect\":");
-    append_bounding_box(b, box);
-    buffer_puts(b, "}");
-}
-
-static void append_rect_command(
-    ClayFrameBuffer *b, const Clay_RenderCommand *rc,
-    const char *cmd, Clay_Color color, Clay_CornerRadius radius) {
-    append_command_prefix(b, rc->id, cmd);
-    append_box_args(b, rc->boundingBox);
-    buffer_puts(b, ",");
-    append_color(b, color);
-    float r = radius.topLeft;
-    if (radius.topRight > r) r = radius.topRight;
-    if (radius.bottomLeft > r) r = radius.bottomLeft;
-    if (radius.bottomRight > r) r = radius.bottomRight;
-    buffer_putf(b, ",%g", r);
-    append_command_suffix(b, rc->boundingBox);
-}
-
-static void append_border_command(ClayFrameBuffer *b, const Clay_RenderCommand *rc) {
-    Clay_BorderRenderData data = rc->renderData.border;
-    append_command_prefix(b, rc->id, "drawBorder");
-    append_box_args(b, rc->boundingBox);
-    buffer_puts(b, ",");
-    append_color(b, data.color);
-    buffer_putf(b, ",[%u,%u,%u,%u]",
-                data.width.left, data.width.right, data.width.top, data.width.bottom);
-    float r = data.cornerRadius.topLeft;
-    if (data.cornerRadius.topRight > r) r = data.cornerRadius.topRight;
-    if (data.cornerRadius.bottomLeft > r) r = data.cornerRadius.bottomLeft;
-    if (data.cornerRadius.bottomRight > r) r = data.cornerRadius.bottomRight;
-    buffer_putf(b, ",%g", r);
-    append_command_suffix(b, rc->boundingBox);
-}
-
-static void append_text_command(
-    ClayFrameBuffer *b, const Clay_RenderCommand *rc,
-    const char *(*fontResolver)(uint16_t)) {
-    Clay_TextRenderData data = rc->renderData.text;
-    append_command_prefix(b, rc->id, "drawText");
-    append_box_args(b, rc->boundingBox);
-    buffer_puts(b, ",");
-    append_json_string(b, data.stringContents.chars, data.stringContents.length);
-    buffer_putf(b, ",%u,%u,", data.fontId, data.fontSize);
-    append_color(b, data.textColor);
-    buffer_putf(b, ",%u,%u", data.letterSpacing, data.lineHeight);
-    append_command_suffix(b, rc->boundingBox);
-    if (fontResolver) {
-        /* fontResolver is consulted by the host when building its font table. */
-        (void)fontResolver(data.fontId);
-    }
-}
-
-static void append_image_command(
-    ClayFrameBuffer *b, const Clay_RenderCommand *rc,
-    const char *(*imgResolver)(const void *)) {
-    Clay_ImageRenderData data = rc->renderData.image;
-    append_command_prefix(b, rc->id, "drawImg");
-    const char *imgId = imgResolver ? imgResolver(data.imageData) : NULL;
-    append_json_string(b, imgId ? imgId : "", imgId ? strlen(imgId) : 0);
-    buffer_puts(b, ",");
-    append_box_args(b, rc->boundingBox);
-    buffer_puts(b, ",");
-    append_color(b, data.backgroundColor);
-    append_command_suffix(b, rc->boundingBox);
-}
-
-ClayFrameBuffer *ClayFrameBuffer_Create(void) {
-    ClayFrameBuffer *b = (ClayFrameBuffer *)calloc(1, sizeof(ClayFrameBuffer));
-    if (b && !buffer_reserve(b, 0)) {
-        free(b);
-        return NULL;
-    }
+static const char *color_to_css(Clay_Color c) {
+    /* Caller-owned scratch via a small ring; the display list borrows strings only until
+       serialization in the same frame. A static buffer per call site is sufficient here. */
+    static char buf[8][64];
+    static int idx;
+    char *b = buf[idx++ & 7];
+    snprintf(b, 64, "rgba(%g,%g,%g,%.3f)", c.r, c.g, c.b, c.a / 255.0f);
     return b;
 }
 
-void ClayFrameBuffer_Free(ClayFrameBuffer *b) {
-    if (!b) return;
-    free(b->data);
-    free(b);
+static VmRect to_rect(Clay_BoundingBox box, int ox, int oy) {
+    VmRect r = {box.x + ox, box.y + oy, box.width, box.height};
+    return r;
 }
 
-const char *ClayFrameBuffer_Data(const ClayFrameBuffer *b) {
-    return b ? b->data : "";
+static float max_radius(Clay_CornerRadius r) {
+    float m = r.topLeft;
+    if (r.topRight > m) m = r.topRight;
+    if (r.bottomLeft > m) m = r.bottomLeft;
+    if (r.bottomRight > m) m = r.bottomRight;
+    return m;
 }
 
-size_t ClayFrameBuffer_Length(const ClayFrameBuffer *b) {
-    return b ? b->length : 0;
-}
-
-void ClayFrameBuffer_Clear(ClayFrameBuffer *b) {
-    if (b) {
-        b->length = 0;
-        b->commandCount = 0;
-        if (b->data) b->data[0] = '\0';
-    }
-}
-
-void ClayFrame_Begin(ClayFrameBuffer *out, uint32_t frameId) {
-    if (!out) return;
-    ClayFrameBuffer_Clear(out);
-    buffer_putf(out, "{\"type\":\"frame\",\"frameId\":%u,\"commands\":[", frameId);
-}
-
-void ClayFrame_AppendRaw(ClayFrameBuffer *out, const char *rawCommand) {
-    if (!out || !rawCommand || !*rawCommand) return;
-    if (out->commandCount++) buffer_puts(out, ",");
-    buffer_puts(out, rawCommand);
-}
-
-void ClayFrame_End(ClayFrameBuffer *out) {
-    if (out) buffer_puts(out, "]}");
-}
-
-static void append_clay_commands(
-    ClayFrameBuffer *out,
-    const Clay_RenderCommand *commands,
+void ClayFrame_AppendCommands(
+    VmDisplayList *out,
+    const void *renderCommands,
     int commandCount,
     int offsetX,
     int offsetY,
-    const char *(*fontResolver)(uint16_t),
-    const char *(*imgResolver)(const void *)) {
+    const char *(*fontResolver)(uint16_t fontId),
+    const char *(*imgResolver)(const void *imageData)) {
+    if (!out || !renderCommands) return;
+    const Clay_RenderCommand *commands = (const Clay_RenderCommand *)renderCommands;
+
     for (int i = 0; i < commandCount; i++) {
-        Clay_RenderCommand rc = commands[i];
-        rc.boundingBox.x += (float)offsetX;
-        rc.boundingBox.y += (float)offsetY;
-        if (rc.commandType == CLAY_RENDER_COMMAND_TYPE_NONE) continue;
-        if (out->commandCount++) buffer_puts(out, ",");
-        switch (rc.commandType) {
-            case CLAY_RENDER_COMMAND_TYPE_RECTANGLE:
-                append_rect_command(out, &rc, "drawRect",
-                                    rc.renderData.rectangle.backgroundColor,
-                                    rc.renderData.rectangle.cornerRadius);
+        const Clay_RenderCommand *rc = &commands[i];
+        if (rc->commandType == CLAY_RENDER_COMMAND_TYPE_NONE) continue;
+        char id[32];
+        snprintf(id, sizeof(id), "%u", rc->id);
+        VmRect rect = to_rect(rc->boundingBox, offsetX, offsetY);
+
+        switch (rc->commandType) {
+            case CLAY_RENDER_COMMAND_TYPE_RECTANGLE: {
+                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_RECT, id);
+                if (!c) return;
+                c->rect = rect;
+                c->args.drawRect.rect = rect;
+                VmDisplay_CopyStr(c->args.drawRect.paint, sizeof(c->args.drawRect.paint),
+                                  color_to_css(rc->renderData.rectangle.backgroundColor));
+                c->args.drawRect.cornerRadius = max_radius(rc->renderData.rectangle.cornerRadius);
                 break;
-            case CLAY_RENDER_COMMAND_TYPE_BORDER:
-                append_border_command(out, &rc);
+            }
+            case CLAY_RENDER_COMMAND_TYPE_BORDER: {
+                Clay_BorderRenderData d = rc->renderData.border;
+                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_BORDER, id);
+                if (!c) return;
+                c->rect = rect;
+                c->args.drawBorder.rect = rect;
+                VmDisplay_CopyStr(c->args.drawBorder.paint, sizeof(c->args.drawBorder.paint),
+                                  color_to_css(d.color));
+                c->args.drawBorder.widths[0] = d.width.left;
+                c->args.drawBorder.widths[1] = d.width.right;
+                c->args.drawBorder.widths[2] = d.width.top;
+                c->args.drawBorder.widths[3] = d.width.bottom;
+                c->args.drawBorder.cornerRadius = max_radius(d.cornerRadius);
                 break;
-            case CLAY_RENDER_COMMAND_TYPE_TEXT:
-                append_text_command(out, &rc, fontResolver);
+            }
+            case CLAY_RENDER_COMMAND_TYPE_TEXT: {
+                Clay_TextRenderData d = rc->renderData.text;
+                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_TEXT, id);
+                if (!c) return;
+                c->rect = rect;
+                c->args.drawText.rect = rect;
+                /* Text is not null-terminated; copy into owned storage. */
+                size_t n = d.stringContents.length < VM_DISPLAY_MAX_TEXT - 1
+                               ? (size_t)d.stringContents.length : VM_DISPLAY_MAX_TEXT - 1;
+                memcpy(c->args.drawText.text, d.stringContents.chars, n);
+                c->args.drawText.text[n] = '\0';
+                c->args.drawText.fontId = d.fontId;
+                c->args.drawText.fontSize = d.fontSize;
+                VmDisplay_CopyStr(c->args.drawText.color, sizeof(c->args.drawText.color),
+                                  color_to_css(d.textColor));
+                c->args.drawText.letterSpacing = d.letterSpacing;
+                c->args.drawText.lineHeight = d.lineHeight;
+                if (fontResolver) (void)fontResolver(d.fontId);
                 break;
-            case CLAY_RENDER_COMMAND_TYPE_IMAGE:
-                append_image_command(out, &rc, imgResolver);
+            }
+            case CLAY_RENDER_COMMAND_TYPE_IMAGE: {
+                Clay_ImageRenderData d = rc->renderData.image;
+                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_IMG, id);
+                if (!c) return;
+                c->rect = rect;
+                VmDisplay_CopyStr(c->args.drawImg.imgId, sizeof(c->args.drawImg.imgId),
+                                  imgResolver ? imgResolver(d.imageData) : "");
+                c->args.drawImg.rect = rect;
+                VmDisplay_CopyStr(c->args.drawImg.tint, sizeof(c->args.drawImg.tint),
+                                  color_to_css(d.backgroundColor));
+                c->args.drawImg.cornerRadius = max_radius(d.cornerRadius);
                 break;
-            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START:
-                append_command_prefix(out, rc.id, "clipPush");
-                append_box_args(out, rc.boundingBox);
-                append_command_suffix(out, rc.boundingBox);
+            }
+            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: {
+                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_CLIP_PUSH, id);
+                if (!c) return;
+                c->rect = rect;
+                c->args.clip = rect;
                 break;
-            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END:
-                append_command_prefix(out, rc.id, "clipPop");
-                append_command_suffix(out, rc.boundingBox);
+            }
+            case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END: {
+                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_CLIP_POP, id);
+                if (!c) return;
+                c->rect = rect;
+                c->args.clip = rect;
                 break;
-            case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START:
-                append_command_prefix(out, rc.id, "overlayPush");
-                append_color(out, rc.renderData.overlayColor.color);
-                append_command_suffix(out, rc.boundingBox);
+            }
+            case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START: {
+                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_OVERLAY_PUSH, id);
+                if (!c) return;
+                c->rect = rect;
+                c->args.paint = color_to_css(rc->renderData.overlayColor.color);
                 break;
-            case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_END:
-                append_command_prefix(out, rc.id, "overlayPop");
-                append_command_suffix(out, rc.boundingBox);
+            }
+            case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_END: {
+                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_OVERLAY_POP, id);
+                if (!c) return;
+                c->rect = rect;
                 break;
-            case CLAY_RENDER_COMMAND_TYPE_CUSTOM:
-                append_command_prefix(out, rc.id, "drawRect");
-                append_bounding_box(out, rc.boundingBox);
-                buffer_puts(out, ",\"rgba(255,0,255,1)\",0");
-                append_command_suffix(out, rc.boundingBox);
+            }
+            case CLAY_RENDER_COMMAND_TYPE_CUSTOM: {
+                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_RECT, id);
+                if (!c) return;
+                c->rect = rect;
+                c->args.drawRect.rect = rect;
+                VmDisplay_CopyStr(c->args.drawRect.paint, sizeof(c->args.drawRect.paint),
+                                  "rgba(255,0,255,1)");
+                c->args.drawRect.cornerRadius = 0;
                 break;
+            }
             case CLAY_RENDER_COMMAND_TYPE_NONE:
                 break;
         }
     }
-}
-
-void ClayFrame_AppendCommands(
-    ClayFrameBuffer *out,
-    const void *renderCommands,
-    int commandCount,
-    int offsetX,
-    int offsetY,
-    const char *(*fontResolver)(uint16_t),
-    const char *(*imgResolver)(const void *)) {
-    if (!out || !renderCommands) return;
-    append_clay_commands(out, (const Clay_RenderCommand *)renderCommands,
-                         commandCount, offsetX, offsetY, fontResolver, imgResolver);
-}
-
-void ClayFrame_Build(
-    ClayFrameBuffer *out,
-    uint32_t frameId,
-    const void *renderCommands,
-    int commandCount,
-    const char *(*fontResolver)(uint16_t),
-    const char *(*imgResolver)(const void *)) {
-    if (!out || !renderCommands) return;
-    ClayFrame_Begin(out, frameId);
-    append_clay_commands(out, (const Clay_RenderCommand *)renderCommands,
-                         commandCount, 0, 0, fontResolver, imgResolver);
-    ClayFrame_End(out);
 }

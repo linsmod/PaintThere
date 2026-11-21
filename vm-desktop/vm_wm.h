@@ -5,6 +5,7 @@
 
 #include "clay.h"
 #include "clay_frame_adapter.h"
+#include "vm_display.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -78,7 +79,7 @@ void VmWm_SetKeyHandler(VmWm *wm, int id, VmWindowKeyHandler handler, void *user
 int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length);
 
 /* Build a composite frame: background + all windows in z order. */
-void VmWm_BuildFrame(VmWm *wm, ClayFrameBuffer *out, uint32_t frameId,
+void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
                      const char *(*fontResolver)(uint16_t));
 
 #ifdef __cplusplus

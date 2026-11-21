@@ -107,7 +107,12 @@ created → mapped（可见）→ focused / unfocused
   - 验证（2026-11-21）：gcc 编译两个 demo 通过；curl 验证静态资源 200 与 POST 200；SSE 连续收到 frameId 递增的帧；浏览器渲染 demo 帧，背景像素精确 64896（800×600 − 752×552），按钮像素 5268（140×40 减圆角），截图 `vm-desktop/demo_render.png`；页面点击后服务端打印原始输入 JSON。
   - 修复过的坑：`Clay_Color` 是 `float` 不是 `uint8_t`；`Clay_SetMeasureTextFunction` 第三参是 `void*`；C HTTP 服务用 `Connection: close`，Node `fetch` 连接复用会触发 undici 断言，改用 curl 或浏览器原生请求。
   - 已知行为：demo 的 frameId 在每次 provider 轮询时递增，即使没有 SSE 客户端；正式 WM 应只在发布帧时递增。
-- [ ] **阶段 2 文本一致性验证**：A 方案对比 guest 度量与浏览器实际绘制；失败则切 B 并在本文记录。
+- [x] **阶段 2 文本一致性验证（wasm 光栅化方案）**：
+  - 决策更新：不用 Canvas `fillText`，改为把 mystbfont_c 的 stb_truetype 编成 wasm，guest 与浏览器跑同一份代码、用同一 TTF。
+  - `vm-desktop/stb_font_wasm.c`：导出 `loadFont` / `measureText` / `rasterizeText` / `alloc` / `freeMem`，直接基于 stb_truetype；Emscripten 7.0.0 编译，产物 `stb_font_wasm.mjs`（7.5KB）+ `stb_font_wasm.wasm`（32KB）。
+  - `ConsoleApp2/font_wasm.js`：加载 TTF base64、光栅化文本为 RGBA、染色后绘制；`app.js` 的 `drawText` 改走此路径，新增 `loadFont` 命令，未就绪时由 frame 重放补齐。
+  - 验证：native `font_probe` 与 wasm 对三段文本度量完全一致（Hello World=91、跨端图绘指令流=70、长英文=247）；浏览器中 wasm 光栅化中文结果 `w=74,h=23,alpha=378` 与 Node 一致；端到端 SSE 帧渲染标题，蓝色文字像素 206，console 无错误，截图 `vm-desktop/font_render.png`。
+  - Emscripten 安装：`H:\github_repos\emsdk`（emcc 7.0.0，装在 H 盘因 C 盘空间不足）；新 shell 需先设置 PATH/EMSDK 环境变量，构建命令见 tools/INDEX.md。
 - [ ] **阶段 3 guest WM 最小实现**：窗口创建/销毁/移动/z 序/焦点。验收：两个窗口可切换焦点、拖动。
 - [ ] **阶段 4 输入闭环**：浏览器原始输入 → guest → Clay pointer state。验收：hover/click 在浏览器画面生效，文本输入可达焦点窗口。
 - [ ] **阶段 5 多客户端与指针**：复用彩色指针 + guest 焦点仲裁。验收：双客户端互见，焦点唯一。
@@ -120,7 +125,7 @@ created → mapped（可见）→ focused / unfocused
 - 设计起点：本文 + `docs/arch-跨端图绘指令流.md`（现有指令流架构）+ `docs/task-multi-client-cursor.md`（多客户端指针）。
 - Clay 源码：`H:\github_repos\clay\clay.h`、`README.md`、`renderers/terminal/clay_renderer_terminal_ansi.c`（最简非像素 renderer 参考）。
 - VM 环境：`H:\github_repos\RVVM`，token 在 `release.test.windows.x86_64\runtime\supervisor\token`。
-- 下一动作：阶段 2，文本一致性验证——guest 侧 Clay measureText 与浏览器 Canvas measureText 用同一字体表对比，失败则切回退方案 B。
+- 下一动作：阶段 3，guest WM 最小实现——窗口创建/销毁/移动/z 序/焦点，输出合并后的帧。字体方案已定，不再需要 Canvas 度量对比。
 
 ## 已知限制
 

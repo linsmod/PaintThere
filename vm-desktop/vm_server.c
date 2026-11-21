@@ -60,7 +60,11 @@ static const char VM_INDEX_HTML[] =
     "<canvas id='c' width='800' height='600'></canvas>"
     "<script type='module'>"
     "import { initCanvas, commandHandlers } from './app.js';"
+    "import { loadFont } from './font_wasm.js';"
     "const cv=document.getElementById('c'); initCanvas(cv,'#FFFFFF',800,600);"
+    "const fr=await fetch('./font.ttf');const fb=new Uint8Array(await fr.arrayBuffer());"
+    "let bs='';for(let i=0;i<fb.length;i+=8192)bs+=String.fromCharCode(...fb.subarray(i,i+8192));"
+    "await loadFont(0,btoa(bs));await loadFont(1,btoa(bs));"
     "const es=new EventSource('/events');"
     "es.onmessage=(e)=>{try{const f=JSON.parse(e.data);"
     "for(const c of f.commands){const fn=commandHandlers[c.cmd];"
@@ -105,7 +109,9 @@ static void vm_send_response(vm_socket fd, int code, const char *reason,
 
 static int vm_safe_join(char *out, size_t cap, const char *root, const char *name) {
     if (strcmp(name, "app.js") != 0 && strcmp(name, "systemColors.js") != 0 &&
-        strcmp(name, "index.html") != 0) return 0;
+        strcmp(name, "index.html") != 0 && strcmp(name, "font_wasm.js") != 0 &&
+        strcmp(name, "stb_font_wasm.mjs") != 0 && strcmp(name, "stb_font_wasm.wasm") != 0 &&
+        strcmp(name, "font.ttf") != 0) return 0;
     int n = snprintf(out, cap, "%s/%s", root, name);
     return n > 0 && (size_t)n < cap;
 }
@@ -119,6 +125,10 @@ static void vm_serve_static(VmServer *s, vm_socket fd, const char *path) {
     }
     if (strcmp(path, "/app.js") == 0) name = "app.js";
     else if (strcmp(path, "/systemColors.js") == 0) name = "systemColors.js";
+    else if (strcmp(path, "/font_wasm.js") == 0) name = "font_wasm.js";
+    else if (strcmp(path, "/stb_font_wasm.mjs") == 0) name = "stb_font_wasm.mjs";
+    else if (strcmp(path, "/stb_font_wasm.wasm") == 0) name = "stb_font_wasm.wasm";
+    else if (strcmp(path, "/font.ttf") == 0) name = "font.ttf";
     if (!name) {
         vm_send_response(fd, 404, "Not Found", "text/plain", "not found", 9);
         return;
@@ -149,7 +159,9 @@ static void vm_serve_static(VmServer *s, vm_socket fd, const char *path) {
     }
     size_t readLen = fread(body, 1, (size_t)size, f);
     fclose(f);
-    const char *ct = strstr(name, ".js") ? "text/javascript; charset=utf-8" : "text/plain; charset=utf-8";
+    const char *ct = "text/plain; charset=utf-8";
+    if (strstr(name, ".js") || strstr(name, ".mjs")) ct = "text/javascript; charset=utf-8";
+    else if (strstr(name, ".wasm")) ct = "application/wasm";
     vm_send_response(fd, 200, "OK", ct, body, readLen);
     free(body);
 }

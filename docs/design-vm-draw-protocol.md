@@ -36,7 +36,7 @@
 | `clear` | `(x?, y?, w?, h?)` | 无参清整屏；有参清矩形 |
 | `drawRect` | `(x, y, w, h, color, cornerRadius?)` | 填充矩形，可选圆角 |
 | `drawBorder` | `(x, y, w, h, color, widths[4], cornerRadius?)` | 四边框，`widths = [left, right, top, bottom]` |
-| `drawText` | `(x, y, w, h, text, fontId, fontSize, color, letterSpacing?, lineHeight?)` | 文本；`fontId` 经字体表映射 |
+| `drawText` | `(x, y, w, h, text, fontId, fontSize, color, letterSpacing?, lineHeight?)` | 文本；由 wasm 中的 stb_truetype 光栅化为 RGBA 位图后绘制，不使用 Canvas `fillText` |
 | `drawImg` | `(imgId, x, y, w, h, tint?, cornerRadius?)` | 图片；复用已有 `loadImg` 缓存 |
 | `clipPush` | `(x, y, w, h)` | 压栈并裁剪后续绘制 |
 | `clipPop` | `()` | 弹栈恢复裁剪 |
@@ -45,9 +45,16 @@
 
 `loadImg(imgId, dataUrl)` 沿用已有资源命令，不放在帧内。
 
-### 字体表
+### 字体加载（决策更新：wasm 光栅化）
 
-`fontId` → 字体族名在前端 `registerFont(fontId, family)` 注册；未注册回退 `sans-serif`。guest 侧 `Clay_SetMeasureTextFunction` 必须使用同一张表，否则换行/对齐不一致（阶段 2 验证）。
+新增资源命令 `loadFont(fontId, ttfBase64)`：
+
+- `fontId` 为 0..7 的整数，与 guest 侧 `Clay_SetMeasureTextFunction` 使用的字体索引一致。
+- `ttfBase64` 为 TTF 文件内容的 base64；前端解码后写入 wasm 线性内存，调用 `loadFont(fontId, ptr, len)`。
+- wasm 模块 `stb_font_wasm.js/.wasm` 由 `vm-desktop/stb_font_wasm.c` 编译，直接基于 stb_truetype，导出 `loadFont` / `measureText` / `rasterizeText` / `alloc` / `freeMem`。体积约 32KB。
+- `drawText` 执行时调用 `rasterizeText` 得到 RGBA 位图，用离屏 canvas + `putImageData` 生成 ImageBitmap，再按颜色 tint 画到目标 canvas；不使用浏览器字体引擎。
+- 已实测：同一份 stb_truetype C 代码在 native（`font_probe`）与 wasm 下对三段文本度量完全一致（91 / 70 / 247），无需 Canvas `measureText` 对比。
+- 阶段 2 剩余验证：浏览器像素级渲染一致性（中文/英文/换行）。
 
 ## Clay 命令映射
 

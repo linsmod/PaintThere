@@ -15,6 +15,9 @@
   <ItemGroup>
     <None Update="app.js"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
     <None Update="connection.js"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
+    <None Update="font_wasm.js"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
+    <None Update="stb_font_wasm.mjs"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
+    <None Update="stb_font_wasm.wasm"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
     <None Update="index.html"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
     <None Update="loadingSplash.js"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
     <None Update="main.js"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>

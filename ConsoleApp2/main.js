@@ -1,4 +1,4 @@
-﻿import { initCanvas, commandHandlers, loadImg, drawImg, setDrawImgTarget, drainPrimitiveState } from './app.js';
+﻿import { initCanvas, commandHandlers, loadImg, drawImg, setDrawImgTarget, drainPrimitiveState, setTextNeedsReplay } from './app.js';
 
 // eval 兼容路径需要这些函数在当前作用域可见（旧协议字符串指令用）
 const { setBounds, drawBackground, drawLabel, drawButton, drawCheckBox,
@@ -11,6 +11,7 @@ let pendingFrame = null;     // 只保留最新帧，旧帧直接丢弃
 let lastCommands = [];       // 上一帧指令，用于增量 diff
 let lastFrameSignature = '';
 let currentFrameId = 0;      // 最新收到的 frameId，仅作标记，不阻塞输入
+let lastRenderedFrame = null; // 当前正在渲染的帧，字体就绪时用于重放
 let cursorCanvas = null;
 let cursorCtx = null;
 let myClientId = null;
@@ -67,6 +68,12 @@ function initApp() {
     cursorCanvas.style.height = canvas.style.height;
     cursorCtx = cursorCanvas.getContext('2d');
     setDrawImgTarget(cursorCtx);
+    setTextNeedsReplay(() => {
+        if (lastRenderedFrame && !pendingFrame) {
+            lastFrameSignature = ''; // 强制重放，让新就绪的文本位图被绘制
+            pendingFrame = lastRenderedFrame;
+        }
+    });
     startWebSocket();
     startRendering();
     setupEventListeners();
@@ -349,6 +356,7 @@ function applyFrame() {
     const frame = pendingFrame;
     if (!frame) return;
     pendingFrame = null;
+    lastRenderedFrame = frame;
 
     const structured = frame.length > 0 && typeof frame[0] === 'object' && frame[0] !== null;
     const signature = structured

@@ -38,6 +38,9 @@
     <None Include="../ConsoleApp2/app.js" Link="app.js" CopyToOutputDirectory="Always" />
     <None Include="../ConsoleApp2/main.js" Link="main.js" CopyToOutputDirectory="Always" />
     <None Include="../ConsoleApp2/connection.js" Link="connection.js" CopyToOutputDirectory="Always" />
+    <None Include="../ConsoleApp2/font_wasm.js" Link="font_wasm.js" CopyToOutputDirectory="Always" />
+    <None Include="../ConsoleApp2/stb_font_wasm.mjs" Link="stb_font_wasm.mjs" CopyToOutputDirectory="Always" />
+    <None Include="../ConsoleApp2/stb_font_wasm.wasm" Link="stb_font_wasm.wasm" CopyToOutputDirectory="Always" />
     <None Include="../ConsoleApp2/loadingSplash.js" Link="loadingSplash.js" CopyToOutputDirectory="Always" />
     <None Include="../ConsoleApp2/systemColors.js" Link="systemColors.js" CopyToOutputDirectory="Always" />
   </ItemGroup>

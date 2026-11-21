@@ -1,6 +1,10 @@
 ﻿// app.js - Windows Forms 控件渲染库
 
 import { resolveColor } from './systemColors.js';
+import { loadFont as wasmLoadFont, rasterizeText, drawRaster, getRaster } from './font_wasm.js';
+
+let textNeedsReplay = null;
+function setTextNeedsReplay(cb) { textNeedsReplay = cb; }
 // 全局 Canvas 上下文
 let ctx = null;
 let dpiScale = 1;
@@ -145,16 +149,22 @@ function drawBorder(x, y, w, h, color, widths, cornerRadius = 0) {
     applyOverlay(x, y, w, h);
 }
 
+function loadFont(fontId, ttfBase64) {
+    wasmLoadFont(fontId, ttfBase64).then(() => {
+        if (textNeedsReplay) textNeedsReplay();
+    }).catch((e) => console.error('loadFont failed:', e));
+}
+
 function drawText(x, y, w, h, text, fontId, fontSize, color, letterSpacing = 0, lineHeight = 0) {
-    const family = fontTable.get(fontId) || 'sans-serif';
-    ctx.save();
-    ctx.font = `${fontSize}px ${family}`;
-    ctx.fillStyle = resolveColor(color);
-    ctx.textBaseline = 'top';
-    if (letterSpacing && 'letterSpacing' in ctx) ctx.letterSpacing = `${letterSpacing}px`;
-    const lh = lineHeight || fontSize;
-    String(text).split('\n').forEach((line, i) => ctx.fillText(line, x, y + i * lh));
-    ctx.restore();
+    const s = String(text);
+    const raster = getRaster(fontId, fontSize, s);
+    if (!raster) {
+        rasterizeText(fontId, fontSize, s).then(() => {
+            if (textNeedsReplay) textNeedsReplay();
+        }).catch((e) => console.error('rasterizeText failed:', e));
+        return;
+    }
+    drawRaster(ctx, raster, x, y, resolveColor(color));
     applyOverlay(x, y, w, h);
 }
 
@@ -556,6 +566,8 @@ const commandHandlers = {
     drawControl,
     loadImg,
     drawImg,
+    loadFont,
+    setTextNeedsReplay,
     clear,
     drawRect,
     drawBorder,
@@ -579,7 +591,9 @@ export {
     drawControl,
     loadImg,
     drawImg,
+    loadFont,
     setDrawImgTarget,
+    setTextNeedsReplay,
     registerFont,
     drainPrimitiveState,
     clear,

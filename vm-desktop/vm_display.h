@@ -129,12 +129,24 @@ typedef struct VmDisplayList {
     uint32_t frameId;
 } VmDisplayList;
 
+/* Structural diff: changed/added commands, removed ids, and full current order. */
+typedef struct {
+    VmDrawCommand changed[VM_DISPLAY_MAX_COMMANDS];
+    int changedCount;
+    char removed[VM_DISPLAY_MAX_COMMANDS][VM_DISPLAY_MAX_ID];
+    int removedCount;
+    char order[VM_DISPLAY_MAX_COMMANDS][VM_DISPLAY_MAX_ID];
+    int orderCount;
+} VmDisplayDelta;
+
 void VmDisplay_Init(VmDisplayList *list);
 void VmDisplay_CopyStr(char *dst, size_t cap, const char *src);
 void VmDisplay_Clear(VmDisplayList *list);
 VmDrawCommand *VmDisplay_Append(VmDisplayList *list, VmCmdType type, const char *id);
 VmDrawCommand *VmDisplay_Find(VmDisplayList *list, const char *id);
 int VmDisplay_CommandEqual(const VmDrawCommand *a, const VmDrawCommand *b);
+/* Compute a structural delta from prev -> current. Delta references current's storage. */
+void VmDisplay_Diff(const VmDisplayList *prev, const VmDisplayList *current, VmDisplayDelta *delta);
 
 #ifdef __cplusplus
 }

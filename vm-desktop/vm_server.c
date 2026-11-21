@@ -49,6 +49,8 @@ struct VmServer {
     void *inputUserData;
     VmResourceProvider resourceProvider;
     void *resourceUserData;
+    VmFullFrameProvider fullFrameProvider;
+    void *fullFrameUserData;
     unsigned int currentFrameId;
     char currentFrame[VM_FRAME_BUFFER];
     int hasFrame;
@@ -61,7 +63,7 @@ static const char VM_INDEX_HTML[] =
     "box-shadow:0 8px 32px rgba(0,0,0,.5)}#stage canvas{position:absolute;left:0;top:0}</style></head><body>"
     "<div id='stage'><canvas id='bg' width='800' height='600'></canvas><canvas id='c' width='800' height='600'></canvas></div>"
     "<script type='module'>"
-    "import { initCanvas, commandHandlers, setLayerCanvas, replayBackgroundPrograms, applyFrameDiff } from './app.js';"
+    "import { initCanvas, commandHandlers, setLayerCanvas, replayBackgroundPrograms, applyFrameDiff, applyIncrementalFrame } from './app.js';"
     "import { loadFont } from './font_wasm.js';"
     "const cv=document.getElementById('c'); initCanvas(cv,'#FFFFFF',800,600);"
     "setLayerCanvas('bg',document.getElementById('bg'));"
@@ -73,8 +75,11 @@ static const char VM_INDEX_HTML[] =
     "es.addEventListener('resources',(e)=>{try{const list=JSON.parse(e.data);"
     "for(const c of list){const fn=commandHandlers[c.cmd];if(fn)fn(...c.args);}"
     "replayBackgroundPrograms();}catch(err){console.error('resource error',err)}});"
+    "es.addEventListener('fullframe',(e)=>{try{const f=JSON.parse(e.data);"
+    "applyFrameDiff(f.commands,cv);}catch(err){console.error('fullframe error',err)}});"
     "es.onmessage=(e)=>{try{const f=JSON.parse(e.data);"
-    "applyFrameDiff(f.commands,cv);}catch(err){console.error('frame error',err)}};"
+    "if(f.incremental)applyIncrementalFrame(f,cv);else applyFrameDiff(f.commands,cv);}"
+    "catch(err){console.error('frame error',err)}};"
     "es.onerror=()=>console.warn('SSE disconnected');"
     "let cid=sessionStorage.getItem('vmCid');"
     "if(!cid){cid=Math.random().toString(36).slice(2);sessionStorage.setItem('vmCid',cid)}"
@@ -217,6 +222,14 @@ static void vm_handle_request(VmServer *s, VmClient *client) {
                 if (n > 0) vm_send_all(client->fd, event, (size_t)n);
             }
         }
+        if (s->fullFrameProvider) {
+            const char *full = s->fullFrameProvider(s->fullFrameUserData);
+            if (full && *full) {
+                char event[VM_FRAME_BUFFER + 64];
+                int n = snprintf(event, sizeof(event), "event: fullframe\ndata: %s\n\n", full);
+                if (n > 0) vm_send_all(client->fd, event, (size_t)n);
+            }
+        }
         return;
     }
 
@@ -320,6 +333,12 @@ void VmServer_SetResourceProvider(VmServer *s, VmResourceProvider provider, void
     if (!s) return;
     s->resourceProvider = provider;
     s->resourceUserData = userData;
+}
+
+void VmServer_SetFullFrameProvider(VmServer *s, VmFullFrameProvider provider, void *userData) {
+    if (!s) return;
+    s->fullFrameProvider = provider;
+    s->fullFrameUserData = userData;
 }
 
 static void vm_poll_frames(VmServer *s) {

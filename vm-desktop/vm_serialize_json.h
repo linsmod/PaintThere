@@ -14,6 +14,9 @@ char *VmSerialize_FrameJson(const VmDisplayList *list);
 /* Serialize a command list (without frame envelope) for the 'resources' SSE event. */
 char *VmSerialize_CommandArrayJson(const VmDisplayList *list);
 
+/* Serialize a structural delta as an incremental frame. */
+char *VmSerialize_DeltaFrameJson(const VmDisplayDelta *delta, uint32_t frameId);
+
 #ifdef __cplusplus
 }
 #endif

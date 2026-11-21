@@ -742,6 +742,31 @@ function applyFrameDiff(frame, targetCanvas) {
     return !!region;
 }
 
+/* Merge a guest-side structural delta into the retained baseline, then draw.
+   frame = {frameId, incremental:true, commands:[changed], removed:[ids], order:[ids]} */
+function applyIncrementalFrame(frame, targetCanvas) {
+    const canvas = targetCanvas || ctx.canvas;
+    let state = diffState.get(canvas);
+    if (!state) { state = { signature: '', commands: [] }; diffState.set(canvas, state); }
+
+    const removed = new Set(Array.isArray(frame.removed) ? frame.removed : []);
+    const byId = new Map();
+    for (const c of state.commands) if (c.id && !removed.has(c.id)) byId.set(c.id, c);
+    for (const c of (frame.commands || [])) if (c.id) byId.set(c.id, c);
+
+    const order = Array.isArray(frame.order) ? frame.order : [];
+    let full;
+    if (order.length) {
+        full = [];
+        for (const id of order) { const c = byId.get(id); if (c) full.push(c); }
+        // 增量里出现但 order 未覆盖的命令追加到末尾，避免丢失
+        for (const [id, c] of byId) if (!order.includes(id)) full.push(c);
+    } else {
+        full = Array.from(byId.values());
+    }
+    return applyFrameDiff(full, canvas);
+}
+
 // 结构化指令分发表：避免 eval 解析字符串
 const commandHandlers = {
     setBounds,
@@ -799,6 +824,7 @@ export {
     resumeDrawProgram,
     replayBackgroundPrograms,
     applyFrameDiff,
+    applyIncrementalFrame,
     registerFont,
     drainPrimitiveState,
     clear,

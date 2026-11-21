@@ -148,7 +148,7 @@ created → mapped（可见）→ focused / unfocused
 - 设计起点：本文 + `docs/arch-跨端图绘指令流.md`（现有指令流架构）+ `docs/task-multi-client-cursor.md`（多客户端指针）。
 - Clay 源码：`H:\github_repos\clay\clay.h`、`README.md`、`renderers/terminal/clay_renderer_terminal_ansi.c`（最简非像素 renderer 参考）。
 - VM 环境：`H:\github_repos\RVVM`，token 在 `release.test.windows.x86_64\runtime\supervisor\token`。
-- 全部阶段完成；后续已完成**键盘输入闭环**、**前端 retained diff**、**内部模型分层重构**（见下节）。剩余增强方向：guest 侧基于 `VmDisplayList` 的增量发布、复杂图样的 wasm 通道。
+- 全部阶段完成；后续已完成**键盘输入闭环**、**前端 retained diff**、**内部模型分层重构**、**guest 侧增量发布**（见下节）。剩余增强方向：复杂图样的 wasm 通道。
 
 ## 后续增强：键盘输入闭环（2026-11-21，已完成）
 
@@ -164,7 +164,17 @@ created → mapped（可见）→ focused / unfocused
 - `ConsoleApp2/app.js` 新增公共 `applyFrameDiff(frame, canvas)`：按 `id` 比较命令，签名相同则跳过；变化命令收集脏矩形，`ctx.clip` + `clearRect` 后只重画脏区。状态按 canvas 存在 `WeakMap`，两条通道互不干扰。
 - SSE 测试页从裸遍历 `commandHandlers` 改为调用 `applyFrameDiff`；WebSocket 通道的 `main.js` 保留其已有的同类逻辑（含旧协议兼容与重放）。
 - 验证：`applyFrameDiff` 对相同帧首次返回 `true`、第二次 `false`；两命令帧只改其中一个时，仅变化区域被重画（取样像素变为新颜色）；端到端渲染正常（背景 480000、标题 11720、按钮 5600），console 无错误。
-- 未做：guest 侧命令级 diff（减少带宽）。当前 guest 仍每帧发全量命令，前端 diff 只减少重画。
+- guest 侧命令级 diff 已在“guest 侧增量发布”一节完成。
+
+## 后续增强：guest 侧增量发布（2026-11-21，已完成）
+
+- `vm_display.c`：`VmDisplay_Diff(prev,current,delta)` 在结构体层按 id + typed 字段比较，产出 `changed` / `removed` / `order`（当前完整顺序，供前端恢复 z 序）。不碰 JSON。
+- `vm_serialize_json.c`：`VmSerialize_DeltaFrameJson` 输出 `{type:'frame',frameId,incremental:true,commands:[changed],removed:[ids],order:[ids]}`。
+- `vm_server.c/.h`：新增 `VmFullFrameProvider` 与 SSE `event: fullframe`。新客户端连接时先发 resources，再发当前全量帧建立基线，后续才收增量帧。
+- `demo_wm.c`：维护 `g_prevFrame` 基线，每帧 BuildFrame 后做结构体 diff 并发增量；`g_fullFrameJson` 缓存最近全量帧供 late client。
+- `app.js`：`applyIncrementalFrame` 把 changed 合并进 retained 基线、删除 removed、按 order 重建完整帧，再走 `applyFrameDiff` 的脏矩形重画。
+- 验证：新连接收到 resources + fullframe(18 条命令) + 首帧增量；一次指针移动后增量帧仅 changed=2（cursor_asset + cursor_A）、order=18；焦点切换帧 changed=5（w2_title/w2_border/w1_title/w1_border/cursor_B），完全对应状态变化；浏览器端到端背景 480000、窗口 11720，console 无错误。截图 `wm_incremental.png`。
+- 注意：首条增量帧因 prev 为空，changed 等于全量，与本轮 fullframe 冗余但语义正确；可在后续优化里跳过首条增量。
 
 ## 架构调整：内部模型与序列化分层（2026-11-21，已完成）
 

@@ -225,3 +225,26 @@ char *VmSerialize_FrameJson(const VmDisplayList *list) {
 char *VmSerialize_CommandArrayJson(const VmDisplayList *list) {
     return serialize(list, 0);
 }
+
+char *VmSerialize_DeltaFrameJson(const VmDisplayDelta *delta, uint32_t frameId) {
+    if (!delta) return NULL;
+    StrBuf b = {0};
+    printf_(&b, "{\"type\":\"frame\",\"frameId\":%u,\"incremental\":true,\"commands\":[",
+            frameId);
+    for (int i = 0; i < delta->changedCount; i++) {
+        if (i) puts_(&b, ",");
+        emit_command(&b, &delta->changed[i]);
+    }
+    puts_(&b, "],\"removed\":[");
+    for (int i = 0; i < delta->removedCount; i++) {
+        if (i) puts_(&b, ",");
+        json_string(&b, delta->removed[i]);
+    }
+    puts_(&b, "],\"order\":[");
+    for (int i = 0; i < delta->orderCount; i++) {
+        if (i) puts_(&b, ",");
+        json_string(&b, delta->order[i]);
+    }
+    puts_(&b, "]}");
+    return b.data;
+}

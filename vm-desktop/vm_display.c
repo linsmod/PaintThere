@@ -117,3 +117,39 @@ int VmDisplay_CommandEqual(const VmDrawCommand *a, const VmDrawCommand *b) {
     }
     return 0;
 }
+
+void VmDisplay_Diff(const VmDisplayList *prev, const VmDisplayList *current, VmDisplayDelta *delta) {
+    if (!delta) return;
+    memset(delta, 0, sizeof(*delta));
+    if (!current) return;
+
+    /* Current full order (frontend restores z-order from this). */
+    for (int i = 0; i < current->count && delta->orderCount < VM_DISPLAY_MAX_COMMANDS; i++) {
+        snprintf(delta->order[delta->orderCount], VM_DISPLAY_MAX_ID, "%s",
+                 current->commands[i].id);
+        delta->orderCount++;
+    }
+
+    if (!prev) {
+        for (int i = 0; i < current->count && delta->changedCount < VM_DISPLAY_MAX_COMMANDS; i++)
+            delta->changed[delta->changedCount++] = current->commands[i];
+        return;
+    }
+
+    for (int i = 0; i < current->count; i++) {
+        const VmDrawCommand *c = &current->commands[i];
+        const VmDrawCommand *old = VmDisplay_Find((VmDisplayList *)prev, c->id);
+        if (!old || !VmDisplay_CommandEqual(old, c)) {
+            if (delta->changedCount < VM_DISPLAY_MAX_COMMANDS)
+                delta->changed[delta->changedCount++] = *c;
+        }
+    }
+
+    for (int i = 0; i < prev->count; i++) {
+        const VmDrawCommand *old = &prev->commands[i];
+        if (!VmDisplay_Find((VmDisplayList *)current, old->id)) {
+            if (delta->removedCount < VM_DISPLAY_MAX_COMMANDS)
+                snprintf(delta->removed[delta->removedCount++], VM_DISPLAY_MAX_ID, "%s", old->id);
+        }
+    }
+}

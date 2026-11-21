@@ -15,9 +15,12 @@
 
 static VmWm *g_wm;
 static VmDisplayList g_frame;
+static VmDisplayList g_prevFrame;
+static int g_hasPrev = 0;
 static unsigned int g_frameId;
 static int g_dirty = 1;   /* adaptive frame rate: only publish on change */
 static char *g_resourcesJson = NULL;
+static char *g_fullFrameJson = NULL;
 
 /* Static nested program: desktop background rectangle. */
 static VmDisplayList g_desktopProgramCommands;
@@ -193,6 +196,7 @@ static Clay_RenderCommandArray LayoutB(void *userData) {
 }
 
 static char *g_frameJson = NULL;
+static VmDisplayDelta g_delta;
 
 static const char *FrameProvider(void *userData, unsigned int *frameId) {
     (void)userData;
@@ -200,9 +204,24 @@ static const char *FrameProvider(void *userData, unsigned int *frameId) {
     g_dirty = 0;
     VmWm_BuildFrame(g_wm, &g_frame, g_frameId, ResolveFont);
     *frameId = g_frameId++;
+
+    /* Keep a full frame for late clients (sent via the 'fullframe' SSE event). */
+    free(g_fullFrameJson);
+    g_fullFrameJson = VmSerialize_FrameJson(&g_frame);
+
+    /* Structural diff on VmDisplayList, not on JSON. */
+    VmDisplay_Diff(g_hasPrev ? &g_prevFrame : NULL, &g_frame, &g_delta);
+    g_prevFrame = g_frame;
+    g_hasPrev = 1;
+
     free(g_frameJson);
-    g_frameJson = VmSerialize_FrameJson(&g_frame);
+    g_frameJson = VmSerialize_DeltaFrameJson(&g_delta, g_frameId - 1);
     return g_frameJson;
+}
+
+static const char *FullFrameProvider(void *userData) {
+    (void)userData;
+    return g_fullFrameJson ? g_fullFrameJson : "";
 }
 
 static void InputHandler(const char *body, size_t length, void *userData) {
@@ -219,6 +238,7 @@ int main(int argc, char **argv) {
 
     g_wm = VmWm_Create(800, 600);
     VmDisplay_Init(&g_frame);
+    VmDisplay_Init(&g_prevFrame);
     if (!g_wm) return 1;
     BuildResources();
 
@@ -237,12 +257,14 @@ int main(int argc, char **argv) {
     VmServer_SetFrameProvider(server, FrameProvider, NULL);
     VmServer_SetInputHandler(server, InputHandler, NULL);
     VmServer_SetResourceProvider(server, ResourceProvider, NULL);
+    VmServer_SetFullFrameProvider(server, FullFrameProvider, NULL);
 
     printf("WM demo on http://127.0.0.1:%u/ (two windows, focus + drag)\n", port);
     fflush(stdout);
     int result = VmServer_Run(server);
     VmServer_Free(server);
     free(g_frameJson);
+    free(g_fullFrameJson);
     free(g_resourcesJson);
     VmWm_Free(g_wm);
     return result;

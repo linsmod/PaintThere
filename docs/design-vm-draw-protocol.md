@@ -41,6 +41,8 @@ Clay RenderCommandArray
 
 - `frameId`：单调递增整数，仅用于帧同步，不含窗口语义。
 - `commands`：`PaintCommand` 同形 `{id, cmd, args, rect}`，顺序即 z 序（与 Clay `RenderCommandArray` 一致）。
+- `incremental`（可选）：为 `true` 时 `commands` 只含变化的命令，另有 `removed: [id]` 表示删除、`order: [id]` 表示当前完整 z 序。客户端按 id 合并进 retained 基线再重画。guest 在 `VmDisplayList` 结构体层做 diff，不基于 JSON 字符串。
+- `fullframe` SSE 事件：新客户端连接时先发一次完整帧（非增量），建立基线；其后才接收增量帧。
 - `resources`（可选，仅首帧或资源变更帧携带）：一次性下发的 `definePattern` / `defineStyle` / `defineDrawProgram` 命令，客户端按 id 缓存，不随普通帧重复。
 - `id` 用于 retained diff；`rect` 用于脏矩形，可省略（省略时按整屏处理）。
 

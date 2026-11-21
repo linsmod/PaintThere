@@ -159,14 +159,18 @@ async function boot() {
     const y = Math.round((e.clientY - r.top) / r.height * cv.height);
     postInput({ type: 'input', kind, x, y, button: e.button, clientId: cid, color });
   };
-  cv.addEventListener('mousedown', (e) => sendPointer('mousedown', e));
-  document.addEventListener('mouseup', (e) => sendPointer('mouseup', e));
-
   // mousemove 节流：鼠标事件密度远高于服务端出帧节奏（20ms 一轮）。
   // 走 WS 后每帧只是一次 send，但仍要合并，避免把服务端打成每事件一帧。
   const MOVE_INTERVAL_MS = 16;
   let moveTimer = 0;
   let pendingMove = null;
+  const flushMove = () => {
+    moveTimer = 0;
+    const p = pendingMove;
+    pendingMove = null;
+    if (!p) return;
+    postInput({ type: 'input', kind: 'mousemove', x: p.x, y: p.y, button: p.button, clientId: cid, color });
+  };
   document.addEventListener('mousemove', (e) => {
     const r = cv.getBoundingClientRect();
     pendingMove = {
@@ -175,14 +179,21 @@ async function boot() {
       button: e.button
     };
     if (moveTimer) return;
-    moveTimer = setTimeout(() => {
-      moveTimer = 0;
-      const p = pendingMove;
-      pendingMove = null;
-      if (!p) return;
-      postInput({ type: 'input', kind: 'mousemove', x: p.x, y: p.y, button: p.button, clientId: cid, color });
-    }, MOVE_INTERVAL_MS);
+    moveTimer = setTimeout(flushMove, MOVE_INTERVAL_MS);
   });
+
+  // 按下/抬起立即发送，并丢弃尚未发出的移动：否则节流定时器会在松手之后
+  // 把指针位置写回旧坐标，表现为松手后指针跳回原位。
+  const sendImmediate = (kind, e) => {
+    pendingMove = null;
+    if (moveTimer) {
+      clearTimeout(moveTimer);
+      moveTimer = 0;
+    }
+    sendPointer(kind, e);
+  };
+  cv.addEventListener('mousedown', (e) => sendImmediate('mousedown', e));
+  document.addEventListener('mouseup', (e) => sendImmediate('mouseup', e));
   const sendKey = (kind, e) => {
     postInput({ type: 'input', kind, key: e.key, code: e.code, clientId: cid, color });
   };

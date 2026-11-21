@@ -240,6 +240,11 @@ char *VmSerialize_DeltaFrameJson(const VmDisplayDelta *delta, uint32_t frameId) 
         if (i) puts_(&b, ",");
         json_string(&b, delta->removed[i]);
     }
+    puts_(&b, "],\"dirty\":[");
+    for (int i = 0; i < delta->dirtyCount; i++) {
+        if (i) puts_(&b, ",");
+        rect_json(&b, delta->dirty[i]);
+    }
     puts_(&b, "],\"order\":[");
     for (int i = 0; i < delta->orderCount; i++) {
         if (i) puts_(&b, ",");

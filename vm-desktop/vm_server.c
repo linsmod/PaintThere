@@ -299,7 +299,14 @@ static void vm_ws_consume(VmServer *s, VmClient *c) {
         if (opcode == 0x9) {
             vm_ws_send_frame(c->fd, 0x0A, payload, (size_t)plen);
         } else if (opcode == 0x1 && fin && plen > 0 && s->inputHandler) {
-            s->inputHandler((const char *)payload, (size_t)plen, s->inputUserData);
+            /* payload 不是 C 字符串：它后面可能是下一个帧或缓冲残留。不补 '\0' 时，
+               下层的 strstr 会读到别的帧，把 x/y 解析成默认值 -1，指针就跳到固定位置。 */
+            char message[VM_RECV_BUFFER + 1];
+            if (plen <= VM_RECV_BUFFER) {
+                memcpy(message, payload, (size_t)plen);
+                message[plen] = '\0';
+                s->inputHandler(message, (size_t)plen, s->inputUserData);
+            }
             /* 每条输入立即出一帧：Clay 的 PRESSED_THIS_FRAME 只在某一帧布局里成立。
                down/up 若在同一批数据里处理完，按钮点击会被吞掉。 */
             vm_poll_frames(s);
@@ -488,7 +495,13 @@ static void vm_handle_request(VmServer *s, VmClient *client) {
     if (strcmp(method, "POST") == 0 && strcmp(path, "/input") == 0) {
         char *body = headerEnd + 4;
         size_t bodyLen = client->recvLen - (size_t)(body - req);
-        if (s->inputHandler) s->inputHandler(body, bodyLen, s->inputUserData);
+        if (s->inputHandler && bodyLen <= VM_RECV_BUFFER) {
+            /* 同样补 '\0'：body 之后可能是残留字节，不能让解析读到界外。 */
+            char message[VM_RECV_BUFFER + 1];
+            memcpy(message, body, bodyLen);
+            message[bodyLen] = '\0';
+            s->inputHandler(message, bodyLen, s->inputUserData);
+        }
         /* HTTP 回退路径同样立即出帧，保持与 WebSocket 路径一致的点击时序。 */
         vm_poll_frames(s);
         vm_push_frames(s);

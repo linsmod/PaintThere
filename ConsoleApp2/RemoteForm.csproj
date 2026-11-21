@@ -13,15 +13,17 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="app.js"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
+    <!-- 与 vm-desktop 共用的前端资源只保留 assets/ 一份，链接到输出目录 -->
+    <None Include="../assets/app.js" Link="app.js"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
+    <None Include="../assets/font_wasm.js" Link="font_wasm.js"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
+    <None Include="../assets/systemColors.js" Link="systemColors.js"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
+    <None Include="../assets/stb_font_wasm.mjs" Link="stb_font_wasm.mjs"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
+    <None Include="../assets/stb_font_wasm.wasm" Link="stb_font_wasm.wasm"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
+    <!-- WinForms 页面专用资源 -->
     <None Update="connection.js"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
-    <None Update="font_wasm.js"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
-    <None Update="stb_font_wasm.mjs"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
-    <None Update="stb_font_wasm.wasm"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
     <None Update="index.html"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
     <None Update="loadingSplash.js"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
     <None Update="main.js"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
-    <None Update="systemColors.js"><CopyToOutputDirectory>Always</CopyToOutputDirectory></None>
   </ItemGroup>
 
 </Project>

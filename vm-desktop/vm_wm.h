@@ -59,6 +59,10 @@ typedef struct {
     VmCursor cursors[VM_WM_MAX_CURSORS];
     int cursorCount;
     char focusClientId[64];
+    /* 全局指针（最近一次指针事件的画布坐标）：用于跨窗口 hover 判定 */
+    int pointerX, pointerY;
+    int pointerDown;
+    int pointerValid;
 } VmWm;
 
 VmWm *VmWm_Create(int width, int height);
@@ -81,6 +85,9 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length);
 /* Build a composite frame: background + all windows in z order. */
 void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
                      const char *(*fontResolver)(uint16_t));
+
+/* 收集窗口两两重叠的矩形：z 序变化时只有重叠区域显示会变，只重绘这些区域。 */
+int VmWm_CollectOverlapRects(VmWm *wm, VmRect *out, int cap);
 
 #ifdef __cplusplus
 }

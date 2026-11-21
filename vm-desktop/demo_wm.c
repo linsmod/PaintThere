@@ -211,6 +211,10 @@ static const char *FrameProvider(void *userData, unsigned int *frameId) {
 
     /* Structural diff on VmDisplayList, not on JSON. */
     VmDisplay_Diff(g_hasPrev ? &g_prevFrame : NULL, &g_frame, &g_delta);
+    if (g_delta.orderChanged) {
+        /* 顺序变了但每条命令的 rect 没变：由 WM 给出真正受影响的窗口重叠区域。 */
+        g_delta.dirtyCount = VmWm_CollectOverlapRects(g_wm, g_delta.dirty, VM_DISPLAY_MAX_DIRTY);
+    }
     g_prevFrame = g_frame;
     g_hasPrev = 1;
 

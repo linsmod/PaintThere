@@ -695,7 +695,7 @@ function unionRects(rects) {
 
 /* Apply a structured frame with per-id retained diff and dirty-rectangle redraw.
    Returns true if anything was drawn. */
-function applyFrameDiff(frame, targetCanvas, forceFull) {
+function applyFrameDiff(frame, targetCanvas, forcedRects) {
     if (!Array.isArray(frame) || !frame.length) return false;
     const canvas = targetCanvas || ctx.canvas;
     const targetCtx = canvas.getContext('2d');
@@ -705,15 +705,17 @@ function applyFrameDiff(frame, targetCanvas, forceFull) {
     if (!state) { state = { signature: '', commands: [] }; diffState.set(canvas, state); }
 
     const signature = frame.map(c => (c.id || '') + ':' + c.cmd + ':' + JSON.stringify(c.args)).join('|');
-    if (signature === state.signature && !forceFull) return false;
+    if (signature === state.signature && !forcedRects) return false;
     state.signature = signature;
 
     const oldById = new Map();
     for (const c of state.commands) if (c.id) oldById.set(c.id, c);
     const newIds = new Set();
     const dirty = [];
-    // forceFull 由服务端给出（例如 z 序变化改变了遮挡关系），前端不自行推断。
-    if (forceFull) dirty.push([0, 0, canvas.width, canvas.height]);
+    // forcedRects 由服务端给出（z 序变化等）：数组是局部脏区，true 是整屏兜底。
+    // 顺序语义属于服务端，前端不自行推断。
+    if (forcedRects === true) dirty.push([0, 0, canvas.width, canvas.height]);
+    else if (Array.isArray(forcedRects)) for (const r of forcedRects) dirty.push(r);
     for (const c of frame) {
         if (c.id) {
             newIds.add(c.id);
@@ -775,7 +777,10 @@ function applyIncrementalFrame(frame, targetCanvas) {
     } else {
         full = Array.from(byId.values());
     }
-    return applyFrameDiff(full, canvas, frame.full === true);
+    // 服务端给出顺序变化的局部脏区；只给了 full 标记时退回整屏。
+    const forced = (Array.isArray(frame.dirty) && frame.dirty.length) ? frame.dirty
+                 : (frame.full === true ? true : null);
+    return applyFrameDiff(full, canvas, forced);
 }
 
 // 结构化指令分发表：避免 eval 解析字符串

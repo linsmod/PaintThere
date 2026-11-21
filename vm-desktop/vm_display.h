@@ -12,6 +12,7 @@ extern "C" {
 #define VM_DISPLAY_MAX_ID 64
 #define VM_DISPLAY_MAX_TEXT 256
 #define VM_DISPLAY_MAX_STR 128
+#define VM_DISPLAY_MAX_DIRTY 8
 
 typedef enum {
     VM_CMD_NONE = 0,
@@ -137,8 +138,11 @@ typedef struct {
     int removedCount;
     char order[VM_DISPLAY_MAX_COMMANDS][VM_DISPLAY_MAX_ID];
     int orderCount;
-    /* 绘制顺序（z 序）是否变化。变化时遮挡关系变了，前端必须整屏重绘。 */
+    /* 绘制顺序（z 序）是否变化。变化时遮挡关系变了，必须重绘重叠区域。 */
     int orderChanged;
+    /* 顺序变化时需要重绘的矩形（由 WM 层按窗口重叠算出，全空则前端退回整屏）。 */
+    VmRect dirty[VM_DISPLAY_MAX_DIRTY];
+    int dirtyCount;
 } VmDisplayDelta;
 
 void VmDisplay_Init(VmDisplayList *list);

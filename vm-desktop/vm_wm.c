@@ -142,15 +142,21 @@ static void extract_str(const char *json, const char *key, char *out, size_t cap
 }
 
 /* Push pointer state into every window's Clay context.
-   Non-focused windows get an off-screen pointer so no stale hover remains. */
+   hover 与 press 分开：指针落在哪个窗口就给哪个窗口局部坐标，非焦点窗口也能 hover 高亮；
+   press 只给焦点窗口，避免多个窗口同时进入按下态。 */
 static void sync_pointer_state(VmWm *wm) {
     for (int i = 0; i < wm->count; i++) {
         VmWindow *win = &wm->windows[i];
         if (!win->clayCtx) continue;
         Clay_SetCurrentContext(win->clayCtx);
-        if (win->focused) {
-            Clay_SetPointerState((Clay_Vector2){(float)win->pointerX, (float)win->pointerY},
-                                 win->pointerDown != 0);
+        int localX = wm->pointerX - (win->x + 2);
+        int localY = wm->pointerY - (win->y + VM_WM_TITLE_HEIGHT + 2);
+        int inside = wm->pointerValid && !win->minimized &&
+                     localX >= 0 && localY >= 0 &&
+                     localX < win->w - 4 && localY < win->h - VM_WM_TITLE_HEIGHT - 2;
+        if (inside) {
+            Clay_SetPointerState((Clay_Vector2){(float)localX, (float)localY},
+                                 win->focused && wm->pointerDown);
         } else {
             Clay_SetPointerState((Clay_Vector2){-1000.0f, -1000.0f}, 0);
         }
@@ -206,6 +212,15 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
         if (isDown) snprintf(wm->focusClientId, sizeof(wm->focusClientId), "%s", clientId);
     }
 
+    /* 全局指针：跨窗口 hover 判定用，任何客户端的指针事件都会更新它。 */
+    if (x >= 0 && y >= 0 && (isMove || isDown || isUp)) {
+        wm->pointerX = x;
+        wm->pointerY = y;
+        wm->pointerValid = 1;
+    }
+    if (isDown) wm->pointerDown = 1;
+    if (isUp) wm->pointerDown = 0;
+
     VmWindow *hit = VmWm_HitTest(wm, x, y);
     /* Focus arbitration: window state changes only from the owning client.
        A mousedown from any client claims ownership first. */
@@ -239,8 +254,9 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
         focus->pointerY = y - (focus->y + VM_WM_TITLE_HEIGHT + 2);
         if (isDown) focus->pointerDown = 1;
         if (isUp) focus->pointerDown = 0;
-        sync_pointer_state(wm);
     }
+    /* hover 与焦点无关：非焦点窗口也要按指针位置刷新，否则鼠标移过去不会高亮。 */
+    sync_pointer_state(wm);
 
     /* Keyboard: only the focus client's key reaches the focused window's handler. */
     if (ownsFocus && focus && (strcmp(kind, "keydown") == 0 || strcmp(kind, "keyup") == 0)) {
@@ -356,4 +372,32 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
         }
     }
     append_cursor_commands(wm, out);
+}
+
+/* z 序变化只改变重叠区域的显示：收集窗口两两重叠的矩形（外扩 2px 覆盖边框），
+   前端据此局部重绘，而不是整屏重绘。 */
+int VmWm_CollectOverlapRects(VmWm *wm, VmRect *out, int cap) {
+    if (!wm || !out || cap <= 0) return 0;
+    int n = 0;
+    for (int i = 0; i < wm->count && n < cap; i++) {
+        const VmWindow *a = &wm->windows[i];
+        if (a->minimized) continue;
+        for (int j = i + 1; j < wm->count && n < cap; j++) {
+            const VmWindow *b = &wm->windows[j];
+            if (b->minimized) continue;
+            int x1 = (a->x > b->x ? a->x : b->x) - 2;
+            int y1 = (a->y > b->y ? a->y : b->y) - 2;
+            int ax2 = a->x + a->w, bx2 = b->x + b->w;
+            int ay2 = a->y + a->h, by2 = b->y + b->h;
+            int x2 = (ax2 < bx2 ? ax2 : bx2) + 2;
+            int y2 = (ay2 < by2 ? ay2 : by2) + 2;
+            if (x2 <= x1 || y2 <= y1) continue;
+            out[n].x = (float)x1;
+            out[n].y = (float)y1;
+            out[n].w = (float)(x2 - x1);
+            out[n].h = (float)(y2 - y1);
+            n++;
+        }
+    }
+    return n;
 }

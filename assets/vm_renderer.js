@@ -36,21 +36,6 @@ function replayLastFrame() {
 }
 setTextNeedsReplay(replayLastFrame);
 
-// canvas-cpp 的 getContext 每次返回新对象且没有 ctx.canvas；app.js 依赖标准行为。
-// 浏览器端此 patch 幂等（原生已缓存 context、已有 canvas 引用），不影响表现。
-function patchCanvasContext(canvas) {
-  const original = canvas.getContext.bind(canvas);
-  let cached = null;
-  canvas.getContext = function (type) {
-    if (type !== '2d') return original(type);
-    if (!cached) {
-      cached = original(type);
-      if (cached && !cached.canvas) cached.canvas = canvas;
-    }
-    return cached;
-  };
-}
-
 async function boot() {
   const stage = document.createElement('div');
   stage.id = 'stage';
@@ -61,9 +46,6 @@ async function boot() {
   const cv = document.createElement('canvas');
   cv.id = 'c';
   stage.appendChild(cv);
-
-  patchCanvasContext(cv);
-  patchCanvasContext(bg);
 
   initCanvas(cv, '#FFFFFF', WIDTH, HEIGHT);
   setLayerCanvas('bg', bg);

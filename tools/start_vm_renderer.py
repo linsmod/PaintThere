@@ -25,7 +25,7 @@ VM_DIR = ROOT / "vm-desktop"
 ASSETS = ROOT / "assets"
 EXE = VM_DIR / "renderer" / "build" / "vm_renderer.exe"
 PAGE = ASSETS / "vm_renderer.js"
-DLL_SRC = Path(r"H:\ant-v16\build-zig\antjsb.dll")
+DLL_SRC = Path(r"E:\canvas-cpp\recovery\out\recovered\build-ant\antjsb.dll")
 
 
 def clear_proxy():

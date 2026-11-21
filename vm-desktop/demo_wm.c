@@ -52,8 +52,33 @@ static Clay_Context *CreateWindowContext(int w, int h) {
 typedef struct {
     int clicks;
     char label[64];   /* stable storage for Clay_String (must outlive layout) */
+    char text[128];   /* simple line editor buffer */
+    size_t textLen;
 } AppStateA;
 static AppStateA g_appA;
+
+static int OnWindowKey(int windowId, const char *key, const char *code,
+                       int isDown, void *userData) {
+    (void)windowId;
+    (void)code;
+    if (!isDown) return 0;  /* only act on keydown */
+    AppStateA *state = (AppStateA *)userData;
+    if (strcmp(key, "Backspace") == 0) {
+        if (state->textLen > 0) state->text[--state->textLen] = '\0';
+        return 1;
+    }
+    if (strcmp(key, "Enter") == 0) return 1;
+    /* Accept single UTF-8 characters (browser reports printable key as-is). */
+    size_t n = strlen(key);
+    if (n == 1 && (unsigned char)key[0] >= 0x20 &&
+        state->textLen + n + 1 < sizeof(state->text)) {
+        memcpy(state->text + state->textLen, key, n);
+        state->textLen += n;
+        state->text[state->textLen] = '\0';
+        return 1;
+    }
+    return 0;
+}
 
 static void OnButtonHover(Clay_ElementId id, Clay_PointerData pointerData, void *userData) {
     (void)id;
@@ -65,15 +90,26 @@ static Clay_RenderCommandArray LayoutA(void *userData) {
     AppStateA *state = (AppStateA *)userData;
     snprintf(state->label, sizeof(state->label), "Clicked: %d", state->clicks);
     Clay_String labelStr = {.chars = state->label, .length = (int)strlen(state->label)};
+    Clay_String textStr = {.chars = state->text, .length = (int)state->textLen};
     Clay_BeginLayout();
     CLAY(CLAY_ID("A_root"), {
         .layout = {.sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0)},
                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
                    .padding = CLAY_PADDING_ALL(12), .childGap = 8},
     }) {
-        CLAY_TEXT(CLAY_STRING("Hover/click the button below"),
+        CLAY_TEXT(CLAY_STRING("Type below; focus this client with a click"),
                   CLAY_TEXT_CONFIG({.fontId = 0, .fontSize = 14,
                                     .textColor = (Clay_Color){30,30,30,255}}));
+        CLAY(CLAY_ID("A_input"), {
+            .layout = {.sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(32)},
+                       .padding = CLAY_PADDING_ALL(6)},
+            .backgroundColor = (Clay_Color){255,255,255,255},
+            .border = {.color = (Clay_Color){180,186,194,255}, .width = CLAY_BORDER_ALL(1)},
+        }) {
+            CLAY_TEXT(textStr,
+                      CLAY_TEXT_CONFIG({.fontId = 0, .fontSize = 14,
+                                        .textColor = (Clay_Color){20,24,30,255}}));
+        }
         CLAY(CLAY_ID("A_btn"), {
             .layout = {.sizing = {CLAY_SIZING_FIXED(140), CLAY_SIZING_FIXED(40)},
                        .childAlignment = {CLAY_ALIGN_X_CENTER, CLAY_ALIGN_Y_CENTER}},
@@ -148,6 +184,7 @@ int main(int argc, char **argv) {
     VmWindow *b = VmWm_AddWindow(g_wm, 2, "Window B", 300, 200, 360, 260, LayoutB, NULL);
     a->clayCtx = CreateWindowContext(356, 230);
     b->clayCtx = CreateWindowContext(356, 230);
+    VmWm_SetKeyHandler(g_wm, 1, OnWindowKey, &g_appA);
     VmWm_Focus(g_wm, 1);
 
     VmServer *server = VmServer_Create(port, webRoot);

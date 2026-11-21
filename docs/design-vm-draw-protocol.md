@@ -120,18 +120,18 @@
   "clientId": "ab12...",
   "color": "#F44336",
   "frameId": 42,
-  "kind": "mousedown",
-  "x": 120,
-  "y": 80,
-  "button": 0
+  "kind": "keydown",
+  "key": "A",
+  "code": "KeyA"
 }
 ```
 
 - `clientId` 复用多客户端指针身份；`color` 为该客户端指针颜色。
 - `frameId` 为客户端处理该输入时所见的最新帧号，guest 可据此判断“所见即所操作”；不阻塞输入，只作标记。
-- `kind`：`mousedown` / `mousemove` / `mouseup` / `click` / `wheel` / `key` / `touch`。
-- `x/y` 为 canvas 内部坐标（guest 逻辑桌面坐标），浏览器按 canvas 实际尺寸换算后填入。
-- guest 收到后由 WM 做命中、焦点与分发；跨端不解释事件语义。焦点仲裁只在 guest：仅焦点客户端的输入能改变窗口状态，其他客户端只更新指针。
+- `kind`：`mousedown` / `mousemove` / `mouseup` / `click` / `wheel` / `keydown` / `keyup` / `touch`。
+- 鼠标事件带 `x/y`（canvas 内部坐标，guest 逻辑桌面坐标）；键盘事件带 `key`（可读字符或 `Backspace` / `Enter` 等）与 `code`（物理键码）。
+- guest 收到后由 WM 做命中、焦点与分发；跨端只传原始事件，不解释语义。焦点仲裁只在 guest：仅焦点客户端的输入能改变窗口状态或键盘焦点，其他客户端只更新指针。
+- 键盘派发路由：WM → 焦点窗口 → 窗口注册的 key handler。IME/组合输入由客户端把最终字符以 `key` 字段上报，guest 不实现 IME 状态机。
 
 ## SDK 前瞻性
 

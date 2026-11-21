@@ -148,7 +148,16 @@ created → mapped（可见）→ focused / unfocused
 - 设计起点：本文 + `docs/arch-跨端图绘指令流.md`（现有指令流架构）+ `docs/task-multi-client-cursor.md`（多客户端指针）。
 - Clay 源码：`H:\github_repos\clay\clay.h`、`README.md`、`renderers/terminal/clay_renderer_terminal_ansi.c`（最简非像素 renderer 参考）。
 - VM 环境：`H:\github_repos\RVVM`，token 在 `release.test.windows.x86_64\runtime\supervisor\token`。
-- 全部阶段完成。后续增强方向：键盘/IME 输入接入焦点窗口、复杂图样的 wasm 通道、retained diff 精细化（当前仍全量重放窗口层命令）。
+- 全部阶段完成；后续已完成**键盘输入闭环**（见下节）。剩余增强方向：复杂图样的 wasm 通道、retained diff 精细化（当前仍全量重放窗口层命令）。
+
+## 后续增强：键盘输入闭环（2026-11-21，已完成）
+
+- 设计：`docs/design-vm-draw-protocol.md` 输入 schema 增加 `keydown` / `keyup` + `key` / `code`，跨端只传原始事件，不解释语义。
+- `vm_wm.c/.h`：窗口增加 `VmWindowKeyHandler`，`VmWm_SetKeyHandler` 注册；`VmWm_HandleInput` 在焦点客户端仲裁下把键盘事件派发给焦点窗口的 handler。
+- `demo_wm.c`：窗口 A 维护文本缓冲（`AppStateA.text`），handler 处理可打印单字符 / Backspace / Enter，wasm 字体渲染显示。
+- 测试页：`keydown` / `keyup` 上报（可打印键 / Backspace / Enter）。
+- 验证：客户端 A 点击取得焦点后发 `H`、`i`，帧文本从空变为 `Hi`（服务端 `changed=1`）；客户端 B 未获焦点时发 `X`，`changed=0` 且文本不变，焦点仲裁生效。console 无错误，截图 `wm_keyboard.png`。
+- 未覆盖：IME 组合输入状态机（由客户端把最终字符以 `key` 上报，guest 不实现 IME）。
 
 ## 已知限制
 

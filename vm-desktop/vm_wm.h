@@ -15,6 +15,9 @@ extern "C" {
 #define VM_WM_MAX_CURSORS 16
 
 typedef Clay_RenderCommandArray (*VmWindowLayout)(void *userData);
+/* Guest-internal key handler: return 1 if the key was consumed. */
+typedef int (*VmWindowKeyHandler)(int windowId, const char *key, const char *code,
+                                  int isDown, void *userData);
 
 typedef struct {
     int id;
@@ -26,6 +29,8 @@ typedef struct {
     Clay_Context *clayCtx;
     VmWindowLayout layout;
     void *userData;
+    VmWindowKeyHandler keyHandler;
+    void *keyUserData;
     /* pointer state in window-local layout coordinates */
     int pointerX, pointerY;
     int pointerDown;
@@ -67,6 +72,7 @@ VmWindow *VmWm_HitTest(VmWm *wm, int x, int y);
 void VmWm_Focus(VmWm *wm, int id);
 void VmWm_Raise(VmWm *wm, int id);
 void VmWm_Move(VmWm *wm, int id, int x, int y);
+void VmWm_SetKeyHandler(VmWm *wm, int id, VmWindowKeyHandler handler, void *userData);
 
 /* Handle raw input JSON body. Returns 1 if the input changed window state. */
 int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length);

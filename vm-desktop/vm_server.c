@@ -91,6 +91,10 @@ static const char VM_INDEX_HTML[] =
     "cv.addEventListener('mousedown',(e)=>send('mousedown',e));"
     "document.addEventListener('mousemove',(e)=>send('mousemove',e));"
     "document.addEventListener('mouseup',(e)=>send('mouseup',e));"
+    "const sendKey=(kind,e)=>{fetch('/input',{method:'POST',headers:{'Content-Type':'application/json'},"
+    "body:JSON.stringify({type:'input',kind:kind,key:e.key,code:e.code,clientId:cid,color:color})})};"
+    "document.addEventListener('keydown',(e)=>{if(e.key.length===1||e.key==='Backspace'||e.key==='Enter')sendKey('keydown',e)});"
+    "document.addEventListener('keyup',(e)=>{if(e.key.length===1||e.key==='Backspace'||e.key==='Enter')sendKey('keyup',e)});"
     "</script></body></html>";
 
 static void vm_send_all(vm_socket fd, const char *data, size_t len) {

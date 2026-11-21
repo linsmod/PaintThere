@@ -105,6 +105,13 @@ void VmWm_Move(VmWm *wm, int id, int x, int y) {
     win->y = y;
 }
 
+void VmWm_SetKeyHandler(VmWm *wm, int id, VmWindowKeyHandler handler, void *userData) {
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    if (!win) return;
+    win->keyHandler = handler;
+    win->keyUserData = userData;
+}
+
 /* --- tiny JSON field extractors (input events are simple flat objects) --- */
 static const char *find_key(const char *json, const char *key) {
     static char scratch[128];
@@ -176,9 +183,13 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     char kind[32] = {0};
     char clientId[64] = {0};
     char color[32] = {0};
+    char key[64] = {0};
+    char code[64] = {0};
     extract_str(jsonBody, "kind", kind, sizeof(kind));
     extract_str(jsonBody, "clientId", clientId, sizeof(clientId));
     extract_str(jsonBody, "color", color, sizeof(color));
+    extract_str(jsonBody, "key", key, sizeof(key));
+    extract_str(jsonBody, "code", code, sizeof(code));
     int x = extract_int(jsonBody, "x", -1);
     int y = extract_int(jsonBody, "y", -1);
     int button = extract_int(jsonBody, "button", 0);
@@ -229,6 +240,15 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
         if (isDown) focus->pointerDown = 1;
         if (isUp) focus->pointerDown = 0;
         sync_pointer_state(wm);
+    }
+
+    /* Keyboard: only the focus client's key reaches the focused window's handler. */
+    if (ownsFocus && focus && (strcmp(kind, "keydown") == 0 || strcmp(kind, "keyup") == 0)) {
+        if (*key && focus->keyHandler) {
+            focus->keyHandler(focus->id, key, code, strcmp(kind, "keydown") == 0,
+                              focus->keyUserData);
+            changed = 1;
+        }
     }
     return changed;
 }

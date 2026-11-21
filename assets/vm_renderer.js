@@ -2,7 +2,7 @@
 // 逻辑只有一份；两端差异仅通过标准 location / globalThis 配置吸收。
 import {
   initCanvas, commandHandlers, setLayerCanvas, replayBackgroundPrograms,
-  applyFrameDiff, applyIncrementalFrame
+  applyFrameDiff, applyIncrementalFrame, setTextNeedsReplay
 } from './app.js';
 import { loadFont } from './font_wasm.js';
 
@@ -17,6 +17,24 @@ const EVENTS_URL = `${BASE}/events`;
 const INPUT_URL = `${BASE}/input`;
 
 window.__vmRenderer = { ready: false, frames: 0, resources: 0, error: '' };
+
+// drawText 异步光栅化：首帧文本未就绪，需在字体就绪后重放最近一帧。
+let lastFrame = null;
+let lastCanvas = null;
+function replayLastFrame() {
+  if (!lastFrame || !lastCanvas) return;
+  const ctx = lastCanvas.getContext('2d');
+  ctx.clearRect(0, 0, lastCanvas.width, lastCanvas.height);
+  for (const c of lastFrame) {
+    const fn = commandHandlers[c.cmd];
+    if (fn) {
+      try { fn(...c.args); }
+      catch (e) { window.__vmRenderer.error = 'replay ' + c.cmd + ': ' + e; }
+    }
+  }
+  replayBackgroundPrograms();
+}
+setTextNeedsReplay(replayLastFrame);
 
 // canvas-cpp 的 getContext 每次返回新对象且没有 ctx.canvas；app.js 依赖标准行为。
 // 浏览器端此 patch 幂等（原生已缓存 context、已有 canvas 引用），不影响表现。
@@ -77,14 +95,20 @@ async function boot() {
     try {
       const f = JSON.parse(e.data);
       applyFrameDiff(f.commands, cv);
+      lastFrame = f.commands; lastCanvas = cv;
       window.__vmRenderer.frames++;
     } catch (err) { window.__vmRenderer.error = 'fullframe: ' + err; }
   });
   es.onmessage = (e) => {
     try {
       const f = JSON.parse(e.data);
-      if (f.incremental) applyIncrementalFrame(f, cv);
-      else applyFrameDiff(f.commands, cv);
+      if (f.incremental) {
+        applyIncrementalFrame(f, cv);
+      } else {
+        applyFrameDiff(f.commands, cv);
+        lastFrame = f.commands;
+      }
+      lastCanvas = cv;
       window.__vmRenderer.frames++;
     } catch (err) { window.__vmRenderer.error = 'frame: ' + err; }
   };

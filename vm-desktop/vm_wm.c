@@ -32,20 +32,31 @@ VmWm *VmWm_Create(int width, int height) {
     return wm;
 }
 
+/* 全体窗口内容作废：装饰参数或主题变了，没有哪个窗口能幸免。 */
+static void mark_all_content_dirty(VmWm *wm) {
+    for (int i = 0; i < wm->count; i++) wm->windows[i].layer.contentDirty = 1;
+}
+
 void VmWm_SetChrome(VmWm *wm, const VmChrome *chrome) {
     if (!wm) return;
     wm->chrome = chrome ? *chrome : VmTheme_Default()->chrome;
+    mark_all_content_dirty(wm);
     wm->dirty = 1;
 }
 
 void VmWm_SetContentClip(VmWm *wm, int enabled) {
     if (!wm) return;
     wm->contentClip = enabled ? 1 : 0;
+    mark_all_content_dirty(wm);
     wm->dirty = 1;
 }
 
+/* 帧级的「有东西变了」：目前无法定位到具体窗口，保守地把全部内容作废。
+   细化到单窗口失效是下一步（jpx 层知道是哪个窗口在动）。 */
 void VmWm_Invalidate(VmWm *wm) {
-    if (wm) wm->dirty = 1;
+    if (!wm) return;
+    mark_all_content_dirty(wm);
+    wm->dirty = 1;
 }
 
 int VmWm_IsDirty(const VmWm *wm) {
@@ -91,6 +102,7 @@ VmWindow *VmWm_AddWindow(VmWm *wm, int id, const char *title,
     win->focused = 0;
     win->minimized = 0;
     win->flags = 0;
+    win->layer.contentDirty = 1;   /* 新窗口没有内容，首次合成必须构建 */
     wm->dirty = 1;
     return win;
 }
@@ -177,16 +189,25 @@ VmWindow *VmWm_HitTest(VmWm *wm, int x, int y) {
 
 void VmWm_Raise(VmWm *wm, int id) {
     VmWindow *win = VmWm_FindWindow(wm, id);
-    if (win) win->z = wm->nextZ++;
+    if (!win) return;
+    win->z = wm->nextZ++;
+    /* 只是前后次序变了：内容一个字没动，合成阶段按新 z 序重排即可。 */
+    wm->dirty = 1;
 }
 
 void VmWm_Focus(VmWm *wm, int id) {
     if (!wm) return;
     VmWindow *target = VmWm_FindWindow(wm, id);
     if (target && (target->flags & VM_WIN_NOFOCUS)) return;
+    int prev = wm->focusId;
     for (int i = 0; i < wm->count; i++) wm->windows[i].focused = (wm->windows[i].id == id);
     wm->focusId = id;
     VmWm_Raise(wm, id);
+    /* 焦点改变标题/边框着色与控件焦点态：旧焦点与新焦点都要重建内容。 */
+    for (int i = 0; i < wm->count; i++) {
+        if (wm->windows[i].id == id || wm->windows[i].id == prev)
+            wm->windows[i].layer.contentDirty = 1;
+    }
     wm->dirty = 1;
 }
 
@@ -198,6 +219,8 @@ void VmWm_SetWindowFlags(VmWm *wm, int id, unsigned flags) {
         if (wm->focusId == id) wm->focusId = -1;
         win->focused = 0;
     }
+    /* 装饰性由 flags 决定（UNDECORATED 会去掉标题与边框）：内容必须重建。 */
+    win->layer.contentDirty = 1;
     wm->dirty = 1;
 }
 
@@ -252,6 +275,7 @@ void VmWm_Minimize(VmWm *wm, int id) {
     win->minimized = 1;
     if (wm->focusId == id) { wm->focusId = -1; win->focused = 0; }
     if (wm->dragId == id) wm->dragId = -1;
+    win->layer.contentDirty = 1;   /* 失焦会改标题着色 */
     wm->dirty = 1;
 }
 
@@ -259,6 +283,7 @@ void VmWm_Restore(VmWm *wm, int id) {
     VmWindow *win = VmWm_FindWindow(wm, id);
     if (!win) return;
     win->minimized = 0;
+    win->layer.contentDirty = 1;
     if (!(win->flags & VM_WIN_NOFOCUS)) VmWm_Focus(wm, id);
     wm->dirty = 1;
 }
@@ -275,8 +300,12 @@ int VmWm_FocusId(const VmWm *wm) {
 void VmWm_Move(VmWm *wm, int id, int x, int y) {
     VmWindow *win = VmWm_FindWindow(wm, id);
     if (!win) return;
+    if (win->x == x && win->y == y) return;
     win->x = x;
     win->y = y;
+    /* 内容命令在生成时就带了 body 偏移，位置一变每条坐标都过期：必须重建。 */
+    win->layer.contentDirty = 1;
+    wm->dirty = 1;
 }
 
 void VmWm_KeyModifiers(VmWm *wm, int *ctrl, int *shift, int *alt) {
@@ -424,6 +453,17 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     if (isUp) wm->pointerDown = 0;
 
     VmWindow *hit = VmWm_HitTest(wm, x, y);
+    /* 指针事件的失效单元是「命中的窗口」与「上次命中的窗口」：
+       hover 态转移时旧窗口要擦掉高亮，新窗口要画上。 */
+    if (isMove || isDown || isUp || isWheel) {
+        int hitId = hit ? hit->id : -1;
+        if (wm->lastHitId != hitId) {
+            VmWindow *prevHit = VmWm_FindWindow(wm, wm->lastHitId);
+            if (prevHit) prevHit->layer.contentDirty = 1;
+            wm->lastHitId = hitId;
+        }
+        if (hit) hit->layer.contentDirty = 1;
+    }
     /* Focus arbitration: window state changes only from the owning client.
        A mousedown from any client claims ownership first. */
     int ownsFocus = (*clientId && strcmp(wm->focusClientId, clientId) == 0);
@@ -510,10 +550,10 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     return changed;
 }
 
-static void append_rect_cmd(VmDisplayList *out, const char *id,
+static void append_rect_cmd(VmCmdBuffer *out, const char *id,
                             int x, int y, int w, int h,
                             const char *paint, int radius) {
-    VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_RECT, id);
+    VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_RECT, id);
     if (!c) return;
     VmRect r = {(float)x, (float)y, (float)w, (float)h};
     c->rect = r;
@@ -522,9 +562,9 @@ static void append_rect_cmd(VmDisplayList *out, const char *id,
     c->args.drawRect.cornerRadius = (float)radius;
 }
 
-static void append_border_cmd(VmDisplayList *out, const char *id,
+static void append_border_cmd(VmCmdBuffer *out, const char *id,
                               int x, int y, int w, int h, int width, const char *color) {
-    VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_BORDER, id);
+    VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_BORDER, id);
     if (!c) return;
     VmRect r = {(float)x, (float)y, (float)w, (float)h};
     c->rect = r;
@@ -553,10 +593,10 @@ static void append_cursor_commands(VmWm *wm, VmDisplayList *out) {
     }
 }
 
-static void append_text_cmd(VmDisplayList *out, const char *id,
+static void append_text_cmd(VmCmdBuffer *out, const char *id,
                             int x, int y, int w, int h, const char *text,
                             int fontId, int fontSize, const char *color) {
-    VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_TEXT, id);
+    VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_TEXT, id);
     if (!c) return;
     VmRect box = {(float)x, (float)y, (float)w, (float)h};
     c->rect = box;
@@ -567,7 +607,7 @@ static void append_text_cmd(VmDisplayList *out, const char *id,
     VmDisplay_CopyStr(c->args.drawText.color, sizeof(c->args.drawText.color), color);
 }
 
-static void append_title_cmd(VmDisplayList *out, const char *id,
+static void append_title_cmd(VmCmdBuffer *out, const char *id,
                              int x, int y, int w, const VmChrome *ch,
                              const char *title, const char *color) {
     int lineStep = VmFont_LineHeight(ch->titleFontId, ch->titleFontSize);
@@ -581,14 +621,14 @@ static void append_title_cmd(VmDisplayList *out, const char *id,
     append_text_cmd(out, id, tx, ty, tw, lineStep, title, ch->titleFontId, ch->titleFontSize, color);
 }
 
-static void append_clip_cmd(VmDisplayList *out, VmCmdType type, const char *id, VmRect r) {
-    VmDrawCommand *c = VmDisplay_Append(out, type, id);
+static void append_clip_cmd(VmCmdBuffer *out, VmCmdType type, const char *id, VmRect r) {
+    VmDrawCommand *c = VmCmdBuffer_Append(out, type, id);
     if (!c) return;
     c->rect = r;
     c->args.clip = r;
 }
 
-static void build_one_window(VmWm *wm, VmDisplayList *out, VmWindow *win,
+static void build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
                              const VmChrome *ch, const char *(*fontResolver)(uint16_t)) {
     char idbuf[64];
     VmRect body;
@@ -661,14 +701,39 @@ static void build_one_window(VmWm *wm, VmDisplayList *out, VmWindow *win,
     }
 }
 
+/* 把一条窗口图层并入输出流；容量不足返回 0，由调用方置 overflow。 */
+static int append_layer(VmDisplayList *out, const VmWindowLayer *layer) {
+    if (!layer || layer->count <= 0) return 1;
+    if (out->count + layer->count > VM_DISPLAY_MAX_COMMANDS) return 0;
+    memcpy(&out->commands[out->count], layer->commands,
+           (size_t)layer->count * sizeof(VmDrawCommand));
+    out->count += layer->count;
+    return 1;
+}
+
 void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
                      const char *(*fontResolver)(uint16_t)) {
     if (!wm || !out) return;
+    const VmChrome *ch = &wm->chrome;
+
+    /* 阶段 1：只为脏窗口重建内容 —— 唯一接触 Clay 的地方。 */
+    for (int i = 0; i < wm->count; i++) {
+        VmWindow *win = &wm->windows[i];
+        VmWindowLayer *layer = &win->layer;
+        if (!layer->contentDirty && !layer->chromeDirty) continue;
+        VmCmdBuffer buf = {layer->commands, VM_WM_LAYER_COMMANDS, 0};
+        build_one_window(wm, &buf, win, ch, fontResolver);
+        layer->count = buf.count;
+        /* 写满说明该窗口内容超出配额，帧里会缺命令：显式记录，不静默通过。 */
+        if (buf.count >= VM_WM_LAYER_COMMANDS) wm->layerOverflow = 1;
+        layer->contentDirty = 0;
+        layer->chromeDirty = 0;
+        layer->builtFrame = frameId;
+    }
+
+    /* 阶段 2：按 z 序合并 —— 纯命令拷贝，不再跑任何布局。 */
     VmDisplay_Clear(out);
     out->frameId = frameId;
-
-    const VmChrome *ch = &wm->chrome;
-    /* 普通窗口按 z 从低到高，再整层叠加置顶窗口（任务栏、悬浮提示）。 */
     for (int pass = 0; pass < 2; pass++) {
         int wantTop = pass;
         for (int z = 1; z < wm->nextZ; z++) {
@@ -677,7 +742,7 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
                 if (win->z != z || win->minimized) continue;
                 int top = (win->flags & VM_WIN_TOPMOST) ? 1 : 0;
                 if (top != wantTop) continue;
-                build_one_window(wm, out, win, ch, fontResolver);
+                if (!append_layer(out, &win->layer)) wm->layerOverflow = 1;
             }
         }
     }

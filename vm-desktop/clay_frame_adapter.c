@@ -30,7 +30,7 @@ static float max_radius(Clay_CornerRadius r) {
 }
 
 void ClayFrame_AppendCommands(
-    VmDisplayList *out,
+    VmCmdBuffer *out,
     const void *renderCommands,
     int commandCount,
     int offsetX,
@@ -49,7 +49,7 @@ void ClayFrame_AppendCommands(
 
         switch (rc->commandType) {
             case CLAY_RENDER_COMMAND_TYPE_RECTANGLE: {
-                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_RECT, id);
+                VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_RECT, id);
                 if (!c) return;
                 c->rect = rect;
                 c->args.drawRect.rect = rect;
@@ -60,7 +60,7 @@ void ClayFrame_AppendCommands(
             }
             case CLAY_RENDER_COMMAND_TYPE_BORDER: {
                 Clay_BorderRenderData d = rc->renderData.border;
-                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_BORDER, id);
+                VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_BORDER, id);
                 if (!c) return;
                 c->rect = rect;
                 c->args.drawBorder.rect = rect;
@@ -75,7 +75,7 @@ void ClayFrame_AppendCommands(
             }
             case CLAY_RENDER_COMMAND_TYPE_TEXT: {
                 Clay_TextRenderData d = rc->renderData.text;
-                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_TEXT, id);
+                VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_TEXT, id);
                 if (!c) return;
                 c->rect = rect;
                 c->args.drawText.rect = rect;
@@ -95,7 +95,7 @@ void ClayFrame_AppendCommands(
             }
             case CLAY_RENDER_COMMAND_TYPE_IMAGE: {
                 Clay_ImageRenderData d = rc->renderData.image;
-                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_IMG, id);
+                VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_IMG, id);
                 if (!c) return;
                 c->rect = rect;
                 VmDisplay_CopyStr(c->args.drawImg.imgId, sizeof(c->args.drawImg.imgId),
@@ -107,34 +107,34 @@ void ClayFrame_AppendCommands(
                 break;
             }
             case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: {
-                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_CLIP_PUSH, id);
+                VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_CLIP_PUSH, id);
                 if (!c) return;
                 c->rect = rect;
                 c->args.clip = rect;
                 break;
             }
             case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END: {
-                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_CLIP_POP, id);
+                VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_CLIP_POP, id);
                 if (!c) return;
                 c->rect = rect;
                 c->args.clip = rect;
                 break;
             }
             case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START: {
-                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_OVERLAY_PUSH, id);
+                VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_OVERLAY_PUSH, id);
                 if (!c) return;
                 c->rect = rect;
                 c->args.paint = color_to_css(rc->renderData.overlayColor.color);
                 break;
             }
             case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_END: {
-                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_OVERLAY_POP, id);
+                VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_OVERLAY_POP, id);
                 if (!c) return;
                 c->rect = rect;
                 break;
             }
             case CLAY_RENDER_COMMAND_TYPE_CUSTOM: {
-                VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_RECT, id);
+                VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_RECT, id);
                 if (!c) return;
                 c->rect = rect;
                 c->args.drawRect.rect = rect;

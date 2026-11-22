@@ -142,6 +142,14 @@ typedef struct VmDisplayList {
     uint32_t frameId;
 } VmDisplayList;
 
+/* 命令写入目标：窗口图层写自己的小缓冲，合成时再并入输出 list。
+   容量由调用方给，写满即失败（由上层记录溢出），不做静默扩容。 */
+typedef struct {
+    VmDrawCommand *commands;
+    int cap;
+    int count;
+} VmCmdBuffer;
+
 /* Structural diff: changed/added commands, removed ids, and full current order. */
 typedef struct {
     VmDrawCommand changed[VM_DISPLAY_MAX_COMMANDS];
@@ -162,6 +170,8 @@ void VmDisplay_Init(VmDisplayList *list);
 void VmDisplay_CopyStr(char *dst, size_t cap, const char *src);
 void VmDisplay_Clear(VmDisplayList *list);
 VmDrawCommand *VmDisplay_Append(VmDisplayList *list, VmCmdType type, const char *id);
+/* 向定长缓冲追加一条命令；写满返回 NULL。 */
+VmDrawCommand *VmCmdBuffer_Append(VmCmdBuffer *buf, VmCmdType type, const char *id);
 /* 资源/程序控制命令走独立数组：不进 commands，不参与逐帧 diff 与 tile 切分。 */
 VmResourceCommand *VmDisplay_AppendResource(VmDisplayList *list, VmCmdType type, const char *id);
 VmDrawCommand *VmDisplay_Find(VmDisplayList *list, const char *id);

@@ -176,14 +176,18 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId, ...) {
 
 - **S0 资源外置（P1）—— 已完成（2026-11-22）**：`loadImg`/`definePattern`/`defineStyle`/`defineProgram`/`programControl` 移到 `VmResourceCommand[16]`，`VmDisplayList` 增加 `resources`/`resourceCount`；新增 `VmDisplay_AppendResource`，序列化新增 `emit_resource`，`serialize()` 与 `VmSerialize_DeltaFrameJson` 先资源后命令。
   - 证据：`sizeof(VmDrawCommand)` 992 → **496**，`sizeof(VmDisplayList)` 496 → **263 KB**；`test_frame --probe` 97 项 0 失败（含 `sizeof(VmDrawCommand) <= 512` 预算断言）；`demo_jpx` 的 `resources` 事件改造前后**逐字节相同**（1398 B）；tile 帧内 `loadImg` 计数 0、resources 通道 1；`demo_jpx` 输入 `hi` 与 `test_text_edit` 66 项均通过。
-- **S1 结构搬迁 + 存储池化（P2），行为不变**：加 `VmWindowLayer`、全进程一份命令池 + 每窗口配额、`VmDisplayList` 改视图、`BuildFrame` 改两阶段，但**所有窗口恒脏**。断言：帧 JSON 与 S0 输出逐字节一致；`VmWm_RemoveWindow` 不泄漏。
-- **S2 接入脏标记**：输入命中、聚焦、移动、主题各就各位。断言：单窗口动画时其他窗口的 `builtFrame` 不前进（加诊断计数器暴露）。
-- **S3 容量检测**：合成时检查 append 返回值，配额或总池溢出置标志 + 日志。断言：构造溢出场景不崩溃、日志可见。
+- **S1 图层骨架 —— 已完成（2026-11-22）**：`VmWindowLayer`（每窗口 64 条命令配额）+ `VmCmdBuffer` 写入目标 + `BuildFrame` 两阶段；`ClayFrame_AppendCommands` 与窗口装饰的 `append_*` 辅助全部改写成 `VmCmdBuffer`。
+  - 脏源已接：新建、移动、聚焦（旧+新窗口）、最小化/恢复、主题与装饰参数、指针命中的新旧窗口；`Raise` 只置 `dirty`、不作废内容（z 序变化只需重排）。
+  - `VmWm_Invalidate` 仍全量作废内容（jpx 层还定位不到具体窗口），因此**本步不承诺 CPU 收益**，只是把结构立起来。
+  - 证据：`test_frame --probe` 99 项 0 失败（新增「clean layer is reused」「no layer overflow」）；`demo_jpx` 的 `fullframe` 事件改造前后**逐字节相同**（48137 B）；输入 `hi` 与 caret 闪烁回归通过。
+  - 内存代价：`8 × 64 × 496 B ≈ 254 KB` 常驻（`VmWindow` 内嵌 layer）。
+- **S2 单窗口失效**：把 `VmWm_Invalidate` 换成 `VmWm_InvalidateWindow(wm, id)`，jpx 的 caret timer 与 `Jpx__Invalidate(app)` 带上当前 layout 的窗口 id。此时 S1 的结构才开始兑现「未脏窗口跳过 Clay」。断言：单窗口动画时其他窗口的 `builtFrame` 不前进。
+- **S3 存储池化（P2）**：`VmDisplayList` 改视图 + 全进程一份命令池，消掉「输出 list 263 KB + 每窗口 layer 254 KB」的双份，并让 `app->frame` 不再占 263 KB。断言：帧 JSON 与 S1 逐字节相同。
 
 每步都要跑 `test_frame --probe` 与 `test_text_edit --probe`，并在 `demo_jpx` 上验三种场景：拖窗口、按钮 hover、caret 闪烁。
 
 ## 8. 未决问题
 
-- `VmDefineProgramArgs.commands` 是指向另一份 list 的指针。per-window 化后，程序定义属于「桌面级资源」，建议不随窗口 layer 走，固定在全局输出流的头部，`build_one_window` 不生成这类命令。
+- **已决**：`VmDefineProgramArgs.commands` 指向的程序内容属于桌面级资源，随 S0 一起留在资源池（`VmResourceCommand`），不进任何窗口 layer。
 - **已决**：`VM_DISPLAY_MAX_COMMANDS` 改为双约束——每窗口配额 64、全进程命令池 512。实测单窗口约 40–80 条（两窗口 + 任务栏合计不到 200 条），64 留出余量；超过配额的窗口在 S3 报错而不是静默截断。若后续窗口内容变复杂，优先调高单窗口配额，而不是退回「每窗口 512」。
-- `layer` 指针的生命周期挂在 `VmWindow` 上，而 `VmWindow` 是定长数组里的元素，`VmWm_RemoveWindow` 必须释放 layer，否则切换窗口时泄漏。这条要在 S1 的断言里覆盖。
+- **已决**：S1 把 layer 做成 `VmWindow` 的内嵌值而非指针，`VmWm_RemoveWindow` 不需要释放，也就没有泄漏路径；代价是 `VmWm` 结构体增大 254 KB，由 `VmWm_Create` 的 `calloc` 承担（不要放栈上）。

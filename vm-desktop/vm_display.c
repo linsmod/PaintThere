@@ -29,6 +29,15 @@ VmDrawCommand *VmDisplay_Append(VmDisplayList *list, VmCmdType type, const char 
     return cmd;
 }
 
+VmDrawCommand *VmCmdBuffer_Append(VmCmdBuffer *buf, VmCmdType type, const char *id) {
+    if (!buf || !buf->commands || buf->count >= buf->cap) return NULL;
+    VmDrawCommand *cmd = &buf->commands[buf->count++];
+    memset(cmd, 0, sizeof(*cmd));
+    cmd->type = type;
+    if (id) snprintf(cmd->id, sizeof(cmd->id), "%s", id);
+    return cmd;
+}
+
 VmResourceCommand *VmDisplay_AppendResource(VmDisplayList *list, VmCmdType type, const char *id) {
     if (!list || list->resourceCount >= VM_DISPLAY_MAX_RESOURCES) return NULL;
     VmResourceCommand *r = &list->resources[list->resourceCount++];

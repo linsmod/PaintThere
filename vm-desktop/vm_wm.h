@@ -15,6 +15,9 @@ extern "C" {
 #define VM_WM_MAX_WINDOWS 8
 #define VM_WM_TITLE_HEIGHT 28
 #define VM_WM_MAX_CURSORS 16
+/* 单窗口内容配额：实测一窗口 8–30 条命令，64 留出余量；
+   超出时合成阶段置 VmWm.layerOverflow，不静默截断。 */
+#define VM_WM_LAYER_COMMANDS 64
 
 typedef Clay_RenderCommandArray (*VmWindowLayout)(void *userData);
 /* Guest-internal key handler: return 1 if the key was consumed. */
@@ -32,6 +35,16 @@ enum {
 };
 /* 装饰上的 × 只发关闭请求，真正移除由持有者决定。 */
 typedef void (*VmWindowCloseHandler)(int windowId, void *userData);
+
+/* 窗口内容缓冲：装饰 + 内容，坐标已是画布坐标。
+   合成阶段按 z 序并入输出流，窗口因此成为可独立失效的内容单元。 */
+typedef struct {
+    VmDrawCommand commands[VM_WM_LAYER_COMMANDS];
+    int count;
+    int contentDirty;   /* 需要重新 layout + 重生成命令 */
+    int chromeDirty;    /* 仅装饰变化（标题/边框/按钮着色） */
+    uint32_t builtFrame;
+} VmWindowLayer;
 
 typedef struct {
     int id;
@@ -56,6 +69,7 @@ typedef struct {
     int pointerX, pointerY;
     int pointerDown;
     int clicks;             /* number of PRESSED_THIS_FRAME handled by app */
+    VmWindowLayer layer;    /* 内容缓冲与失效标记 */
 } VmWindow;
 
 typedef struct {
@@ -86,12 +100,16 @@ typedef struct {
     int pointerX, pointerY;
     int pointerDown;
     int pointerValid;
+    /* 上一次指针命中的窗口：hover 态转移时旧窗口也要重建。 */
+    int lastHitId;
     /* 窗口装饰参数；未设置时用 VmTheme_Default()->chrome */
     VmChrome chrome;
     /* 窗口内容是否裁剪到 body 矩形（默认 1）。 */
     int contentClip;
     /* 装饰或窗口状态变化后置位，由外部帧 provider 消费。 */
     int dirty;
+    /* 某个窗口的命令超出 VM_WM_LAYER_COMMANDS，合成时有内容被截断。 */
+    int layerOverflow;
 } VmWm;
 
 VmWm *VmWm_Create(int width, int height);

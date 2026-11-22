@@ -201,6 +201,11 @@ static void test_wm_chrome_and_clip(void) {
         expect_int((int)body->args.drawRect.rect.y, 100, "chrome title height applies to body y");
     }
 
+    /* 图层复用：没有新脏标记时窗口内容不再重建，builtFrame 停在第 3 帧。 */
+    VmWm_BuildFrame(wm, &frame, 5, NULL);
+    expect_int((int)win->layer.builtFrame, 3, "clean layer is reused, not rebuilt");
+    expect_int(wm->layerOverflow, 0, "no layer overflow at default quota");
+
     VmWm_Free(wm);
 }
 

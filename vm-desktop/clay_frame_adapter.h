@@ -11,7 +11,7 @@ extern "C" {
    meterResolver maps fontId to a CSS family (unused by the model, reserved);
    imgResolver maps imageData pointer to an imgId string (may be NULL). */
 void ClayFrame_AppendCommands(
-    VmDisplayList *out,
+    VmCmdBuffer *out,
     const void *renderCommands,
     int commandCount,
     int offsetX,

@@ -348,3 +348,200 @@ int Jpx_ListBox(int win, const char *id, const char *const *items, int count,
     if (changed) Jpx__Invalidate(app);
     return changed;
 }
+
+/* ---------------- 可滚动列表 ---------------- */
+
+/* 按 (窗口, id) 找滚动状态。ListBox 是「一屏显示前 N 条」，这里才是真滚动：
+   内容用 clip.childOffset 整体平移，滚动上限由 totalRows × 固定行高算出——
+   clip 容器的 boundingBox 是裁剪后的高度，反查内容高度是拿不到的。 */
+static JpxList *find_list(JpxApp *app, int win, const char *id, int create) {
+    for (int i = 0; i < JPX_MAX_LISTS; i++) {
+        JpxList *l = &app->lists[i];
+        if (l->used && l->winId == win && strcmp(l->id, id) == 0) return l;
+    }
+    if (!create) return NULL;
+    for (int i = 0; i < JPX_MAX_LISTS; i++) {
+        JpxList *l = &app->lists[i];
+        if (l->used) continue;
+        memset(l, 0, sizeof(*l));
+        l->used = 1;
+        l->winId = win;
+        l->rowH = JPX_LIST_ROW_H;
+        snprintf(l->id, sizeof(l->id), "%s", id);
+        return l;
+    }
+    return NULL;
+}
+
+int Jpx_ListBegin(int win, const char *id, int height, int totalRows) {
+    JpxApp *app = Jpx__App();
+    if (!app || !id || height <= 0) return 0;
+    JpxList *l = find_list(app, win, id, 1);
+    if (!l) return 0;
+
+    l->viewH = height;
+    l->totalRows = totalRows > 0 ? totalRows : 1;
+    int content = l->totalRows * l->rowH;
+    l->maxOffset = content > height ? content - height : 0;
+    if (l->offset < 0) l->offset = 0;
+    if (l->offset > l->maxOffset) l->offset = l->maxOffset;
+    l->rowIndex = 0;
+
+    Clay_ElementId eid = Jpx__Id(win, id);
+    Clay__OpenElementWithId(eid);
+    Clay__ConfigureOpenElement((Clay_ElementDeclaration){
+        .layout = {
+            .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED((float)height)},
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .clip = {.vertical = true, .childOffset = {0, -(float)l->offset}},
+        .backgroundColor = Jpx__Color(app->theme.inputBgColor, (Clay_Color){255, 255, 255, 255}),
+        .border = {.color = border(app), .width = CLAY_BORDER_ALL(1)},
+    });
+    app->activeList = (int)(l - app->lists) + 1;
+    return 1;
+}
+
+int Jpx_ListRowEx(int win, const char *id, const char *const *cols, const int *widths,
+                  int ncols, int selected, const char *btnText) {
+    JpxApp *app = Jpx__App();
+    if (!app || !id || !cols || ncols <= 0) return 0;
+    int li = app->activeList;
+    if (li <= 0) return 0;
+    JpxList *l = &app->lists[li - 1];
+    int rowIdx = l->rowIndex++;
+
+    char rowId[128];
+    snprintf(rowId, sizeof(rowId), "%s#%dr", id, rowIdx);
+
+    /* 视口外的行只占位、不生成任何绘制命令：20 行全画会直接撞上
+       单窗口 64 条配额，表现为帧里内容被静默截断。 */
+    int firstVisible = l->offset / l->rowH;
+    int lastVisible = (l->offset + l->viewH - 1) / l->rowH;
+    if (rowIdx < firstVisible || rowIdx > lastVisible) {
+        CLAY(Jpx__Id(win, rowId), {
+            .layout = {
+                .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED((float)l->rowH)},
+            },
+        }) {}
+        return 0;
+    }
+
+    int hasBtn = btnText != NULL && btnText[0] != '\0';
+
+    int hovered = 0;
+    Clay_ElementId btnEid = {0};
+    CLAY(Jpx__Id(win, rowId), {
+        .layout = {
+            .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED((float)l->rowH)},
+            .layoutDirection = CLAY_LEFT_TO_RIGHT,
+            .padding = {8, 8, 0, 0},
+            .childGap = 8,
+            .childAlignment = {CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER},
+        },
+        .backgroundColor = selected ? accent(app)
+                                   : (Clay_Hovered()
+                                          ? mix(border(app), (Clay_Color){255, 255, 255, 255}, 0.5f)
+                                          : (Clay_Color){0, 0, 0, 0}),
+    }) {
+        hovered = Clay_Hovered();
+        Clay_Color rowColor = selected
+                                  ? Jpx__Color(app->theme.accentTextColor,
+                                               (Clay_Color){255, 255, 255, 255})
+                                  : fg(app);
+        Clay_TextElementConfig cfg = text_config(app, rowColor, 0, 0);
+
+        for (int i = 0; i < ncols; i++) {
+            char colId[160];
+            snprintf(colId, sizeof(colId), "%s#%dr#c%d", id, rowIdx, i);
+            int fixedW = widths ? widths[i] : 0;
+            CLAY(Jpx__Id(win, colId), {
+                .layout = {
+                    .sizing = {(i == 0 || fixedW <= 0) ? CLAY_SIZING_GROW(0)
+                                                       : CLAY_SIZING_FIXED((float)fixedW),
+                               CLAY_SIZING_GROW(0)},
+                    .childAlignment = {CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER},
+                },
+            }) {
+                jpx_text(Jpx__Str(cols[i] ? cols[i] : ""), cfg);
+            }
+        }
+
+        if (hasBtn) {
+            char btnId[160];
+            snprintf(btnId, sizeof(btnId), "%s#%dr#btn", id, rowIdx);
+            btnEid = Jpx__Id(win, btnId);
+            CLAY(btnEid, {
+                .layout = {
+                    .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0)},
+                    .padding = {10, 10, 3, 3},
+                    .childAlignment = {CLAY_ALIGN_X_CENTER, CLAY_ALIGN_Y_CENTER},
+                },
+                .backgroundColor = Clay_Hovered()
+                                       ? mix(border(app), (Clay_Color){255, 255, 255, 255}, 0.3f)
+                                       : (Clay_Color){0, 0, 0, 0},
+                .border = {.color = border(app), .width = CLAY_BORDER_ALL(1)},
+                .cornerRadius = CLAY_CORNER_RADIUS(2),
+            }) {
+                jpx_text(Jpx__Str(btnText), text_config(app, fg(app), 0, 0));
+            }
+        }
+    }
+
+    int result = 0;
+    /* 行与行尾按钮互斥：Clay_Hovered 是父子都真，只靠它就分不开。
+       Clay_PointerOver 查的是上一帧元素，第一帧可能漏判，之后正常。 */
+    if (hasBtn && Clay_PointerOver(btnEid)) {
+        if (pressed_this_frame(app, win, 1)) result |= 2;
+    } else if (pressed_this_frame(app, win, hovered)) {
+        result |= 1;
+    }
+    return result;
+}
+
+int Jpx_ListRow(int win, const char *id, const char *const *cols, const int *widths,
+                int ncols, int selected) {
+    return Jpx_ListRowEx(win, id, cols, widths, ncols, selected, NULL);
+}
+
+void Jpx_ListEnd(int win) {
+    (void)win;
+    Clay__CloseElement();
+    JpxApp *app = Jpx__App();
+    if (app) app->activeList = 0;
+}
+
+void Jpx__ListRefreshRects(JpxApp *app, int winId) {
+    if (!app) return;
+    for (int i = 0; i < JPX_MAX_LISTS; i++) {
+        JpxList *l = &app->lists[i];
+        if (!l->used || l->winId != winId) continue;
+        Clay_ElementData d = Clay_GetElementData(Jpx__Id(winId, l->id));
+        if (!d.found) continue;
+        l->rx = (int)d.boundingBox.x;
+        l->ry = (int)d.boundingBox.y;
+        l->rw = (int)d.boundingBox.width;
+        l->rh = (int)d.boundingBox.height;
+        l->hasRect = 1;
+    }
+}
+
+int Jpx__ListWheel(JpxApp *app, int winId, int x, int y, int deltaY) {
+    if (!app || deltaY == 0) return 0;
+    for (int i = 0; i < JPX_MAX_LISTS; i++) {
+        JpxList *l = &app->lists[i];
+        if (!l->used || l->winId != winId || !l->hasRect) continue;
+        if (l->maxOffset <= 0) continue;
+        if (x < l->rx || x >= l->rx + l->rw || y < l->ry || y >= l->ry + l->rh) continue;
+        /* 一格滚轮 = 3 行；deltaY 正数表示向下滚。 */
+        int step = (deltaY > 0 ? 1 : -1) * l->rowH * 3;
+        int next = l->offset + step;
+        if (next < 0) next = 0;
+        if (next > l->maxOffset) next = l->maxOffset;
+        if (next == l->offset) continue;
+        l->offset = next;
+        Jpx__Invalidate(app);
+        return 1;
+    }
+    return 0;
+}

@@ -134,6 +134,11 @@ agent-browser --session vm close
 - **判断「Clay 命令进帧了但 tile 里没有」**，先打印每条渲染命令的 `commandType` 与 `boundingBox`：tile 切分按面积相交，0×0 的命令会被静默丢弃。这一步能直接把范围从「序列化/切分」缩到「度量/配置」。
 - **`Clay_OnHover` 在多 `Clay_Context`（每窗一份）下可能不触发**：同一位置 `Clay_Hovered()` 为真、`Clay_SetPointerState` 已收到 `PRESSED_THIS_FRAME`，回调仍不调用（`vm_shell` 的上下文里同样写法正常，根因未定位）。控件交互改用 `Clay_Hovered()` + 自己从 WM 指针维护的按下沿（每窗 `pressEdge`），只依赖已验证可靠的部分。
 - **`CLAY_SIZING_FIT` 在空容器上会算成 0 高**。单行输入框在「未聚焦且无文本」时没有子元素，FIT 高度 = 0，整个背景矩形被 tile 切分静默丢弃；症状是布局少一截、控件像不存在，而代码路径其实都跑到了（加 printf 能看到函数被调用）。这类控件给固定高度，或保证任何状态下都有子元素撑着。判断方法：`Clay_GetElementData(id).boundingBox` 的宽对、高为 0。
+- **`Clay_GetElementData` 在 layout 期间一律返回 `found=false`**。想在 `ListBegin` 里取列表矩形给滚轮做命中判定，会永远拿不到值、表现为「滚轮完全没反应」。必须放到 `Clay_EndLayout` 之后（jpx 里是 `window_layout_cb` 的返回值处统一刷新）。
+- **布局回调里的栈字符串不能交给 Clay**。`Clay_EndLayout` 之后才把 `stringContents` 拷进绘制命令，此时回调栈帧已失效；症状是某个 label 偶尔显示成乱码或整段消失。凡是要显示的文本必须放在 static 缓冲或调用方持有 的结构体里（`demo_jpx` 的 `status[64]` 就是这么翻的车）。
+- **列表会轻易撞爆单窗口 64 条命令配额**。20 行 × 2 列 = 60+ 条，超配额时 `VmCmdBuffer` 静默截断，帧里出现「行交错、clip 消失」这类看不懂的现象。正解是**只生成视口内的行**（视口外渲染成空占位容器保持流式高度），命令数立刻降到 20 条以内，而不是去调大配额。
+- **平台能力抽象先划「系统事实 vs 业务语义」的边界，再定字段**。进程表最容易犯的错是把 `appHandle`、窗口数塞进系统层结构，抽象层立刻被迫知道「应用」这个概念，然后每个平台实现都要跟着改。正确做法是两层结构字段几乎不重叠：`VmSysProc`（pid/ppid/线程/内存/CPU/内核状态）与 `VmIpcProcRow`（appHandle/窗口数/桌面状态），由 WMS 组装。判据：如果某个字段只有一个平台能填，或者只有某个调用方能填，它就不属于抽象层。
+- **枚举容量要按真实环境定，不要凭感觉写 256**。实测一台普通 Windows 开发机有 332 个进程，`VM_SYS_MAX_PROCS` 写成 256 时，`test_sys` 连测试进程自己都查不到（截断在中途），表现为「自己不在进程列表里」这种很怪的失败。
 - **失效标记的细化要覆盖所有入口，漏一条就退回全量**。S2 只改 `Jpx__Invalidate` 时，键盘路径在 layout 之外调用它（`layoutWinId == 0`）→ 仍走全量分支，实测每次按键 `layoutCount` `+3`（三窗口全量）。补上 `window_key_cb` 的单窗口失效和 WM 键盘分支的「脏焦点窗口」之后才是 `+1`。验证手段：在帧 provider 里打印 `layoutCount` 的累计值，看两次出帧之间的**增量**——只打印总量会被基线掩盖。
 - **加了内容缓存后，每个改窗口状态的入口都要置失效标记**。`VmWm_SetWindowFlags(UNDECORATED)` 改了 flags 却没作废内容，帧里仍留着标题与边框，`test_frame` 的 5 项无装饰断言直接失败（`body y` 差 28 px = 标题高）。判据：凡是让「生成命令的输入」变化的 setter（flags/title/chrome/clip/位置/焦点/minimize），都必须同时标脏，否则旧内容会一直复用。焦点这类「旧值也有影响」的，要把旧窗口一起标。
 - **union 里放低频大结构会拖累每一个实例**。`VmDrawCommand` 的 union 含 `VmDefinePatternArgs`（896 B），于是每条 `drawRect` 也占 992 B；实测一帧只有 8 条资源命令、200 多条绘制命令，命令数组 496 KB。把资源类移出到独立数组后 496 B / 263 KB。判断方法：找出 union 里最大的成员，乘上数组长度，再问一句「它出现的频率配得上这个代价吗」。同类陷阱：`VmDisplayDelta.changed[]` 复制整条命令，命令一变胖它就跟着变胖。

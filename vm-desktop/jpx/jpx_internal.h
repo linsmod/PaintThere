@@ -20,6 +20,10 @@
 #define JPX_ID_CAP 48
 #define JPX_MAX_TEXT_INPUTS 16
 #define JPX_MAX_FOCUSABLE 32
+#define JPX_MAX_LISTS 8
+/* 固定行高：滚动上限靠 totalRows × 行高算出来，不需要询问 Clay 内容高度
+   （clip 容器的 boundingBox 是裁剪后的高度，问也问不到）。 */
+#define JPX_LIST_ROW_H 22
 
 typedef struct {
     int used;
@@ -43,6 +47,21 @@ typedef struct {
     size_t *len;             /* 回写用，可为 NULL */
     JpxTextEdit *ed;         /* 文本输入的编辑状态；非文本框为 NULL */
 } JpxFocusable;
+
+/* 列表的滚动状态。按 (窗口, 控件 id) 持久化，与声明顺序无关。 */
+typedef struct {
+    int used;
+    int winId;
+    char id[JPX_ID_CAP];
+    int offset;        /* 已滚动像素，0 表示顶部 */
+    int maxOffset;
+    int viewH;
+    int rowH;
+    int totalRows;
+    int rowIndex;      /* 本帧行序号，ListBegin 归零 */
+    int rx, ry, rw, rh; /* 上一帧的窗口局部矩形：滚轮命中判定用 */
+    int hasRect;
+} JpxList;
 
 typedef struct {
     JpxApp *app;
@@ -88,6 +107,8 @@ struct JpxApp {
 
     int ctrl, shift, alt;      /* 最近一次按键事件的修饰键 */
     int caretOn;               /* caret 闪烁相位：500ms 翻转一次 */
+    JpxList lists[JPX_MAX_LISTS];
+    int activeList;            /* 正在声明的列表下标 + 1；0 表示不在列表内 */
     JpxTimer timers[JPX_MAX_TIMERS];
     int nextTimerId;
 
@@ -125,5 +146,11 @@ void Jpx__ApplyChrome(JpxApp *app);
 
 /* jpx_widget.c：由 jpx_window.c 的根容器调用 */
 void Jpx__OpenRoot(JpxApp *app, JpxWindow *win);
+
+/* jpx_widget.c：滚轮命中某个列表就改它的 offset，返回 1 表示已消费。 */
+int Jpx__ListWheel(JpxApp *app, int winId, int x, int y, int deltaY);
+
+/* jpx_widget.c：layout 完成后刷新列表矩形（layout 期间查不到元素数据）。 */
+void Jpx__ListRefreshRects(JpxApp *app, int winId);
 
 #endif

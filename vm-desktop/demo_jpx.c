@@ -24,8 +24,13 @@ typedef struct {
     size_t notesLen;
 } WindowBState;
 
+typedef struct {
+    int selected;
+} WindowCState;
+
 static WindowAState g_a;
 static WindowBState g_b;
+static WindowCState g_c;
 
 /* 输入框已接管可打印键与编辑键；这里只收控件未消费的键（Enter 等）。 */
 static int on_key(int winId, const char *key, const char *code, int isDown,
@@ -82,6 +87,33 @@ static void layout_b(int win, void *user) {
     Jpx_PanelEnd(win);
 }
 
+/* 可滚动列表：20 行塞进 120px 视口，滚轮每次 3 行。 */
+static void layout_c(int win, void *user) {
+    WindowCState *state = (WindowCState *)user;
+    static char rowText[20][24];
+    static const char *cols[2];
+    static int widths[2] = {0, 70};
+    /* 必须是 static：Clay 只在 EndLayout 之后才把字符串拷进绘制命令，
+       layout 回调的栈变量那时已经失效。 */
+    static char status[64];
+
+    Jpx_Label(win, "Scroll this list with the wheel");
+    if (Jpx_ListBegin(win, "list", 120, 20)) {
+        for (int i = 0; i < 20; i++) {
+            snprintf(rowText[i], sizeof(rowText[i]), "row %02d", i);
+            cols[0] = rowText[i];
+            cols[1] = (i % 2) ? "odd" : "even";
+            if (Jpx_ListRow(win, "list", cols, widths, 2, state->selected == i)) {
+                state->selected = i;
+                Jpx_Invalidate(g_app);
+            }
+        }
+        Jpx_ListEnd(win);
+    }
+    snprintf(status, sizeof(status), "selected = %d (0 = none)", state->selected);
+    Jpx_Label(win, status);
+}
+
 int main(int argc, char **argv) {
     static char fontPath[512];
     JpxOptions opt = {0};
@@ -127,7 +159,18 @@ int main(int argc, char **argv) {
     b.user = &g_b;
     b.onClose = on_close;
 
-    if (Jpx_WindowOpen(g_app, &a) == 0 || Jpx_WindowOpen(g_app, &b) == 0) {
+    JpxWindowDesc c = {0};
+    c.title = "List";
+    c.x = 40;
+    c.y = 380;
+    c.w = 380;
+    c.h = 200;
+    c.layout = layout_c;
+    c.user = &g_c;
+    c.onClose = on_close;
+
+    if (Jpx_WindowOpen(g_app, &a) == 0 || Jpx_WindowOpen(g_app, &b) == 0 ||
+        Jpx_WindowOpen(g_app, &c) == 0) {
         fprintf(stderr, "demo_jpx: window open failed\n");
         Jpx_Destroy(g_app);
         return 1;

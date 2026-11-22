@@ -92,6 +92,14 @@ int Jpx__FocusKey(JpxWindow *win, const char *key, int ctrl, int shift) {
     return 0;
 }
 
+/* 滚轮只驱动列表滚动：命中哪个列表由 jpx 侧按上一帧矩形判定，
+   窗口里没有列表时返回 0，事件不被消费。 */
+static int window_wheel_cb(int windowId, int x, int y, int deltaY, void *userData) {
+    JpxWindow *w = (JpxWindow *)userData;
+    if (!w || !w->app) return 0;
+    return Jpx__ListWheel(w->app, windowId, x, y, deltaY);
+}
+
 static int window_key_cb(int windowId, const char *key, const char *code, int isDown,
                          void *userData) {
     JpxWindow *w = (JpxWindow *)userData;
@@ -166,6 +174,7 @@ JpxWindow *Jpx__WindowCreate(JpxApp *app, const JpxWindowDesc *desc) {
     vw->clayCtx = w->ctx;
     VmWm_SetCloseHandler(app->wm, w->id, window_close_cb, w);
     VmWm_SetKeyHandler(app->wm, w->id, window_key_cb, w);
+    VmWm_SetWheelHandler(app->wm, w->id, window_wheel_cb, w);
     w->used = 1;
     app->dirty = 1;
     return w;
@@ -209,5 +218,9 @@ static Clay_RenderCommandArray window_layout_cb(void *userData) {
     app->currentWin = prev;
     Clay__CloseElement();
 
-    return Clay_EndLayout(0.016f);
+    Clay_RenderCommandArray cmds = Clay_EndLayout(0.016f);
+    /* 元素矩形只有 layout 完成后才查得到：滚轮命中判定依赖它，
+       放在 Begin 里查会永远拿到 found=false（首帧之后才有值）。 */
+    Jpx__ListRefreshRects(app, w->id);
+    return cmds;
 }

@@ -65,6 +65,19 @@ int  Jpx_ListBox(int win, const char *id, const char *const *items, int count,
                  int *selected, int visibleRows);
 void Jpx_Separator(int win);
 
+/* ---- 可滚动列表（固定行高 22px，滚轮驱动）----
+   height：可视高度；totalRows：总行数（调用方知道，用来算滚动上限）。
+   行高固定，所以不需要在 layout 后反查内容高度。 */
+int  Jpx_ListBegin(int win, const char *id, int height, int totalRows);
+/* 一行多列：第一列自动伸展，其余按 widths[i] 固定宽（widths 为 NULL 时全部 FIT）。
+   返回 1 表示本帧该行被点击。 */
+int  Jpx_ListRow(int win, const char *id, const char *const *cols,
+                 const int *widths, int ncols, int selected);
+/* 行尾附加一个按钮：返回值 bit0 = 行被点击，bit1 = 按钮被点击（两者互斥）。 */
+int  Jpx_ListRowEx(int win, const char *id, const char *const *cols,
+                   const int *widths, int ncols, int selected, const char *btnText);
+void Jpx_ListEnd(int win);
+
 /* ---- 运行时 ---- */
 JpxApp *Jpx_Create(const JpxOptions *opt);
 void    Jpx_Destroy(JpxApp *app);

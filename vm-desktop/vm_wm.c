@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "vm_font.h"
+
 /* White arrow template (same as the WebSocket channel). Frontend tints it via drawImg. */
 static const char VM_CURSOR_SVG_B64[] =
     "PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScyNCcgaGVpZ2h0PScyNCcgdmlld0JveD0nMCAwIDI0IDI0Jz48cGF0aCBkPSdNNCwyIEw0LDIwIEw5LDE1IEwxMi41LDIyIEwxNS41LDIwLjUgTDEyLDEzLjUgTDIwLDEzIFonIGZpbGw9JyNmZmYnIHN0cm9rZT0nIzAwMCcgc3Ryb2tlLXdpZHRoPScxJy8+PC9zdmc+";
@@ -23,7 +25,36 @@ VmWm *VmWm_Create(int width, int height) {
     wm->focusId = -1;
     wm->dragId = -1;
     wm->focusClientId[0] = '\0';
+    wm->chrome = VmTheme_Default()->chrome;
+    wm->contentClip = 1;
+    wm->dirty = 1;
     return wm;
+}
+
+void VmWm_SetChrome(VmWm *wm, const VmChrome *chrome) {
+    if (!wm) return;
+    wm->chrome = chrome ? *chrome : VmTheme_Default()->chrome;
+    wm->dirty = 1;
+}
+
+void VmWm_SetContentClip(VmWm *wm, int enabled) {
+    if (!wm) return;
+    wm->contentClip = enabled ? 1 : 0;
+    wm->dirty = 1;
+}
+
+void VmWm_Invalidate(VmWm *wm) {
+    if (wm) wm->dirty = 1;
+}
+
+int VmWm_IsDirty(const VmWm *wm) {
+    return wm ? wm->dirty : 0;
+}
+
+int VmWm_ConsumeDirty(VmWm *wm) {
+    if (!wm || !wm->dirty) return 0;
+    wm->dirty = 0;
+    return 1;
 }
 
 void VmWm_Free(VmWm *wm) {
@@ -118,6 +149,13 @@ void VmWm_SetKeyHandler(VmWm *wm, int id, VmWindowKeyHandler handler, void *user
     win->keyUserData = userData;
 }
 
+void VmWm_SetWheelHandler(VmWm *wm, int id, VmWindowWheelHandler handler, void *userData) {
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    if (!win) return;
+    win->wheelHandler = handler;
+    win->wheelUserData = userData;
+}
+
 /* --- tiny JSON field extractors (input events are simple flat objects) --- */
 static const char *find_key(const char *json, const char *key) {
     static char scratch[128];
@@ -155,11 +193,12 @@ static void sync_pointer_state(VmWm *wm) {
         VmWindow *win = &wm->windows[i];
         if (!win->clayCtx) continue;
         Clay_SetCurrentContext(win->clayCtx);
-        int localX = wm->pointerX - (win->x + 2);
-        int localY = wm->pointerY - (win->y + VM_WM_TITLE_HEIGHT + 2);
+        const int bw = wm->chrome.borderWidth;
+        int localX = wm->pointerX - (win->x + bw);
+        int localY = wm->pointerY - (win->y + wm->chrome.titleHeight + bw);
         int inside = wm->pointerValid && !win->minimized &&
                      localX >= 0 && localY >= 0 &&
-                     localX < win->w - 4 && localY < win->h - VM_WM_TITLE_HEIGHT - 2;
+                     localX < win->w - 2 * bw && localY < win->h - wm->chrome.titleHeight - 2 * bw;
         if (inside) {
             Clay_SetPointerState((Clay_Vector2){(float)localX, (float)localY},
                                  win->focused && wm->pointerDown);
@@ -205,11 +244,13 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     int x = extract_int(jsonBody, "x", -1);
     int y = extract_int(jsonBody, "y", -1);
     int button = extract_int(jsonBody, "button", 0);
+    int deltaY = extract_int(jsonBody, "deltaY", 0);
     int changed = 0;
 
     int isDown = (strcmp(kind, "mousedown") == 0);
     int isUp = (strcmp(kind, "mouseup") == 0);
     int isMove = (strcmp(kind, "mousemove") == 0);
+    int isWheel = (strcmp(kind, "wheel") == 0);
 
     /* Track every client's pointer; all are drawn into the shared frame. */
     if (*clientId) {
@@ -219,7 +260,7 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     }
 
     /* 全局指针：跨窗口 hover 判定用，任何客户端的指针事件都会更新它。 */
-    if (x >= 0 && y >= 0 && (isMove || isDown || isUp)) {
+    if (x >= 0 && y >= 0 && (isMove || isDown || isUp || isWheel)) {
         wm->pointerX = x;
         wm->pointerY = y;
         wm->pointerValid = 1;
@@ -236,7 +277,7 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     if (ownsFocus && (isDown || strcmp(kind, "click") == 0) && hit) {
         VmWm_Focus(wm, hit->id);
         changed = 1;
-        if (y < hit->y + VM_WM_TITLE_HEIGHT && button == 0) {
+        if (y < hit->y + wm->chrome.titleHeight && button == 0) {
             wm->dragId = hit->id;
             wm->dragOffX = x - hit->x;
             wm->dragOffY = y - hit->y;
@@ -256,13 +297,20 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     /* Update local pointer for the focused window (content offset). */
     VmWindow *focus = VmWm_FindWindow(wm, wm->focusId);
     if (ownsFocus && focus && (isMove || isDown || isUp || strcmp(kind, "click") == 0)) {
-        focus->pointerX = x - (focus->x + 2);
-        focus->pointerY = y - (focus->y + VM_WM_TITLE_HEIGHT + 2);
+        focus->pointerX = x - (focus->x + wm->chrome.borderWidth);
+        focus->pointerY = y - (focus->y + wm->chrome.titleHeight + wm->chrome.borderWidth);
         if (isDown) focus->pointerDown = 1;
         if (isUp) focus->pointerDown = 0;
     }
     /* hover 与焦点无关：非焦点窗口也要按指针位置刷新，否则鼠标移过去不会高亮。 */
     sync_pointer_state(wm);
+
+    /* 滚轮：交给指针所在窗口，WM 不消费滚动语义。 */
+    if (isWheel && hit && hit->wheelHandler) {
+        int lx = x - (hit->x + wm->chrome.borderWidth);
+        int ly = y - (hit->y + wm->chrome.titleHeight + wm->chrome.borderWidth);
+        if (hit->wheelHandler(hit->id, lx, ly, deltaY, hit->wheelUserData)) changed = 1;
+    }
 
     /* Keyboard: only the focus client's key reaches the focused window's handler. */
     if (ownsFocus && focus && (strcmp(kind, "keydown") == 0 || strcmp(kind, "keyup") == 0)) {
@@ -272,6 +320,13 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
             changed = 1;
         }
     }
+
+    /* 指针移动会改变 hover，键盘会改变输入态：都要求重出一帧。 */
+    if (isMove || isDown || isUp || isWheel ||
+        strcmp(kind, "keydown") == 0 || strcmp(kind, "keyup") == 0) {
+        wm->dirty = 1;
+    }
+    if (changed) wm->dirty = 1;
     return changed;
 }
 
@@ -288,15 +343,15 @@ static void append_rect_cmd(VmDisplayList *out, const char *id,
 }
 
 static void append_border_cmd(VmDisplayList *out, const char *id,
-                              int x, int y, int w, int h, const char *color) {
+                              int x, int y, int w, int h, int width, const char *color) {
     VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_BORDER, id);
     if (!c) return;
     VmRect r = {(float)x, (float)y, (float)w, (float)h};
     c->rect = r;
     c->args.drawBorder.rect = r;
     VmDisplay_CopyStr(c->args.drawBorder.paint, sizeof(c->args.drawBorder.paint), color);
-    c->args.drawBorder.widths[0] = c->args.drawBorder.widths[1] = 2;
-    c->args.drawBorder.widths[2] = c->args.drawBorder.widths[3] = 2;
+    c->args.drawBorder.widths[0] = c->args.drawBorder.widths[1] = width;
+    c->args.drawBorder.widths[2] = c->args.drawBorder.widths[3] = width;
 }
 
 static void append_cursor_commands(VmWm *wm, VmDisplayList *out) {
@@ -319,16 +374,32 @@ static void append_cursor_commands(VmWm *wm, VmDisplayList *out) {
 }
 
 static void append_title_cmd(VmDisplayList *out, const char *id,
-                             int x, int y, const char *title, const char *color) {
+                             int x, int y, int w, const VmChrome *ch,
+                             const char *title, const char *color) {
     VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_TEXT, id);
     if (!c) return;
-    VmRect r = {(float)x, (float)y, 300, VM_WM_TITLE_HEIGHT};
-    c->rect = r;
-    c->args.drawText.rect = (VmRect){(float)(x + 8), (float)(y + 6), 300, VM_WM_TITLE_HEIGHT - 6};
+    int lineStep = VmFont_LineHeight(ch->titleFontId, ch->titleFontSize);
+    if (lineStep <= 0) lineStep = ch->titleFontSize;
+    int pad = 8;
+    int tx = x + ch->borderWidth + pad;
+    int ty = y + ch->borderWidth + (ch->titleHeight - ch->borderWidth - lineStep) / 2;
+    if (ty < y + ch->borderWidth) ty = y + ch->borderWidth;
+    int tw = w - 2 * ch->borderWidth - 2 * pad;
+    if (tw < 0) tw = 0;
+    VmRect box = {(float)tx, (float)ty, (float)tw, (float)lineStep};
+    c->rect = box;
+    c->args.drawText.rect = box;
     VmDisplay_CopyStr(c->args.drawText.text, sizeof(c->args.drawText.text), title);
-    c->args.drawText.fontId = 0;
-    c->args.drawText.fontSize = 14;
+    c->args.drawText.fontId = (uint16_t)ch->titleFontId;
+    c->args.drawText.fontSize = (uint16_t)ch->titleFontSize;
     VmDisplay_CopyStr(c->args.drawText.color, sizeof(c->args.drawText.color), color);
+}
+
+static void append_clip_cmd(VmDisplayList *out, VmCmdType type, const char *id, VmRect r) {
+    VmDrawCommand *c = VmDisplay_Append(out, type, id);
+    if (!c) return;
+    c->rect = r;
+    c->args.clip = r;
 }
 
 void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
@@ -337,6 +408,9 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
     VmDisplay_Clear(out);
     out->frameId = frameId;
 
+    const VmChrome *ch = &wm->chrome;
+    const int bw = ch->borderWidth > 0 ? ch->borderWidth : 0;
+    const int th = ch->titleHeight > 0 ? ch->titleHeight : 0;
     char idbuf[64];
     /* Desktop background is a draw program on the bg layer, not sent per-frame. */
 
@@ -345,28 +419,48 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
             VmWindow *win = &wm->windows[i];
             if (win->z != z || win->minimized) continue;
 
+            int bodyX = win->x + bw, bodyY = win->y + th;
+            int bodyW = win->w - 2 * bw, bodyH = win->h - th - bw;
+            if (bodyW < 0) bodyW = 0;
+            if (bodyH < 0) bodyH = 0;
+
             snprintf(idbuf, sizeof(idbuf), "w%d_body", win->id);
-            append_rect_cmd(out, idbuf, win->x + 2, win->y + VM_WM_TITLE_HEIGHT,
-                            win->w - 4, win->h - VM_WM_TITLE_HEIGHT - 2, "s_window", 0);
+            append_rect_cmd(out, idbuf, bodyX, bodyY, bodyW, bodyH, ch->windowStyleId, 0);
 
             snprintf(idbuf, sizeof(idbuf), "w%d_title", win->id);
-            append_rect_cmd(out, idbuf, win->x + 2, win->y + 2,
-                            win->w - 4, VM_WM_TITLE_HEIGHT - 2,
-                            win->focused ? "rgba(38,110,190,1)" : "rgba(120,126,134,1)", 0);
+            append_rect_cmd(out, idbuf, win->x + bw, win->y + bw,
+                            win->w - 2 * bw, th - bw,
+                            win->focused ? ch->titleFocusColor : ch->titleIdleColor, 0);
 
             snprintf(idbuf, sizeof(idbuf), "w%d_ttext", win->id);
-            append_title_cmd(out, idbuf, win->x, win->y, win->title, "rgba(255,255,255,1)");
+            append_title_cmd(out, idbuf, win->x, win->y, win->w, ch, win->title,
+                             "rgba(255,255,255,1)");
 
             snprintf(idbuf, sizeof(idbuf), "w%d_border", win->id);
-            append_border_cmd(out, idbuf, win->x, win->y, win->w, win->h,
-                              win->focused ? "rgba(38,110,190,1)" : "rgba(90,96,104,1)");
+            append_border_cmd(out, idbuf, win->x, win->y, win->w, win->h, bw,
+                              win->focused ? ch->borderFocusColor : ch->borderIdleColor);
+
+            /* 窗口内容裁到 body：防止控件溢出画到别的窗口上。 */
+            int clipped = wm->contentClip && win->layout && bodyW > 0 && bodyH > 0;
+            if (clipped) {
+                snprintf(idbuf, sizeof(idbuf), "w%d_clip", win->id);
+                append_clip_cmd(out, VM_CMD_CLIP_PUSH, idbuf,
+                                (VmRect){(float)bodyX, (float)bodyY,
+                                         (float)bodyW, (float)bodyH});
+            }
 
             if (win->layout && win->clayCtx) {
                 Clay_SetCurrentContext(win->clayCtx);
                 Clay_RenderCommandArray cmds = win->layout(win->userData);
                 ClayFrame_AppendCommands(out, cmds.internalArray, cmds.length,
-                                         win->x + 2, win->y + VM_WM_TITLE_HEIGHT + 2,
-                                         fontResolver, NULL);
+                                         bodyX, bodyY, fontResolver, NULL);
+            }
+
+            if (clipped) {
+                snprintf(idbuf, sizeof(idbuf), "w%d_clip_end", win->id);
+                append_clip_cmd(out, VM_CMD_CLIP_POP, idbuf,
+                                (VmRect){(float)bodyX, (float)bodyY,
+                                         (float)bodyW, (float)bodyH});
             }
         }
     }

@@ -20,6 +20,9 @@ typedef const char *(*VmResourceProvider)(void *userData);
 /* Latest full frame JSON sent as an SSE 'fullframe' event on each new connection,
    so a late client can establish a baseline before incremental frames arrive. */
 typedef const char *(*VmFullFrameProvider)(void *userData);
+/* Periodic tick for animations, caret blinking and pointer expiry.
+   Runs on the server loop thread; do not block. */
+typedef void (*VmTickHandler)(void *userData);
 
 VmServer *VmServer_Create(unsigned short port, const char *webRoot);
 void VmServer_Free(VmServer *server);
@@ -27,6 +30,7 @@ void VmServer_SetFrameProvider(VmServer *server, VmFrameProvider provider, void 
 void VmServer_SetInputHandler(VmServer *server, VmInputHandler handler, void *userData);
 void VmServer_SetResourceProvider(VmServer *server, VmResourceProvider provider, void *userData);
 void VmServer_SetFullFrameProvider(VmServer *server, VmFullFrameProvider provider, void *userData);
+void VmServer_SetTickHandler(VmServer *server, int intervalMs, VmTickHandler handler, void *userData);
 int VmServer_Run(VmServer *server); /* blocks until error; returns non-zero on failure */
 
 #ifdef __cplusplus

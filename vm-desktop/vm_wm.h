@@ -6,6 +6,7 @@
 #include "clay.h"
 #include "clay_frame_adapter.h"
 #include "vm_display.h"
+#include "vm_theme.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,6 +20,8 @@ typedef Clay_RenderCommandArray (*VmWindowLayout)(void *userData);
 /* Guest-internal key handler: return 1 if the key was consumed. */
 typedef int (*VmWindowKeyHandler)(int windowId, const char *key, const char *code,
                                   int isDown, void *userData);
+/* Guest-internal wheel handler: x/y 为窗口局部坐标，deltaY>0 表示向下滚。 */
+typedef int (*VmWindowWheelHandler)(int windowId, int x, int y, int deltaY, void *userData);
 
 typedef struct {
     int id;
@@ -32,6 +35,8 @@ typedef struct {
     void *userData;
     VmWindowKeyHandler keyHandler;
     void *keyUserData;
+    VmWindowWheelHandler wheelHandler;
+    void *wheelUserData;
     /* pointer state in window-local layout coordinates */
     int pointerX, pointerY;
     int pointerDown;
@@ -63,6 +68,12 @@ typedef struct {
     int pointerX, pointerY;
     int pointerDown;
     int pointerValid;
+    /* 窗口装饰参数；未设置时用 VmTheme_Default()->chrome */
+    VmChrome chrome;
+    /* 窗口内容是否裁剪到 body 矩形（默认 1）。 */
+    int contentClip;
+    /* 装饰或窗口状态变化后置位，由外部帧 provider 消费。 */
+    int dirty;
 } VmWm;
 
 VmWm *VmWm_Create(int width, int height);
@@ -78,6 +89,17 @@ void VmWm_Focus(VmWm *wm, int id);
 void VmWm_Raise(VmWm *wm, int id);
 void VmWm_Move(VmWm *wm, int id, int x, int y);
 void VmWm_SetKeyHandler(VmWm *wm, int id, VmWindowKeyHandler handler, void *userData);
+void VmWm_SetWheelHandler(VmWm *wm, int id, VmWindowWheelHandler handler, void *userData);
+
+/* 窗口装饰参数（标题高度/边框宽度/样式 id/颜色/字体）。NULL 恢复默认主题。 */
+void VmWm_SetChrome(VmWm *wm, const VmChrome *chrome);
+/* 窗口内容裁剪到 body 矩形，默认开启。 */
+void VmWm_SetContentClip(VmWm *wm, int enabled);
+/* 标记需要出帧；输入导致的状态变化也会置位。 */
+void VmWm_Invalidate(VmWm *wm);
+int VmWm_IsDirty(const VmWm *wm);
+/* 取走脏标记：有脏返回 1 并清零。 */
+int VmWm_ConsumeDirty(VmWm *wm);
 
 /* Handle raw input JSON body. Returns 1 if the input changed window state. */
 int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length);

@@ -75,6 +75,7 @@ async function boot() {
   const tileCanvases = [];
   const tileCmds = [];
   let grid = null;
+  let lastFrameId = 0;   // 上行事件带上「客户端所见的最新帧号」
 
   const configTiles = (op) => {
     const total = op.cols * op.rows;
@@ -191,6 +192,7 @@ async function boot() {
     source.addEventListener('fullframe', (e) => {
       try {
         const f = JSON.parse(e.data);
+        if (typeof f.frameId === 'number') lastFrameId = f.frameId;
         if (Array.isArray(f.ops)) execOps(f.ops);
         window.__vmRenderer.frames++;
       } catch (err) { window.__vmRenderer.error = 'fullframe: ' + err; }
@@ -208,6 +210,7 @@ async function boot() {
     source.onmessage = (e) => {
       try {
         const f = JSON.parse(e.data);
+        if (typeof f.frameId === 'number') lastFrameId = f.frameId;
         if (Array.isArray(f.ops)) {
           execOps(f.ops);
           window.__vmRenderer.frames++;
@@ -271,9 +274,11 @@ async function boot() {
     return e.clientX >= r.left && e.clientX < r.right &&
            e.clientY >= r.top && e.clientY < r.bottom;
   };
+  // 客户端所见的最新帧号：上行事件带上它，guest 可判断「所见即所操作」。
   const sendPointer = (kind, e) => {
     const p = toCanvasPoint(e);
-    postInput({ type: 'input', kind, x: p.x, y: p.y, button: e.button, clientId: cid, color });
+    postInput({ type: 'input', kind, x: p.x, y: p.y, button: e.button,
+                clientId: cid, color, frameId: lastFrameId });
   };
   // mousemove 节流：鼠标事件密度远高于服务端出帧节奏（20ms 一轮）。
   // 走 WS 后每帧只是一次 send，但仍要合并，避免把服务端打成每事件一帧。
@@ -285,7 +290,8 @@ async function boot() {
     const p = pendingMove;
     pendingMove = null;
     if (!p) return;
-    postInput({ type: 'input', kind: 'mousemove', x: p.x, y: p.y, button: p.button, clientId: cid, color });
+    postInput({ type: 'input', kind: 'mousemove', x: p.x, y: p.y, button: p.button,
+                clientId: cid, color, frameId: lastFrameId });
   };
   document.addEventListener('mousemove', (e) => {
     // 指针移出画布就不再上报：越界坐标会把服务端的 hover 状态清掉，
@@ -316,14 +322,36 @@ async function boot() {
   };
   cv.addEventListener('mousedown', (e) => sendImmediate('mousedown', e));
   document.addEventListener('mouseup', (e) => sendImmediate('mouseup', e));
+
+  // 滚轮：只上报原始增量，滚动语义全在 guest。
+  cv.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const p = toCanvasPoint(e);
+    postInput({ type: 'input', kind: 'wheel', x: p.x, y: p.y, deltaY: e.deltaY,
+                clientId: cid, color, frameId: lastFrameId });
+  }, { passive: false });
+
+  // 可上报的命名键：控件焦点链与文本编辑依赖这些键。
+  const NAMED_KEYS = new Set([
+    'Backspace', 'Enter', 'Tab', 'Escape', 'Delete',
+    'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+    'Home', 'End', 'PageUp', 'PageDown'
+  ]);
   const sendKey = (kind, e) => {
-    postInput({ type: 'input', kind, key: e.key, code: e.code, clientId: cid, color });
+    postInput({ type: 'input', kind, key: e.key, code: e.code,
+                ctrl: e.ctrlKey ? 1 : 0, shift: e.shiftKey ? 1 : 0,
+                alt: e.altKey ? 1 : 0, meta: e.metaKey ? 1 : 0,
+                clientId: cid, color, frameId: lastFrameId });
   };
+  const isReportableKey = (e) => e.key.length === 1 || NAMED_KEYS.has(e.key);
   document.addEventListener('keydown', (e) => {
-    if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Enter') sendKey('keydown', e);
+    if (!isReportableKey(e)) return;
+    e.preventDefault();   // Tab/方向键不能把焦点移出画布
+    sendKey('keydown', e);
   });
   document.addEventListener('keyup', (e) => {
-    if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Enter') sendKey('keyup', e);
+    if (!isReportableKey(e)) return;
+    sendKey('keyup', e);
   });
 
   window.__vmRenderer.ready = true;

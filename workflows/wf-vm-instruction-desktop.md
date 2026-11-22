@@ -28,6 +28,9 @@
 | `vm-desktop/vm_tiles.c/.h` | 把全局坐标完整帧切成 tile 局部命令，按命令签名只发变化的 tile |
 | `vm-desktop/clay_frame_adapter.c/.h` | Clay `RenderCommandArray` → JSON 帧；分块构建与坐标偏移 |
 | `vm-desktop/stb_font_wasm.c` | stb_truetype wasm 绑定，导出 `loadFont/measureText/rasterizeText` |
+| `vm-desktop/vm_font.c/.h` | native stb_truetype 度量，口径对齐前端 `rasterizeText`（float 累加、末端截断），含 `Wrap` |
+| `vm-desktop/vm_theme.c/.h` | `VmChrome` + 控件样式 token，resources 唯一生成者 |
+| `vm-desktop/test_frame.c` | 帧断言测试：不开服务、不开浏览器，直接断言 `VmDisplayList` |
 | `vm-desktop/demo_wm.c` | 双窗口 demo，含 hover/click、多客户端指针、本地背景、自适应帧率 |
 | `ConsoleApp2/app.js` | 前端原语执行：图片/字体/样式/图样/绘制程序/图层 |
 | `ConsoleApp2/font_wasm.js` + `stb_font_wasm.mjs/.wasm` | 浏览器端 wasm 字体封装 |
@@ -57,7 +60,6 @@ python tools/start_vm_renderer.py
 # 编译 wasm 字体（先按上面设置 emsdk 环境变量）
 emcc -O2 -s EXPORTED_FUNCTIONS='["_loadFont","_measureText","_rasterizeText","_alloc","_freeMem"]' -s EXPORTED_RUNTIME_METHODS='["HEAPU8","HEAPU32"]' -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_ES6=1 -s EXPORT_NAME=StbFontWasm -s ENVIRONMENT=web,node -I"H:\github_repos\mystbfont_c" stb_font_wasm.c -o stb_font_wasm.mjs
 Copy-Item stb_font_wasm.mjs,stb_font_wasm.wasm ..\assets\
-Copy-Item stb_font_wasm.mjs,stb_font_wasm.wasm ..\ConsoleApp2\
 
 # 一键启动（推荐）：零参数，先 python tools/build_vm.py，再运行本脚本停旧进程并开浏览器
 python tools/start_vm_desktop.py
@@ -66,6 +68,9 @@ python tools/start_vm_desktop.py
 
 # 或手动启动（webRoot 默认 ../assets）
 $p = Start-Process -FilePath ".\demo_wm.exe" -ArgumentList "9000" -PassThru -RedirectStandardOutput wm.log -RedirectStandardError wm.err
+
+# 帧断言测试（不开服务，默认按候选路径找字体；最稳是一次性传入绝对路径）
+.\vm-desktop\build\test_frame.exe ..\assets\font.ttf
 
 # 验证资源 + 首帧（自适应帧率下空闲无后续帧）
 curl -s --max-time 2 -N http://127.0.0.1:9000/events
@@ -110,6 +115,12 @@ agent-browser --session vm close
 - 指针 3 秒超时；像素检查前必须持续 POST，否则检查为 0。
 - C HTTP 服务用 `Connection: close`，Node `fetch` 连接复用会触发 undici 断言，验证静态资源用 `curl`。
 - 用户启动的 `RemoteForm.exe` 可能占用 8080/8081；本任务用 9000 避开，不要终止非本任务进程。
+- **不要用管道调用 `start_vm_desktop.py`**。脚本 `Popen` 的 `demo_wm.exe` 继承 stdout 且常驻不退出，管道永远等不到 EOF，表现为命令一直挂住（服务其实已起来）。不加管道：`Start-Process python -ArgumentList "tools/start_vm_desktop.py"`；要留日志：`cmd /c "python tools/start_vm_desktop.py > temp\start.log 2>&1"`。
+- `demo_wm.exe` 正在运行时 `build_vm.py` 会在链接阶段失败（`cannot open output file demo_wm.exe: Permission denied`），源码其实已全部编译通过。先 `Get-Process demo_wm` + `netstat -ano | findstr ":9000"` 确认归属，再决定是否停。不想停用户实例时，用 `gcc ... -o ..\temp\<dir>\demo_wm_new.exe` 手工链到临时路径、换端口验证，等价于完整构建。
+- PowerShell 里给 `curl.exe -d` 传 JSON **用单引号原样传，不要加 `\"` 转义**。转义后 guest 收到的是 `{\"kind\":...}`，`find_key` 匹配不到 `"kind"`，所有输入都变成 `changed=0` 的假阴性，容易误判成「事件没到 guest」。
+- native 文本度量的对齐目标是 `rasterizeText` 的 `outW/outH`，不是 `measureText`。后者逐 glyph 截断累加，`"Window A"@14` 得 45，而真正贴到画布上的位图是 48；布局若按 45 算会错位 3px。`vm_font` 按 raster 口径实现（float 累加、末端截断）。
+- 帧内容断言优先用 `test_frame.exe`：直接断言 `VmDisplayList`，1 秒内完成、不开服务不开浏览器，比像素比对快一个数量级。浏览器只用来确认最终像素与真实交互。
+- `VmWm_BuildFrame` 会给每个带 layout 的窗口发 `clipPush/clipPop`。tile 里两者计数必须相等，这是「内容裁剪已生效」的最快判据（49 个 setTile → 98/98）。
 
 ## 退出条件
 

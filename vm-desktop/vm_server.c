@@ -53,6 +53,10 @@ struct VmServer {
     void *resourceUserData;
     VmFullFrameProvider fullFrameProvider;
     void *fullFrameUserData;
+    VmTickHandler tickHandler;
+    void *tickUserData;
+    int tickIntervalMs;
+    unsigned long long lastTickMs;
     unsigned int currentFrameId;
     char currentFrame[VM_FRAME_BUFFER];
     int hasFrame;
@@ -63,6 +67,24 @@ struct VmServer {
 
 static void vm_poll_frames(VmServer *s);
 static void vm_push_frames(VmServer *s);
+
+static unsigned long long vm_now_ms(void) {
+#ifdef _WIN32
+    return (unsigned long long)GetTickCount64();
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long long)ts.tv_sec * 1000ULL + (unsigned long long)ts.tv_nsec / 1000000ULL;
+#endif
+}
+
+static void vm_server_tick(VmServer *s) {
+    if (!s->tickHandler || s->tickIntervalMs <= 0) return;
+    unsigned long long now = vm_now_ms();
+    if (s->lastTickMs != 0 && now - s->lastTickMs < (unsigned long long)s->tickIntervalMs) return;
+    s->lastTickMs = now;
+    s->tickHandler(s->tickUserData);
+}
 
 /* Minimal HTTP index: loads the real app.js primitives from webRoot. */
 /* HTML 只加载 JS；所有 DOM/样式由 vm_renderer.js 统一创建，与 C 宿主可比。 */
@@ -630,6 +652,14 @@ void VmServer_SetFullFrameProvider(VmServer *s, VmFullFrameProvider provider, vo
     s->fullFrameUserData = userData;
 }
 
+void VmServer_SetTickHandler(VmServer *s, int intervalMs, VmTickHandler handler, void *userData) {
+    if (!s) return;
+    s->tickHandler = handler;
+    s->tickUserData = userData;
+    s->tickIntervalMs = intervalMs;
+    s->lastTickMs = 0;
+}
+
 static void vm_poll_frames(VmServer *s) {
     if (!s->frameProvider) return;
     unsigned int id = 0;
@@ -673,6 +703,7 @@ static void vm_push_frames(VmServer *s) {
 int VmServer_Run(VmServer *s) {
     if (!s) return 1;
     for (;;) {
+        vm_server_tick(s);
         vm_poll_frames(s);
         vm_push_frames(s);
 

@@ -51,11 +51,19 @@ void VmWm_SetContentClip(VmWm *wm, int enabled) {
     wm->dirty = 1;
 }
 
-/* 帧级的「有东西变了」：目前无法定位到具体窗口，保守地把全部内容作废。
-   细化到单窗口失效是下一步（jpx 层知道是哪个窗口在动）。 */
+/* 帧级的「有东西变了」但定位不到窗口：保守地把全部内容作废。
+   能定位到窗口时用 VmWm_InvalidateWindow，只重建那一个。 */
 void VmWm_Invalidate(VmWm *wm) {
     if (!wm) return;
     mark_all_content_dirty(wm);
+    wm->dirty = 1;
+}
+
+void VmWm_InvalidateWindow(VmWm *wm, int id) {
+    if (!wm) return;
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    if (!win) return;
+    win->layer.contentDirty = 1;
     wm->dirty = 1;
 }
 
@@ -544,6 +552,8 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     /* 指针移动会改变 hover，键盘会改变输入态：都要求重出一帧。 */
     if (isMove || isDown || isUp || isWheel ||
         strcmp(kind, "keydown") == 0 || strcmp(kind, "keyup") == 0) {
+        /* 键盘只可能改变焦点窗口的内容（输入文本、caret、控件描边）。 */
+        if (focus) focus->layer.contentDirty = 1;
         wm->dirty = 1;
     }
     if (changed) wm->dirty = 1;
@@ -721,6 +731,7 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
         VmWindow *win = &wm->windows[i];
         VmWindowLayer *layer = &win->layer;
         if (!layer->contentDirty && !layer->chromeDirty) continue;
+        wm->layoutCount++;
         VmCmdBuffer buf = {layer->commands, VM_WM_LAYER_COMMANDS, 0};
         build_one_window(wm, &buf, win, ch, fontResolver);
         layer->count = buf.count;

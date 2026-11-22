@@ -101,16 +101,20 @@ static int window_key_cb(int windowId, const char *key, const char *code, int is
 
     if (isDown) {
         /* 焦点控件先吃：文本编辑消费掉大多数可打印键与编辑键。 */
+        /* 键事件只影响当前窗口：不能走 Jpx__Invalidate 的全量路径，
+           否则一次按键会让所有窗口重跑布局。 */
         if (Jpx__FocusKey(w, key, app->ctrl, app->shift)) {
             app->caretOn = 1;
-            Jpx__Invalidate(app);
+            app->dirty = 1;
+            VmWm_InvalidateWindow(app->wm, w->id);
             return 1;
         }
         /* Tab 在窗口内控件间循环，Shift 反向；无可聚焦控件时交给应用。 */
         if (strcmp(key, "Tab") == 0 && w->focusableCount > 0) {
             Jpx__FocusTab(w, app->shift ? -1 : 1);
             app->caretOn = 1;
-            Jpx__Invalidate(app);
+            app->dirty = 1;
+            VmWm_InvalidateWindow(app->wm, w->id);
             return 1;
         }
     }
@@ -197,8 +201,11 @@ static Clay_RenderCommandArray window_layout_cb(void *userData) {
 
     Jpx__OpenRoot(app, w);
     int prev = app->currentWin;
+    int prevLayout = app->layoutWinId;
     app->currentWin = w->id;
+    app->layoutWinId = w->id;
     if (w->desc.layout) w->desc.layout(w->id, w->desc.user);
+    app->layoutWinId = prevLayout;
     app->currentWin = prev;
     Clay__CloseElement();
 

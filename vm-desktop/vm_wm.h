@@ -110,6 +110,8 @@ typedef struct {
     int dirty;
     /* 某个窗口的命令超出 VM_WM_LAYER_COMMANDS，合成时有内容被截断。 */
     int layerOverflow;
+    /* 累计调用 build_one_window 的次数：验证「未脏窗口不重跑布局」的观测点。 */
+    uint32_t layoutCount;
 } VmWm;
 
 VmWm *VmWm_Create(int width, int height);
@@ -149,6 +151,8 @@ void VmWm_SetChrome(VmWm *wm, const VmChrome *chrome);
 void VmWm_SetContentClip(VmWm *wm, int enabled);
 /* 标记需要出帧；输入导致的状态变化也会置位。 */
 void VmWm_Invalidate(VmWm *wm);
+/* 只作废一个窗口的内容：调用方能定位到窗口时用它，避免整帧重建。 */
+void VmWm_InvalidateWindow(VmWm *wm, int id);
 int VmWm_IsDirty(const VmWm *wm);
 /* 取走脏标记：有脏返回 1 并清零。 */
 int VmWm_ConsumeDirty(VmWm *wm);

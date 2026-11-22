@@ -25,10 +25,12 @@ JpxWindow *Jpx__Window(JpxApp *app, int winId) {
 }
 
 void Jpx__Invalidate(JpxApp *app) {
-    if (app) {
-        app->dirty = 1;
-        VmWm_Invalidate(app->wm);
-    }
+    if (!app) return;
+    app->dirty = 1;
+    /* layout 期间知道是哪个窗口在动，只作废它；否则（主题、标题这类
+       影响面不确定的操作）只能保守地全量作废。 */
+    if (app->layoutWinId > 0) VmWm_InvalidateWindow(app->wm, app->layoutWinId);
+    else VmWm_Invalidate(app->wm);
 }
 
 static unsigned long long jpx_now_ms(void) {
@@ -126,6 +128,12 @@ static const char *frame_provider(void *userData, unsigned int *frameId) {
     *frameId = app->frameId++;
     free(app->tilesJson);
     app->tilesJson = build_tiles(app, 0);
+    /* 诊断：这一帧重跑了几个窗口的布局。正常应只 +1（被作废的那个），
+       若一次 +窗口总数说明失效又被放大成全量。 */
+    if (app->opt.logLevel >= 2) {
+        printf("[jpx] frame=%u layoutTotal=%u\n", *frameId, app->wm->layoutCount);
+        fflush(stdout);
+    }
     return app->tilesJson;
 }
 
@@ -157,7 +165,9 @@ static void caret_blink(void *userData) {
         JpxWindow *w = &app->windows[i];
         if (!w->used || !w->focusId[0]) continue;
         app->caretOn = !app->caretOn;
-        Jpx__Invalidate(app);
+        app->dirty = 1;
+        /* caret 只属于这一个窗口：其他窗口的内容原样复用，不跑 Clay。 */
+        VmWm_InvalidateWindow(app->wm, w->id);
         return;
     }
 }
@@ -293,7 +303,9 @@ void Jpx_WindowSetTitle(JpxApp *app, int winId, const char *title) {
     snprintf(w->title, sizeof(w->title), "%s", title ? title : "");
     VmWindow *vw = VmWm_FindWindow(app->wm, winId);
     if (vw) vw->title = w->title;
-    Jpx__Invalidate(app);
+    /* 只有这个窗口的标题变了，其他窗口不必重跑布局。 */
+    app->dirty = 1;
+    VmWm_InvalidateWindow(app->wm, winId);
 }
 
 void Jpx_Invalidate(JpxApp *app) {

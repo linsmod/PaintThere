@@ -206,6 +206,19 @@ static void test_wm_chrome_and_clip(void) {
     expect_int((int)win->layer.builtFrame, 3, "clean layer is reused, not rebuilt");
     expect_int(wm->layerOverflow, 0, "no layer overflow at default quota");
 
+    /* 单窗口失效：新建第二个窗口只作废它自己，第一个窗口继续复用。 */
+    VmWindow *win2 = VmWm_AddWindow(wm, 2, "Window B", 460, 60, 300, 200,
+                                    dummy_layout, NULL);
+    expect(win2 != NULL, "add second window");
+    VmWm_BuildFrame(wm, &frame, 6, NULL);
+    expect_int((int)win->layer.builtFrame, 3, "adding a window does not rebuild others");
+    expect_int((int)win2->layer.builtFrame, 6, "new window built once");
+
+    VmWm_InvalidateWindow(wm, 1);
+    VmWm_BuildFrame(wm, &frame, 7, NULL);
+    expect_int((int)win->layer.builtFrame, 7, "invalidated window rebuilt");
+    expect_int((int)win2->layer.builtFrame, 6, "untouched window still reused");
+
     VmWm_Free(wm);
 }
 

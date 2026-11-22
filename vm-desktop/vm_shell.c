@@ -142,5 +142,6 @@ void VmShell_Destroy(VmShell *shell) {
 
 void VmShell_Refresh(VmShell *shell) {
     if (!shell) return;
-    VmWm_Invalidate(shell->wm);
+    /* 只有任务栏自己在变：窗口列表由 layout 每帧重读，不需要作废其他窗口。 */
+    VmWm_InvalidateWindow(shell->wm, VM_SHELL_WINDOW_ID);
 }

@@ -134,6 +134,7 @@ agent-browser --session vm close
 - **判断「Clay 命令进帧了但 tile 里没有」**，先打印每条渲染命令的 `commandType` 与 `boundingBox`：tile 切分按面积相交，0×0 的命令会被静默丢弃。这一步能直接把范围从「序列化/切分」缩到「度量/配置」。
 - **`Clay_OnHover` 在多 `Clay_Context`（每窗一份）下可能不触发**：同一位置 `Clay_Hovered()` 为真、`Clay_SetPointerState` 已收到 `PRESSED_THIS_FRAME`，回调仍不调用（`vm_shell` 的上下文里同样写法正常，根因未定位）。控件交互改用 `Clay_Hovered()` + 自己从 WM 指针维护的按下沿（每窗 `pressEdge`），只依赖已验证可靠的部分。
 - **`CLAY_SIZING_FIT` 在空容器上会算成 0 高**。单行输入框在「未聚焦且无文本」时没有子元素，FIT 高度 = 0，整个背景矩形被 tile 切分静默丢弃；症状是布局少一截、控件像不存在，而代码路径其实都跑到了（加 printf 能看到函数被调用）。这类控件给固定高度，或保证任何状态下都有子元素撑着。判断方法：`Clay_GetElementData(id).boundingBox` 的宽对、高为 0。
+- **失效标记的细化要覆盖所有入口，漏一条就退回全量**。S2 只改 `Jpx__Invalidate` 时，键盘路径在 layout 之外调用它（`layoutWinId == 0`）→ 仍走全量分支，实测每次按键 `layoutCount` `+3`（三窗口全量）。补上 `window_key_cb` 的单窗口失效和 WM 键盘分支的「脏焦点窗口」之后才是 `+1`。验证手段：在帧 provider 里打印 `layoutCount` 的累计值，看两次出帧之间的**增量**——只打印总量会被基线掩盖。
 - **加了内容缓存后，每个改窗口状态的入口都要置失效标记**。`VmWm_SetWindowFlags(UNDECORATED)` 改了 flags 却没作废内容，帧里仍留着标题与边框，`test_frame` 的 5 项无装饰断言直接失败（`body y` 差 28 px = 标题高）。判据：凡是让「生成命令的输入」变化的 setter（flags/title/chrome/clip/位置/焦点/minimize），都必须同时标脏，否则旧内容会一直复用。焦点这类「旧值也有影响」的，要把旧窗口一起标。
 - **union 里放低频大结构会拖累每一个实例**。`VmDrawCommand` 的 union 含 `VmDefinePatternArgs`（896 B），于是每条 `drawRect` 也占 992 B；实测一帧只有 8 条资源命令、200 多条绘制命令，命令数组 496 KB。把资源类移出到独立数组后 496 B / 263 KB。判断方法：找出 union 里最大的成员，乘上数组长度，再问一句「它出现的频率配得上这个代价吗」。同类陷阱：`VmDisplayDelta.changed[]` 复制整条命令，命令一变胖它就跟着变胖。
 - **颜色/枚举这类纯函数要单独验**。默认主题色与解析函数的 fallback 恰好相同时，解析恒失败也不会显形；给 `Jpx__Color` 换个非默认色（如橙色 hover）才暴露「`rgb()` 分支永远走不到」的 bug。

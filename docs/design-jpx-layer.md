@@ -181,7 +181,9 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId, ...) {
   - `VmWm_Invalidate` 仍全量作废内容（jpx 层还定位不到具体窗口），因此**本步不承诺 CPU 收益**，只是把结构立起来。
   - 证据：`test_frame --probe` 99 项 0 失败（新增「clean layer is reused」「no layer overflow」）；`demo_jpx` 的 `fullframe` 事件改造前后**逐字节相同**（48137 B）；输入 `hi` 与 caret 闪烁回归通过。
   - 内存代价：`8 × 64 × 496 B ≈ 254 KB` 常驻（`VmWindow` 内嵌 layer）。
-- **S2 单窗口失效**：把 `VmWm_Invalidate` 换成 `VmWm_InvalidateWindow(wm, id)`，jpx 的 caret timer 与 `Jpx__Invalidate(app)` 带上当前 layout 的窗口 id。此时 S1 的结构才开始兑现「未脏窗口跳过 Clay」。断言：单窗口动画时其他窗口的 `builtFrame` 不前进。
+- **S2 单窗口失效 —— 已完成（2026-11-22）**：新增 `VmWm_InvalidateWindow(wm, id)`；`JpxApp` 增加 `layoutWinId`（layout 期间由 `window_layout_cb` 设置），`Jpx__Invalidate` 据此只作废当前窗口；`caret_blink`、`Jpx_WindowSetTitle`、`VmShell_Refresh` 各自带上自己的窗口 id；WM 的键盘分支把焦点窗口标脏。
+  - 证据：`test_frame --probe` 104 项 0 失败（新增「adding a window does not rebuild others」「invalidated window rebuilt」「untouched window still reused」）；`layoutCount` 实测——S1 时每次按键 `+3`（三窗口全量），S2 后 `+1`；输入 `abc` 与 caret 闪烁回归通过。
+  - 剩余全量入口：`Jpx_SetTheme`（chrome 影响所有窗口，本就该全量）与 layout 之外的 `Jpx_Invalidate` 公共 API（调用方没给窗口 id）。
 - **S3 存储池化（P2）**：`VmDisplayList` 改视图 + 全进程一份命令池，消掉「输出 list 263 KB + 每窗口 layer 254 KB」的双份，并让 `app->frame` 不再占 263 KB。断言：帧 JSON 与 S1 逐字节相同。
 
 每步都要跑 `test_frame --probe` 与 `test_text_edit --probe`，并在 `demo_jpx` 上验三种场景：拖窗口、按钮 hover、caret 闪烁。

@@ -76,6 +76,8 @@ struct JpxApp {
     JpxWindow windows[VM_WM_MAX_WINDOWS];
     int nextWinId;
     int currentWin;            /* 正在执行 layout 的窗口 id */
+    int layoutWinId;           /* 正在 layout 的窗口；0 表示不在 layout 中。
+                                  失效据此定位到单窗口，而不是全量作废。 */
     unsigned int frameId;
     int dirty;
     int running;

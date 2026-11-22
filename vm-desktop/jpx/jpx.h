@@ -101,6 +101,12 @@ const JpxTheme *Jpx_Theme(JpxApp *app);
 int  Jpx_WindowOpen(JpxApp *app, const JpxWindowDesc *desc);   /* 返回 winId > 0 */
 void Jpx_WindowClose(JpxApp *app, int winId);
 void Jpx_WindowSetTitle(JpxApp *app, int winId, const char *title);
+/* 最大化 / 还原 / 切换 / 查询。最大化占满工作区（画布减去任务栏）。
+   标题栏双击与 □ 按钮走同一条 WM 路径，应用调用只是等价入口。 */
+void Jpx_WindowMaximize(JpxApp *app, int winId);
+void Jpx_WindowUnmaximize(JpxApp *app, int winId);
+void Jpx_WindowToggleMaximize(JpxApp *app, int winId);
+int  Jpx_WindowIsMaximized(JpxApp *app, int winId);
 void Jpx_Invalidate(JpxApp *app);
 
 int  Jpx_TimerEvery(JpxApp *app, int ms, void (*fn)(void *), void *user);

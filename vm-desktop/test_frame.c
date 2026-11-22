@@ -307,6 +307,43 @@ static void feed(VmWm *wm, const char *json) {
     VmWm_HandleInput(wm, json, strlen(json));
 }
 
+static void test_wm_maximize(void) {
+    if (!g_quiet) printf("-- wm: maximize / work area / double click\n");
+    VmWm *wm = VmWm_Create(800, 600);
+    if (!wm) return;
+    VmWm_SetWorkArea(wm, 0, 0, 800, 564);
+    VmWm_AddWindow(wm, 1, "A", 60, 60, 360, 260, dummy_layout, NULL);
+    VmWm_Focus(wm, 1);
+    VmWindow *win = VmWm_FindWindow(wm, 1);
+
+    /* □ 按钮在 × 左侧 20px 处 */
+    feed(wm, "{\"kind\":\"mousedown\",\"x\":387,\"y\":72,\"button\":0,\"clientId\":\"A\"}");
+    expect_int(VmWm_IsMaximized(wm, 1), 1, "maximize button maximizes");
+    win = VmWm_FindWindow(wm, 1);
+    expect_int(win->x, 0, "maximized takes work area x");
+    expect_int(win->w, 800, "maximized takes work area w");
+    expect_int(win->h, 564, "maximized takes work area h");
+
+    /* 最大化后不可拖动：移动请求被忽略 */
+    VmWm_Move(wm, 1, 200, 200);
+    expect_int(win->x, 0, "maximized window ignores move");
+
+    /* 双击标题栏：最大化后标题栏在 y=0..30 之间 */
+    feed(wm, "{\"kind\":\"mousedown\",\"x\":200,\"y\":15,\"button\":0,\"clientId\":\"A\"}");
+    feed(wm, "{\"kind\":\"mouseup\",\"x\":200,\"y\":15,\"button\":0,\"clientId\":\"A\"}");
+    feed(wm, "{\"kind\":\"mousedown\",\"x\":200,\"y\":15,\"button\":0,\"clientId\":\"A\"}");
+    expect_int(VmWm_IsMaximized(wm, 1), 0, "double click on title restores size");
+    win = VmWm_FindWindow(wm, 1);
+    expect_int(win->x, 60, "restored x");
+    expect_int(win->h, 260, "restored h");
+
+    /* 拖动钳制到工作区：向上越界被拉回 */
+    VmWm_Move(wm, 1, 60, -40);
+    expect_int(win->y, 0, "move clamps to work area top");
+
+    VmWm_Free(wm);
+}
+
 static void test_wm_flags(void) {
     if (!g_quiet) printf("-- wm: flags / close / minimize\n");
     VmWm *wm = VmWm_Create(800, 600);
@@ -316,12 +353,12 @@ static void test_wm_flags(void) {
     VmWm_SetCloseHandler(wm, 1, on_close, NULL);
     VmWm_Focus(wm, 1);
 
-    /* 关闭按钮：默认 chrome 下 16px 方块，右端内缩 6px。 */
+    /* 三个按钮从右往左：× / □ / —，默认 chrome 下各 16px、间隔 4px。 */
     feed(wm, "{\"kind\":\"mousedown\",\"x\":405,\"y\":72,\"button\":0,\"clientId\":\"A\"}");
     expect_int(g_closeCalls, 1, "close button invokes close handler");
     expect_int(wm->count, 2, "close handler does not remove the window");
 
-    feed(wm, "{\"kind\":\"mousedown\",\"x\":385,\"y\":72,\"button\":0,\"clientId\":\"A\"}");
+    feed(wm, "{\"kind\":\"mousedown\",\"x\":367,\"y\":72,\"button\":0,\"clientId\":\"A\"}");
     expect_int(VmWm_IsMinimized(wm, 1), 1, "minimize button minimizes");
     expect_int(VmWm_FocusId(wm), -1, "minimized window loses focus");
 
@@ -496,6 +533,7 @@ int main(int argc, char **argv) {
     test_font(fontPath);
     test_wm_chrome_and_clip();
     test_wm_input();
+    test_wm_maximize();
     test_wm_flags();
     test_shell();
     test_clipboard();

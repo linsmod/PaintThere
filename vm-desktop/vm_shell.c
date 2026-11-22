@@ -44,6 +44,14 @@ static void shell_item_press(Clay_ElementId id, Clay_PointerData pointerData, vo
     if (!g_shell) return;
     VmWm *wm = g_shell->wm;
     if (!wm->pointerDown) return;
+    /* 兜底：Clay 的 onHover 在个别时序下会带着旧位置回调，指针不在任务栏
+       就直接丢弃，避免在别的窗口上按下时误触条目。 */
+    {
+        VmWindow *self = VmWm_FindWindow(wm, VM_SHELL_WINDOW_ID);
+        if (!self) return;
+        if (wm->pointerX < self->x || wm->pointerX >= self->x + self->w ||
+            wm->pointerY < self->y || wm->pointerY >= self->y + self->h) return;
+    }
     /* 按下沿由 WM 的按下序号推导，不用 Clay 的 PRESSED_THIS_FRAME：
        后者只在有指针事件的帧推进，同一次按下会在后续重建帧里重复触发
        （表现为「开始菜单开了立刻又关」）。 */
@@ -58,8 +66,18 @@ static void shell_item_press(Clay_ElementId id, Clay_PointerData pointerData, vo
     int wid = (int)tag;
     VmWindow *win = VmWm_FindWindow(g_shell->wm, wid);
     if (!win) return;
-    if (win->minimized) VmWm_Restore(g_shell->wm, wid);
-    else VmWm_Focus(g_shell->wm, wid);
+    /* 任务栏条目语义与桌面系统一致：最小化的还原、最大化的先还原尺寸、
+       已聚焦的收起为最小化、其余聚焦到前面。 */
+    if (win->minimized) {
+        VmWm_Restore(g_shell->wm, wid);
+    } else if (win->maximized) {
+        VmWm_Unmaximize(g_shell->wm, wid);
+        VmWm_Focus(g_shell->wm, wid);
+    } else if (win->focused) {
+        VmWm_Minimize(g_shell->wm, wid);
+    } else {
+        VmWm_Focus(g_shell->wm, wid);
+    }
 }
 
 /* 窗口集合 / 焦点 / 最小化变化：条目与高亮都要立刻更新，
@@ -203,6 +221,9 @@ VmShell *VmShell_Create(VmWm *wm, const VmTheme *theme, int height) {
     win->bodyStyleId = sh->theme->panelStyleId;
     VmWm_SetWindowFlags(wm, VM_SHELL_WINDOW_ID,
                         VM_WIN_UNDECORATED | VM_WIN_TOPMOST | VM_WIN_PINNED | VM_WIN_NOFOCUS);
+
+    /* 工作区 = 画布减去任务栏：最大化与拖动钳制都按它算。 */
+    VmWm_SetWorkArea(wm, 0, 0, wm->width, wm->height - height);
 
     g_shell = sh;
     /* 订阅窗口集合/焦点变化：条目与高亮跟着立即更新。 */

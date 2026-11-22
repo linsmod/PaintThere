@@ -66,6 +66,8 @@ typedef struct {
     int createdSeq;   /* 创建序，raise 不改；任务栏等需要稳定顺序的地方用它 */
     int focused;
     int minimized;
+    int maximized;    /* 最大化时占据 workArea，restoreRect 留给还原 */
+    int restoreX, restoreY, restoreW, restoreH;
     unsigned flags;                     /* VM_WIN_* 位或 */
     const char *bodyStyleId;            /* 正文背景样式 id；NULL 用 chrome->windowStyleId */
     VmWindowCloseHandler closeHandler;
@@ -118,6 +120,11 @@ struct VmWm {
     int pointerDownSeq;
     /* 上一次指针命中的窗口：hover 态转移时旧窗口也要重建。 */
     int lastHitId;
+    /* 双击标题栏检测：上一次按在哪个窗口的标题栏、什么时候（毫秒）。 */
+    int lastTitleDownId;
+    unsigned long long lastTitleDownMs;
+    /* 工作区：窗口可用的屏幕区域（扣掉任务栏）。最大化与拖动钳制都用它。 */
+    int workX, workY, workW, workH;
     /* 正在跑 layout 的窗口 id（-1 表示不在布局中）。宿主据它把「布局中作废」
        收窄到单个窗口，而不是退化成全量作废。 */
     int layoutWinId;
@@ -173,6 +180,15 @@ int VmWm_EnumerateCreated(VmWm *wm, int *ids, int cap);
 void VmWm_Minimize(VmWm *wm, int id);
 void VmWm_Restore(VmWm *wm, int id);
 int VmWm_IsMinimized(VmWm *wm, int id);
+
+/* 工作区：窗口可放置的区域（通常是画布减去任务栏）。默认等于整个画布。
+   最大化用它做目标矩形，拖动时用它做钳制边界。 */
+void VmWm_SetWorkArea(VmWm *wm, int x, int y, int w, int h);
+/* 最大化 / 还原尺寸 / 切换。无装饰或 NOFOCUS 的窗口不参与，返回 0。 */
+int VmWm_Maximize(VmWm *wm, int id);
+int VmWm_Unmaximize(VmWm *wm, int id);
+int VmWm_ToggleMaximize(VmWm *wm, int id);
+int VmWm_IsMaximized(VmWm *wm, int id);
 int VmWm_FocusId(const VmWm *wm);
 /* 窗口正文矩形（去掉装饰）；无装饰窗口即整个窗口。 */
 void VmWm_WindowBody(const VmWm *wm, const VmWindow *win, VmRect *out);

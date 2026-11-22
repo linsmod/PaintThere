@@ -314,6 +314,25 @@ void Jpx_WindowClose(JpxApp *app, int winId) {
     Jpx__WindowDestroy(app, winId);
 }
 
+void Jpx_WindowMaximize(JpxApp *app, int winId) {
+    if (!app || !app->wm) return;
+    if (VmWm_Maximize(app->wm, winId)) app->dirty = 1;
+}
+
+void Jpx_WindowUnmaximize(JpxApp *app, int winId) {
+    if (!app || !app->wm) return;
+    if (VmWm_Unmaximize(app->wm, winId)) app->dirty = 1;
+}
+
+void Jpx_WindowToggleMaximize(JpxApp *app, int winId) {
+    if (!app || !app->wm) return;
+    if (VmWm_ToggleMaximize(app->wm, winId)) app->dirty = 1;
+}
+
+int Jpx_WindowIsMaximized(JpxApp *app, int winId) {
+    return (app && app->wm) ? VmWm_IsMaximized(app->wm, winId) : 0;
+}
+
 void Jpx_WindowSetTitle(JpxApp *app, int winId, const char *title) {
     JpxWindow *w = Jpx__Window(app, winId);
     if (!w) return;

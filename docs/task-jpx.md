@@ -399,7 +399,7 @@ agent-browser --session jpx close
 ## 10. 已知限制与后续触发条件
 
 - 单进程模型：一个 `JpxApp` 一组窗口；多进程共享桌面需要 IPC，不做。
-- 无最大化：不做 panel 区/struts/工作区；将来要做最大化时先加 `VmWm_SetWorkArea`。
+- 窗口容器能力：最小化 / 最大化 / 还原（标题栏 □ 按钮、双击标题栏、`VmWm_Maximize/Unmaximize/ToggleMaximize`、`Jpx_Window*`）、工作区（`VmWm_SetWorkArea`，当前为画布减去任务栏高度）、拖动钳制到工作区、任务栏条目按「最小化的还原 / 最大化的先还原尺寸 / 已聚焦的收起 / 其余聚焦」切换。**尚不支持**：窗口缩放边、贴边吸附、struts、多显示器、虚拟桌面。
 - 无窗口吸附、虚拟桌面、窗口动画、拖放、通知中心、系统托盘、多显示器、Per-Monitor DPI。
 - 无 IME 组合输入：客户端只上报最终字符。
 - 无任意绘制逃生口：将来若确需，方案为「WM 合成时在窗口内容之后追加应用提供的命令列表」，由 JPX 以 `Jpx_PaintRect/Text/Image/ClipPush/OverlayPush` 包装，`vm_display.h` 仍不对应用公开。

@@ -26,6 +26,14 @@
 - **构建环境**：本机只有 .NET SDK（无 VS MSBuild），`IWshRuntimeLibrary` COMReference 无法编译，清理前主项目需要用临时桩件绕过。清理后已移除 COM 引用，可直接 `dotnet build`。
 - **PowerShell 注意**：长链命令（多次 `agent-browser` + `Start-Sleep`）容易被切成后台执行；拆分短命令执行。不要在 PowerShell 用 heredoc（`<<`）。
 
+### 渲染分辨率与坐标（前端）
+
+- **画布物理尺寸必须与 DPR、显示缩放脱钩**：`cv.width/height` 与每块瓦片画布按 `renderScale = clamp(zoom × devicePixelRatio, 1, 2.5)` 放大，CSS 尺寸单独按 `zoom = min(vw/800, vh/600, 1)` 设置。只设 CSS 尺寸而物理尺寸恒为 800×600，就是"整体发虚、放大后更糊"的根因。
+- **文字要按物理像素光栅**：字形是 wasm 预光栅位图，用逻辑字号光栅再被 canvas 放大就会糊。`drawText` 现在按 `fontSize × renderScale` 光栅，绘制时再缩回逻辑尺寸（`drawRasterScaled`）。
+- **协议坐标永远是 800×600 逻辑坐标**：输入换算必须用 `WIDTH/HEIGHT`，不能用 `cv.width`。改完物理尺寸后忘了这一步，表现为"点击位置按 renderScale 偏移"，而且越靠右下偏得越远。
+- **瓦片贴屏要 1:1**：`present()` 用 `setTransform(1,0,0,1,0,0)` 后按整数坐标 `drawImage`，任何缩放都会重新引入插值。清空瓦片也要在单位变换下做，否则只清到逻辑尺寸那么大。
+- 诊断：页面里 `__vmRenderer.scale()` 返回 `{cssZoom, renderScale, dpr}`，用来确认当前实际渲染倍率。
+
 ### VM 桌面（guest 侧）
 
 - **guest 侧观测**：`JPX_TRACE=1` 启动 `demo_jpx` 后，每次输入处理与每帧合成后打印 `[wm]` 转储：窗口集合、z 序、焦点、以及每个窗口的 `cmds / dirty(原因) / built=<frame>`。`dirty=0` 且 `built` 停在旧帧号的窗口，就是“该重建却没人重建”的对象；`over={id need "title"}` 给出超配额窗口的真实需求条数。这份数据全在 guest 内存里，不要去抓跨端帧反推。

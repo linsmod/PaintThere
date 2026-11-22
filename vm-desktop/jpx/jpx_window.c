@@ -205,6 +205,18 @@ static Clay_RenderCommandArray window_layout_cb(void *userData) {
     JpxWindow *w = (JpxWindow *)userData;
     JpxApp *app = w->app;
     Clay_SetCurrentContext(w->ctx);
+    /* 窗口尺寸可能被 WM 改过（最大化/还原）：Clay 的布局尺寸每帧与真实
+       body 同步，否则最大化后内容仍按创建时的大小排版。 */
+    {
+        VmWindow *vw = VmWm_FindWindow(app->wm, w->id);
+        if (vw) {
+            VmRect body;
+            VmWm_WindowBody(app->wm, vw, &body);
+            if (body.w > 0 && body.h > 0) {
+                Clay_SetLayoutDimensions((Clay_Dimensions){body.w, body.h});
+            }
+        }
+    }
     Clay_BeginLayout();
     app->localSerial = 0;
     w->focusableCount = 0;   /* 可聚焦控件每帧按声明序重新登记 */

@@ -6,6 +6,20 @@
 
 #include "vm_font.h"
 
+#ifdef _WIN32
+#include <windows.h>
+static unsigned long long wm_now_ms(void) { return GetTickCount64(); }
+#else
+#include <time.h>
+static unsigned long long wm_now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long long)ts.tv_sec * 1000ULL + (unsigned long long)ts.tv_nsec / 1000000ULL;
+}
+#endif
+
+#define VM_DOUBLE_CLICK_MS 400
+
 /* White arrow template (same as the WebSocket channel). Frontend tints it via drawImg. */
 static const char VM_CURSOR_SVG_B64[] =
     "PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScyNCcgaGVpZ2h0PScyNCcgdmlld0JveD0nMCAwIDI0IDI0Jz48cGF0aCBkPSdNNCwyIEw0LDIwIEw5LDE1IEwxMi41LDIyIEwxNS41LDIwLjUgTDEyLDEzLjUgTDIwLDEzIFonIGZpbGw9JyNmZmYnIHN0cm9rZT0nIzAwMCcgc3Ryb2tlLXdpZHRoPScxJy8+PC9zdmc+";
@@ -27,6 +41,11 @@ VmWm *VmWm_Create(int width, int height) {
     wm->dragId = -1;
     wm->layoutWinId = -1;
     wm->overflowWinId = -1;
+    wm->lastTitleDownId = -1;
+    wm->workX = 0;
+    wm->workY = 0;
+    wm->workW = width;
+    wm->workH = height;
     wm->quotaCommands = VM_WM_LAYER_DEFAULT_QUOTA;
     /* 配额可由环境变量调小做压测/演示：VM_WM_LAYER_QUOTA=200 */
     {
@@ -196,9 +215,11 @@ static int rect_contains(VmRect r, int x, int y) {
     return x >= (int)r.x && x < (int)(r.x + r.w) && y >= (int)r.y && y < (int)(r.y + r.h);
 }
 
-/* 标题栏右侧按钮：最小化 / 关闭。命中与绘制共用同一份几何，避免两处漂移。 */
+/* 标题栏右侧按钮：最小化 / 最大化 / 关闭（从右往左）。
+   命中与绘制共用同一份几何，避免两处漂移。 */
 static void chrome_button_rects(const VmWm *wm, const VmWindow *win,
-                                VmRect *closeRect, VmRect *minRect, int *sizeOut) {
+                                VmRect *closeRect, VmRect *maxRect, VmRect *minRect,
+                                int *sizeOut) {
     int bw = wm->chrome.borderWidth;
     int th = wm->chrome.titleHeight;
     int size = th - 2 * bw - 8;
@@ -207,13 +228,16 @@ static void chrome_button_rects(const VmWm *wm, const VmWindow *win,
     if (sizeOut) *sizeOut = size;
     if (size == 0) {
         *closeRect = (VmRect){0, 0, 0, 0};
+        *maxRect = *closeRect;
         *minRect = *closeRect;
         return;
     }
     int by = win->y + bw + (th - bw - size) / 2;
     int closeX = win->x + win->w - bw - 4 - size;
-    int minX = closeX - size - 4;
+    int maxX = closeX - size - 4;
+    int minX = maxX - size - 4;
     *closeRect = (VmRect){(float)closeX, (float)by, (float)size, (float)size};
+    *maxRect = (VmRect){(float)maxX, (float)by, (float)size, (float)size};
     *minRect = (VmRect){(float)minX, (float)by, (float)size, (float)size};
 }
 
@@ -346,6 +370,77 @@ int VmWm_IsMinimized(VmWm *wm, int id) {
     return win ? win->minimized : 0;
 }
 
+void VmWm_SetWorkArea(VmWm *wm, int x, int y, int w, int h) {
+    if (!wm) return;
+    if (w <= 0) w = wm->width;
+    if (h <= 0) h = wm->height;
+    wm->workX = x;
+    wm->workY = y;
+    wm->workW = w;
+    wm->workH = h;
+    /* 已最大化的窗口跟着新工作区走（任务栏高度变化时尤其需要）。 */
+    for (int i = 0; i < wm->count; i++) {
+        VmWindow *win = &wm->windows[i];
+        if (!win->maximized) continue;
+        win->x = wm->workX;
+        win->y = wm->workY;
+        win->w = wm->workW;
+        win->h = wm->workH;
+        layer_dirty(win, "workarea");
+    }
+    wm_dirty(wm, "workarea");
+}
+
+/* 只有普通可拖动窗口能最大化：任务栏、桌面层、弹出菜单都不行。 */
+static int can_maximize(const VmWindow *win) {
+    if (!win) return 0;
+    if (win->flags & (VM_WIN_UNDECORATED | VM_WIN_PINNED | VM_WIN_NOFOCUS)) return 0;
+    return 1;
+}
+
+int VmWm_Maximize(VmWm *wm, int id) {
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    if (!wm || !can_maximize(win) || win->maximized) return 0;
+    win->restoreX = win->x;
+    win->restoreY = win->y;
+    win->restoreW = win->w;
+    win->restoreH = win->h;
+    win->maximized = 1;
+    win->x = wm->workX;
+    win->y = wm->workY;
+    win->w = wm->workW;
+    win->h = wm->workH;
+    layer_dirty(win, "maximize");
+    wm_dirty(wm, "maximize");
+    notify_window_list(wm);
+    return 1;
+}
+
+int VmWm_Unmaximize(VmWm *wm, int id) {
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    if (!wm || !win || !win->maximized) return 0;
+    win->maximized = 0;
+    win->x = win->restoreX;
+    win->y = win->restoreY;
+    win->w = win->restoreW;
+    win->h = win->restoreH;
+    layer_dirty(win, "unmaximize");
+    wm_dirty(wm, "unmaximize");
+    notify_window_list(wm);
+    return 1;
+}
+
+int VmWm_ToggleMaximize(VmWm *wm, int id) {
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    if (!wm || !win) return 0;
+    return win->maximized ? VmWm_Unmaximize(wm, id) : VmWm_Maximize(wm, id);
+}
+
+int VmWm_IsMaximized(VmWm *wm, int id) {
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    return win ? win->maximized : 0;
+}
+
 int VmWm_FocusId(const VmWm *wm) {
     return wm ? wm->focusId : -1;
 }
@@ -353,6 +448,16 @@ int VmWm_FocusId(const VmWm *wm) {
 void VmWm_Move(VmWm *wm, int id, int x, int y) {
     VmWindow *win = VmWm_FindWindow(wm, id);
     if (!win) return;
+    if (win->maximized) return;   /* 最大化时不可拖动 */
+    /* 钳制到工作区：左边/上边不许整窗拖出屏幕，右边/下边至少留出可抓的区域。 */
+    int minX = wm->workX - win->w + 60;
+    int maxX = wm->workX + wm->workW - 60;
+    int minY = wm->workY;
+    int maxY = wm->workY + wm->workH - wm->chrome.titleHeight;
+    if (x < minX) x = minX;
+    if (x > maxX) x = maxX;
+    if (y < minY) y = minY;
+    if (y > maxY) y = maxY;
     if (win->x == x && win->y == y) return;
     win->x = x;
     win->y = y;
@@ -527,12 +632,17 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
 
     /* 装饰按钮先于焦点与拖动：命中即消费，不再启动拖动。 */
     if (ownsFocus && isDown && hit && !(hit->flags & VM_WIN_UNDECORATED)) {
-        VmRect closeRect, minRect;
+        VmRect closeRect, maxRect, minRect;
         int size = 0;
-        chrome_button_rects(wm, hit, &closeRect, &minRect, &size);
+        chrome_button_rects(wm, hit, &closeRect, &maxRect, &minRect, &size);
         if (size > 0 && rect_contains(closeRect, x, y)) {
             if (hit->closeHandler) hit->closeHandler(hit->id, hit->closeUserData);
             wm_dirty(wm, "close-button");
+            sync_pointer_state(wm);
+            return 1;
+        }
+        if (size > 0 && rect_contains(maxRect, x, y)) {
+            VmWm_ToggleMaximize(wm, hit->id);
             sync_pointer_state(wm);
             return 1;
         }
@@ -550,9 +660,22 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
         }
         int draggable = !(hit->flags & (VM_WIN_UNDECORATED | VM_WIN_PINNED | VM_WIN_NOFOCUS));
         if (draggable && y < hit->y + wm->chrome.titleHeight && button == 0) {
-            wm->dragId = hit->id;
-            wm->dragOffX = x - hit->x;
-            wm->dragOffY = y - hit->y;
+            /* 双击标题栏 = 最大化 / 还原。按在标题栏但不在按钮上才算。 */
+            unsigned long long now = wm_now_ms();
+            if (wm->lastTitleDownId == hit->id &&
+                now - wm->lastTitleDownMs <= VM_DOUBLE_CLICK_MS) {
+                wm->lastTitleDownId = -1;
+                VmWm_ToggleMaximize(wm, hit->id);
+                sync_pointer_state(wm);
+                return 1;
+            }
+            wm->lastTitleDownId = hit->id;
+            wm->lastTitleDownMs = now;
+            if (!hit->maximized) {
+                wm->dragId = hit->id;
+                wm->dragOffX = x - hit->x;
+                wm->dragOffY = y - hit->y;
+            }
         }
     }
 
@@ -718,17 +841,24 @@ static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
         append_title_cmd(out, idbuf, win->x, win->y, win->w, ch, win->title,
                          win->focused ? "rgba(255,255,255,1)" : "rgba(202,208,224,1)");
 
-        VmRect closeRect, minRect;
+        VmRect closeRect, maxRect, minRect;
         int size = 0;
-        chrome_button_rects(wm, win, &closeRect, &minRect, &size);
+        chrome_button_rects(wm, win, &closeRect, &maxRect, &minRect, &size);
         if (size > 0) {
             int overMin = wm->pointerValid &&
                           rect_contains(minRect, wm->pointerX, wm->pointerY);
+            int overMax = wm->pointerValid &&
+                          rect_contains(maxRect, wm->pointerX, wm->pointerY);
             int overClose = wm->pointerValid &&
                             rect_contains(closeRect, wm->pointerX, wm->pointerY);
             if (overMin) {
                 snprintf(idbuf, sizeof(idbuf), "w%d_min_hover", win->id);
                 append_rect_cmd(out, idbuf, (int)minRect.x, (int)minRect.y,
+                                size, size, "rgba(255,255,255,0.18)", 4);
+            }
+            if (overMax) {
+                snprintf(idbuf, sizeof(idbuf), "w%d_max_hover", win->id);
+                append_rect_cmd(out, idbuf, (int)maxRect.x, (int)maxRect.y,
                                 size, size, "rgba(255,255,255,0.18)", 4);
             }
             if (overClose) {
@@ -742,6 +872,27 @@ static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
                             (int)minRect.x + (size - barW) / 2,
                             (int)minRect.y + size / 2 - barH / 2,
                             barW, barH, "rgba(255,255,255,0.85)", 0);
+
+            /* 最大化图标：空心方框；已最大化时画成两个叠放的方框表示"还原"。 */
+            int inset = 4;
+            int bw2 = size - inset * 2, bh2 = size - inset * 2;
+            if (bw2 >= 4 && bh2 >= 4) {
+                if (win->maximized) {
+                    snprintf(idbuf, sizeof(idbuf), "w%d_max_back", win->id);
+                    append_border_cmd(out, idbuf,
+                                      (int)maxRect.x + inset + 2, (int)maxRect.y + inset - 2,
+                                      bw2 - 2, bh2 - 2, 1, "rgba(255,255,255,0.55)");
+                    snprintf(idbuf, sizeof(idbuf), "w%d_max", win->id);
+                    append_border_cmd(out, idbuf,
+                                      (int)maxRect.x + inset, (int)maxRect.y + inset,
+                                      bw2 - 2, bh2 - 2, 1, "rgba(255,255,255,0.92)");
+                } else {
+                    snprintf(idbuf, sizeof(idbuf), "w%d_max", win->id);
+                    append_border_cmd(out, idbuf,
+                                      (int)maxRect.x + inset, (int)maxRect.y + inset,
+                                      bw2, bh2, 1, "rgba(255,255,255,0.92)");
+                }
+            }
 
             int lineStep = VmFont_LineHeight(ch->titleFontId, ch->titleFontSize);
             if (lineStep <= 0) lineStep = ch->titleFontSize;
@@ -957,10 +1108,10 @@ void VmWm_Dump(const VmWm *wm, const char *tag) {
            wm->pointerX, wm->pointerY, wm->pointerDown, wm->lastHitId);
     for (int i = 0; i < wm->count; i++) {
         const VmWindow *w = &wm->windows[i];
-        printf("[wm]   id=%-5d z=%-2d seq=%-2d flags=0x%02x f=%d min=%d cmds=%-3d "
+        printf("[wm]   id=%-5d z=%-2d seq=%-2d flags=0x%02x f=%d min=%d max=%d cmds=%-3d "
                "dirty=%d(%-15s) built=%-4u rect=(%d,%d,%d,%d) \"%s\"\n",
                w->id, w->z, w->createdSeq, w->flags, w->focused, w->minimized,
-               w->layer.count, w->layer.contentDirty,
+               w->maximized, w->layer.count, w->layer.contentDirty,
                w->layer.dirtyWhy ? w->layer.dirtyWhy : "-",
                w->layer.builtFrame, w->x, w->y, w->w, w->h, w->title ? w->title : "");
         /* 命令条数偏多时给出类型分布：一眼分辨「内容行太多」还是「装饰重复」。 */

@@ -465,13 +465,15 @@ agent-browser --session jpx close
 - 拖动：A 由 (60,60) 拖到 (110,80)，`w1_body` 落在 tile(1,1) 局部 `[12,8]`，与鼠标位移 +50/+20 一致。
 - 空闲：相隔 2.5s 两次连 `/events`，`event: tiles` 均为 0 次、`frameId=2` 不变。
 - 应用源码 `grep -c "clay\|vm_display\|vm_tiles\|json" demo_jpx.c` = 0。
-- `python tools/build_vm.py` 通过；`test_frame.exe` 89 项断言 0 失败。
+- 任务栏顺序：点窗口 A 触发 raise（`w1_title` 变 `rgba(52,140,220)`）前后，条目文本恒为 `A@12 B@56`（tile 局部 x，对应条目 0/1），不再随聚焦变化。
+- `python tools/build_vm.py` 通过；`test_frame.exe` 91 项断言 0 失败（新增 2 项：`EnumerateCreated` 的计数与「raise 后仍按创建序」）。
 
-期间修掉的三处缺陷：
+期间修掉的四处缺陷：
 
 - 控件内部装饰元素用了固定字符串 id（`"label"`/`"sep"`/`"spacer"`/`"box"`），同窗口多个即撞号。改为「父元素 id + 帧内序号」，即 `Jpx__LocalId`（等价 `CLAY_SIDI_LOCAL`），帧内唯一、跨帧稳定。
 - `CLAY_TEXT(text, &cfg)` 用法错误：`Clay__OpenTextElement` 按值收 `Clay_TextElementConfig`，宏把实参当初始化器，指针被塞进结构体首字段，`fontSize` 变成 0，所有文本元素 boundingBox 为 0×0 并被 tile 切分丢弃。改为直接调用底层 API 的薄封装 `jpx_text(text, config)`。
 - `Jpx__Color` 先跳字母再找 `(`，`rgb()/rgba()` 分支永远走不到、恒返回 fallback（默认主题值恰好与 fallback 相同，掩盖了问题）。改为先定位左括号再解析。
+- 任务栏条目按 z 序排列（`vm_shell.c` 用 `VmWm_Enumerate`），而每次聚焦都会 `VmWm_Raise` 把窗口 z 抬到最大，条目于是在点击时来回跳，与 Windows/macOS 的固定条目顺序不符。改为给 `VmWindow` 加 `createdSeq`（`VmWm_AddWindow` 赋值、此后不变），新增 `VmWm_EnumerateCreated` 按创建序返回，`VmWm_Enumerate` 保留 z 序供两遍合成使用。
 
 已知限制：`Clay_OnHover` 注册的回调在窗口上下文里不触发——同一位置 `Clay_Hovered()` 为真、`Clay_SetPointerState` 已收到 `PRESSED_THIS_FRAME`，回调仍不调用；任务栏（`vm_shell` 的上下文）同样写法正常，根因未定位。控件交互改为「`Clay_Hovered()` + WM 指针按下沿（`JpxWindow::pressEdge`）」，不依赖该回调。阶段 D 若需 Clay 的 hover 回调，先复现并登记该问题。
 

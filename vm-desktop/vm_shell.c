@@ -56,7 +56,8 @@ static Clay_RenderCommandArray shell_layout(void *userData) {
         .backgroundColor = (Clay_Color){0, 0, 0, 0},
     }) {
         int ids[VM_WM_MAX_WINDOWS];
-        int n = VmWm_Enumerate(sh->wm, ids, VM_WM_MAX_WINDOWS);
+        /* 条目按创建序固定排列：z 序会随聚焦/raise 变化，条目会在点击时来回跳。 */
+        int n = VmWm_EnumerateCreated(sh->wm, ids, VM_WM_MAX_WINDOWS);
         for (int i = 0; i < n; i++) {
             VmWindow *win = VmWm_FindWindow(sh->wm, ids[i]);
             if (!win || win->id == VM_SHELL_WINDOW_ID) continue;

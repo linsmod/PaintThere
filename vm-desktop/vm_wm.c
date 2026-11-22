@@ -22,6 +22,7 @@ VmWm *VmWm_Create(int width, int height) {
     wm->width = width;
     wm->height = height;
     wm->nextZ = 1;
+    wm->nextSeq = 0;
     wm->focusId = -1;
     wm->dragId = -1;
     wm->focusClientId[0] = '\0';
@@ -86,6 +87,7 @@ VmWindow *VmWm_AddWindow(VmWm *wm, int id, const char *title,
     win->layout = layout;
     win->userData = userData;
     win->z = wm->nextZ++;
+    win->createdSeq = wm->nextSeq++;
     win->focused = 0;
     win->minimized = 0;
     win->flags = 0;
@@ -220,6 +222,26 @@ int VmWm_Enumerate(VmWm *wm, int *ids, int cap) {
             if (ids && n < cap) ids[n] = wm->windows[i].id;
             n++;
         }
+    }
+    return n;
+}
+
+int VmWm_EnumerateCreated(VmWm *wm, int *ids, int cap) {
+    if (!wm) return 0;
+    int order[VM_WM_MAX_WINDOWS];
+    for (int i = 0; i < wm->count; i++) {
+        int seq = wm->windows[i].createdSeq;
+        int j = i;
+        while (j > 0 && wm->windows[order[j - 1]].createdSeq > seq) {
+            order[j] = order[j - 1];
+            j--;
+        }
+        order[j] = i;
+    }
+    int n = 0;
+    for (int i = 0; i < wm->count; i++) {
+        if (ids && n < cap) ids[n] = wm->windows[order[i]].id;
+        n++;
     }
     return n;
 }

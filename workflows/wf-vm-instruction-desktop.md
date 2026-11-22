@@ -130,6 +130,7 @@ agent-browser --session vm close
 - **判断「Clay 命令进帧了但 tile 里没有」**，先打印每条渲染命令的 `commandType` 与 `boundingBox`：tile 切分按面积相交，0×0 的命令会被静默丢弃。这一步能直接把范围从「序列化/切分」缩到「度量/配置」。
 - **`Clay_OnHover` 在多 `Clay_Context`（每窗一份）下可能不触发**：同一位置 `Clay_Hovered()` 为真、`Clay_SetPointerState` 已收到 `PRESSED_THIS_FRAME`，回调仍不调用（`vm_shell` 的上下文里同样写法正常，根因未定位）。控件交互改用 `Clay_Hovered()` + 自己从 WM 指针维护的按下沿（每窗 `pressEdge`），只依赖已验证可靠的部分。
 - **颜色/枚举这类纯函数要单独验**。默认主题色与解析函数的 fallback 恰好相同时，解析恒失败也不会显形；给 `Jpx__Color` 换个非默认色（如橙色 hover）才暴露「`rgb()` 分支永远走不到」的 bug。
+- **任务栏/Dock 类条目顺序不能用 z 序**。`VmWm_Enumerate` 是按 z 升序的（合成需要），而 `VmWm_Raise` 在每次聚焦时把窗口 z 抬到最大——直接用它会让人一戳条目就换位。用 `VmWm_EnumerateCreated`（按 `createdSeq`，创建后不变）。判断依据：任何「用户认为位置固定」的 UI 列表，都要问一句它依赖的顺序会不会因为交互而变。
 
 ## 退出条件
 

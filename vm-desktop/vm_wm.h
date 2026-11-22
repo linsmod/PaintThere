@@ -38,6 +38,7 @@ typedef struct {
     const char *title;
     int x, y, w, h;
     int z;            /* higher is on top */
+    int createdSeq;   /* 创建序，raise 不改；任务栏等需要稳定顺序的地方用它 */
     int focused;
     int minimized;
     unsigned flags;                     /* VM_WIN_* 位或 */
@@ -70,6 +71,7 @@ typedef struct {
     VmWindow windows[VM_WM_MAX_WINDOWS];
     int count;
     int nextZ;
+    int nextSeq;
     int focusId;
     /* drag state */
     int dragId;
@@ -110,6 +112,8 @@ unsigned VmWm_WindowFlags(VmWm *wm, int id);
 void VmWm_SetCloseHandler(VmWm *wm, int id, VmWindowCloseHandler handler, void *userData);
 /* 按 z 升序写入窗口 id（含最小化与置顶窗口），返回总数（可能大于 cap）。 */
 int VmWm_Enumerate(VmWm *wm, int *ids, int cap);
+/* 按创建序升序写入窗口 id，与聚焦/raise 无关；任务栏等需要稳定顺序的界面用它。 */
+int VmWm_EnumerateCreated(VmWm *wm, int *ids, int cap);
 void VmWm_Minimize(VmWm *wm, int id);
 void VmWm_Restore(VmWm *wm, int id);
 int VmWm_IsMinimized(VmWm *wm, int id);

@@ -311,6 +311,9 @@ static void test_wm_flags(void) {
     expect_int(VmWm_Enumerate(wm, ids, VM_WM_MAX_WINDOWS), 2, "enumerate returns window count");
     /* 聚焦即提升：win1 被 Focus 过，z 高于 win2，故升序为 [2,1]。 */
     expect(ids[0] == 2 && ids[1] == 1, "enumerate ordered by z ascending");
+    expect_int(VmWm_EnumerateCreated(wm, ids, VM_WM_MAX_WINDOWS), 2,
+               "created enumerate returns window count");
+    expect(ids[0] == 1 && ids[1] == 2, "created enumerate keeps creation order after raise");
 
     VmWm_Free(wm);
 }
@@ -355,11 +358,11 @@ static void test_shell(void) {
     }
 
     /* 点任务栏条目：最小化的窗口被恢复并获得焦点。
-       条目顺序 = z 升序，宽度 140、间距 4、内边距 4。 */
+       条目顺序 = 创建序，宽度 140、间距 4、内边距 4。 */
     VmWm_Minimize(wm, 1);
     expect_int(VmWm_FocusId(wm), -1, "no focus after minimize");
     int ord[VM_WM_MAX_WINDOWS];
-    int cnt = VmWm_Enumerate(wm, ord, VM_WM_MAX_WINDOWS);
+    int cnt = VmWm_EnumerateCreated(wm, ord, VM_WM_MAX_WINDOWS);
     int idx = -1;
     for (int i = 0; i < cnt; i++) if (ord[i] == 1) idx = i;
     expect(idx >= 0, "minimized window still listed in taskbar");

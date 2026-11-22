@@ -2,10 +2,10 @@
 """一键启动 C 版 VM 渲染器（canvas-cpp / ant 引擎）。
 
 一条命令同时拉起 SSE 服务端和原生窗口渲染器：
-    python tools/build_vm_renderer.py && python tools/start_vm_renderer.py
+    python tools/build_vm.py && python tools/start_vm_renderer.py
 
-SSE 服务端由 start_vm_desktop.py 启动，它会先构建最新的 demo_wm.exe；
-vm_renderer.exe 仍需先用 build_vm_renderer.py 构建。
+两个可执行文件由统一工程一次构建，产物都在 vm-desktop/build/；
+本脚本和 start_vm_desktop.py 只检查产物并启动，不再各自构建。
 
 进程级禁用代理，避免 SDK 的 HTTP 客户端把 127.0.0.1 请求发到系统代理。
 Ctrl+C 会同时停掉服务端和渲染器。
@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 VM_DIR = ROOT / "vm-desktop"
 ASSETS = ROOT / "assets"
-EXE = VM_DIR / "renderer" / "build" / "vm_renderer.exe"
+EXE = VM_DIR / "build" / "vm_renderer.exe"
 PAGE = ASSETS / "vm_renderer.js"
 DLL_SRC = Path(r"E:\canvas-cpp\recovery\out\recovered\build-ant\antjsb.dll")
 
@@ -40,10 +40,11 @@ def clear_proxy():
 
 
 def ensure_built():
-    if EXE.is_file() and PAGE.is_file():
+    desktop = EXE.parent / "demo_wm.exe"
+    if EXE.is_file() and desktop.is_file() and PAGE.is_file():
         return
     raise RuntimeError(
-        f"缺少 {EXE} 或 {PAGE}；先构建 C 渲染器（见 workflows/wf-vm-instruction-desktop.md）"
+        f"缺少 {EXE} / {desktop} / {PAGE}；先运行 python tools/build_vm.py"
     )
 
 

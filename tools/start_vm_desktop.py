@@ -6,8 +6,8 @@
 
 脚本自行定位仓库根、共享资源和 exe，显式传入 webRoot 绝对路径，
 因此从任何目录调用都不依赖工作目录或 exe 的默认参数。
-启动前先按端口停掉旧实例，再调用 build_vm_desktop.py 构建最新 demo_wm.exe，
-避免源码已更新但服务端仍在跑旧协议。
+构建由 tools/build_vm.py 统一完成；本脚本只检查产物并按端口停掉旧实例，
+源码改动后先运行 python tools/build_vm.py。
 
 可选环境变量（仅调试用，日常无需设置）：
     VM_DESKTOP_PORT        监听端口，默认 9000
@@ -26,7 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 VM_DIR = ROOT / "vm-desktop"
 ASSETS = ROOT / "assets"
-EXE = VM_DIR / "demo_wm.exe"
+EXE = VM_DIR / "build" / "demo_wm.exe"
 FONT_SOURCE = Path(r"H:\github_repos\mystbfont_c\fonts\NotoSans-Regular.ttf")
 
 REQUIRED_ASSETS = (
@@ -72,11 +72,9 @@ def stop_old(port):
         time.sleep(0.6)
 
 
-def ensure_built():
-    script = ROOT / "tools" / "build_vm_desktop.py"
-    r = subprocess.run([sys.executable, str(script)], cwd=ROOT, text=True)
-    if r.returncode != 0:
-        raise RuntimeError("demo_wm.exe 构建失败，见上方 [build-desktop] 输出")
+def check_built():
+    if not EXE.is_file():
+        raise RuntimeError(f"找不到 {EXE}，先运行 python tools/build_vm.py")
 
 
 def wait_ready(port, timeout=8.0):
@@ -97,11 +95,8 @@ def main():
     port = int(os.environ.get("VM_DESKTOP_PORT", "9000"))
     try:
         ensure_assets()
-        # 必须在停掉旧实例之后再构建：Windows 不允许覆盖正在运行的 exe。
+        check_built()
         stop_old(port)
-        ensure_built()
-        if not EXE.is_file():
-            raise RuntimeError(f"找不到 {EXE}")
     except Exception as exc:
         print(f"[start] 失败: {exc}", file=sys.stderr)
         return 1

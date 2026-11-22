@@ -36,21 +36,21 @@
 ## 常用命令
 
 ```powershell
-# 构建桌面服务端 demo_wm.exe（推荐用脚本；会检查源/头文件时间戳）
+# 一次构建两个 C 项目：demo_wm.exe + vm_renderer.exe（统一 CMake 工程）
 cd h:\github_repos\跨端图绘指令流
-python tools/build_vm_desktop.py
-# 等效手动命令（在 vm-desktop 目录）：
-# gcc -std=c11 -I"H:\github_repos\clay" -I. demo_wm.c clay_frame_adapter.c vm_display.c vm_serialize_json.c vm_tiles.c vm_wm.c vm_server.c -lws2_32 -o demo_wm.exe
+python tools/build_vm.py
+# 产物：vm-desktop/build/demo_wm.exe 与 vm-desktop/build/vm_renderer.exe
+# 等效手动命令：
+# cmake -S vm-desktop -B vm-desktop/build -G "MinGW Makefiles" -DCMAKE_C_COMPILER=C:/msys64/mingw64/bin/gcc.exe -DCMAKE_CXX_COMPILER=C:/msys64/mingw64/bin/g++.exe -DCANVAS_SOURCE=<canvas-cpp源码> -DANT_ROOT=<ant目录> -DCLAY_DIR=<clay目录> -DCANVAS_JS_ENGINE=ant
+# cmake --build vm-desktop/build -j4
 
-# 其它 C demo（按需）
+# 其它 C demo（按需，独立构建，不进统一工程）
 cd vm-desktop
 gcc -std=c11 -I"H:\github_repos\clay" -I. demo_frame.c demo_layout.c clay_frame_adapter.c vm_display.c vm_serialize_json.c -o demo_frame.exe
 gcc -std=c11 -I. test_display_diff.c vm_display.c -o test_display_diff.exe
 cd ..
 
-# 构建 C 版渲染器（自动同步 canvas-cpp 的 libcanvas.a / antjsb.dll 再编译）
-python tools/build_vm_renderer.py
-# 一键运行（同时起 SSE 服务 + 原生渲染窗口；服务端由 start_vm_desktop.py 自动构建）
+# 一键运行（同时起 SSE 服务 + 原生渲染窗口；脚本只检查 build_vm.py 产物）
 python tools/start_vm_renderer.py
 # 调试：$env:VM_RENDERER_FRAMES="90"; python tools/start_vm_renderer.py  # 跑满 90 帧自动退出
 
@@ -59,7 +59,7 @@ emcc -O2 -s EXPORTED_FUNCTIONS='["_loadFont","_measureText","_rasterizeText","_a
 Copy-Item stb_font_wasm.mjs,stb_font_wasm.wasm ..\assets\
 Copy-Item stb_font_wasm.mjs,stb_font_wasm.wasm ..\ConsoleApp2\
 
-# 一键启动（推荐）：零参数，自动定位 assets、停旧进程、重建 demo_wm.exe、开浏览器
+# 一键启动（推荐）：零参数，先 python tools/build_vm.py，再运行本脚本停旧进程并开浏览器
 python tools/start_vm_desktop.py
 # 调试：环境变量改端口 / 不开浏览器
 # $env:VM_DESKTOP_PORT="9001"; $env:VM_DESKTOP_NO_BROWSER="1"; python tools/start_vm_desktop.py
@@ -86,7 +86,7 @@ agent-browser --session vm close
 
 ## 验证清单（按阶段）
 
-1. **构建**：两个 `dotnet build` 通过；gcc 编译 `demo_frame` / `demo_wm` 通过；emcc 编译 wasm 通过。
+1. **构建**：`python tools/build_vm.py` 一次通过并生成 `demo_wm.exe` + `vm_renderer.exe`；两个 `dotnet build` 通过；gcc 编译 `demo_frame` 通过；emcc 编译 wasm 通过。
 2. **字体一致性**：`font_probe.exe <ttf> <size> <text>` 与 `node test_wasm_font.mjs <ttf> <size> <text>` 的宽度一致（本机验证过 91/70/247）。
 3. **协议**：`curl -N /events` 收到 `event: resources` + `event: fullframe`；fullframe 为 `{"type":"tiles",...}`，ops 依次含 `showLoading` / `config` / 48 个 `setTile` / `hideLoading`；帧中无 `wm_bg`，窗口背景为 `"s_window"`。
    - 增量验证：挂一个 SSE 连接后 `POST /input`，增量帧的 `setTile` 数量应远小于 48（指针移动通常 1–2 块），且始终带 loading 批次边界。

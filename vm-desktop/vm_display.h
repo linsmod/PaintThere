@@ -8,7 +8,9 @@
 extern "C" {
 #endif
 
-#define VM_DISPLAY_MAX_COMMANDS 512
+/* 一帧的命令上限：单窗口配额 1024 × 最多 8 窗口，合成需要留足空间，
+   否则 appending 到一半失败会把排在最后的置顶窗口（任务栏）整层丢掉。 */
+#define VM_DISPLAY_MAX_COMMANDS 2048
 #define VM_DISPLAY_MAX_RESOURCES 16
 #define VM_DISPLAY_MAX_ID 64
 #define VM_DISPLAY_MAX_TEXT 256
@@ -150,6 +152,9 @@ typedef struct {
     VmDrawCommand *commands;
     int cap;
     int count;
+    /* 因容量不足被丢弃的命令数：真实需求 = count + rejected，
+       用于在画面上报告「某个窗口超了配额多少条」。 */
+    int rejected;
 } VmCmdBuffer;
 
 /* Structural diff: changed/added commands, removed ids, and full current order. */

@@ -25,8 +25,8 @@ extern "C" {
 #define VM_IPC_MAX_APPID 32
 #define VM_IPC_MAX_NAME 64
 #define VM_IPC_MAX_KEY 32
-/* 单次内容回包的命令上限，与 VM_WM_LAYER_COMMANDS 对齐。 */
-#define VM_IPC_MAX_CONTENT_COMMANDS VM_WM_LAYER_COMMANDS
+/* 单次内容回包的命令上限，与窗口层缓冲容量对齐。 */
+#define VM_IPC_MAX_CONTENT_COMMANDS VM_WM_LAYER_CAPACITY
 #define VM_IPC_MAX_PROC_ROWS (VM_IPC_MAX_APPS + 1)
 
 /* 布局请求发出后等待回包的帧数；超时标记「无响应」，继续用旧内容合成。 */

@@ -20,6 +20,8 @@ struct VmShell {
     const VmTheme *theme;
     VmShellStartHandler startHandler;
     void *startUserData;
+    /* 已处理过的按下序号：一次按下只触发一次，与重建帧数无关。 */
+    int lastDownSeq;
 };
 
 /* Clay_OnHover 只回传 void*，单进程一个任务栏，用静态回指取 wm。 */
@@ -38,8 +40,15 @@ static Clay_Dimensions shell_measure(Clay_StringSlice text, Clay_TextElementConf
 
 static void shell_item_press(Clay_ElementId id, Clay_PointerData pointerData, void *userData) {
     (void)id;
-    if (pointerData.state != CLAY_POINTER_DATA_PRESSED_THIS_FRAME) return;
+    (void)pointerData;
     if (!g_shell) return;
+    VmWm *wm = g_shell->wm;
+    if (!wm->pointerDown) return;
+    /* 按下沿由 WM 的按下序号推导，不用 Clay 的 PRESSED_THIS_FRAME：
+       后者只在有指针事件的帧推进，同一次按下会在后续重建帧里重复触发
+       （表现为「开始菜单开了立刻又关」）。 */
+    if (wm->pointerDownSeq == g_shell->lastDownSeq) return;
+    g_shell->lastDownSeq = wm->pointerDownSeq;
     /* -1 是开始按钮：回调交给宿主，shell 不打开任何窗口。 */
     intptr_t tag = (intptr_t)userData;
     if (tag < 0) {
@@ -51,6 +60,14 @@ static void shell_item_press(Clay_ElementId id, Clay_PointerData pointerData, vo
     if (!win) return;
     if (win->minimized) VmWm_Restore(g_shell->wm, wid);
     else VmWm_Focus(g_shell->wm, wid);
+}
+
+/* 窗口集合 / 焦点 / 最小化变化：条目与高亮都要立刻更新，
+   不能等每秒时钟刷新兜底（那会有最长 1 秒的不同步）。 */
+static void shell_windows_changed(VmWm *wm, void *userData) {
+    VmShell *sh = (VmShell *)userData;
+    if (!wm || !sh) return;
+    VmWm_InvalidateWindow(wm, VM_SHELL_WINDOW_ID);
 }
 
 void VmShell_SetStartHandler(VmShell *shell, VmShellStartHandler handler, void *userData) {
@@ -117,6 +134,8 @@ static Clay_RenderCommandArray shell_layout(void *userData) {
                     .padding = {8, 6, 0, 0},
                     .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
                 },
+                /* 单行 + 水平裁剪：标题比条目长时截断，不能换行撑出任务栏。 */
+                .clip = {.horizontal = true, .childOffset = {0, 0}},
                 .backgroundColor = bg,
                 .cornerRadius = CLAY_CORNER_RADIUS(5),
             }) {
@@ -127,6 +146,7 @@ static Clay_RenderCommandArray shell_layout(void *userData) {
                 };
                 CLAY_TEXT(label, CLAY_TEXT_CONFIG({
                     .fontId = 0, .fontSize = 12, .textColor = fg,
+                    .wrapMode = CLAY_TEXT_WRAP_NONE,
                 }));
             }
         }
@@ -185,6 +205,8 @@ VmShell *VmShell_Create(VmWm *wm, const VmTheme *theme, int height) {
                         VM_WIN_UNDECORATED | VM_WIN_TOPMOST | VM_WIN_PINNED | VM_WIN_NOFOCUS);
 
     g_shell = sh;
+    /* 订阅窗口集合/焦点变化：条目与高亮跟着立即更新。 */
+    VmWm_SetWindowListHandler(wm, shell_windows_changed, sh);
     return sh;
 }
 

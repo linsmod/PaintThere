@@ -50,7 +50,7 @@ void ClayFrame_AppendCommands(
         switch (rc->commandType) {
             case CLAY_RENDER_COMMAND_TYPE_RECTANGLE: {
                 VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_RECT, id);
-                if (!c) return;
+                if (!c) continue;   /* 配额溢出：VmCmdBuffer_Append 已记账，这里继续算出真实需求 */
                 c->rect = rect;
                 c->args.drawRect.rect = rect;
                 VmDisplay_CopyStr(c->args.drawRect.paint, sizeof(c->args.drawRect.paint),
@@ -61,7 +61,7 @@ void ClayFrame_AppendCommands(
             case CLAY_RENDER_COMMAND_TYPE_BORDER: {
                 Clay_BorderRenderData d = rc->renderData.border;
                 VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_BORDER, id);
-                if (!c) return;
+                if (!c) continue;   /* 配额溢出：VmCmdBuffer_Append 已记账，这里继续算出真实需求 */
                 c->rect = rect;
                 c->args.drawBorder.rect = rect;
                 VmDisplay_CopyStr(c->args.drawBorder.paint, sizeof(c->args.drawBorder.paint),
@@ -76,7 +76,7 @@ void ClayFrame_AppendCommands(
             case CLAY_RENDER_COMMAND_TYPE_TEXT: {
                 Clay_TextRenderData d = rc->renderData.text;
                 VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_TEXT, id);
-                if (!c) return;
+                if (!c) continue;   /* 配额溢出：VmCmdBuffer_Append 已记账，这里继续算出真实需求 */
                 c->rect = rect;
                 c->args.drawText.rect = rect;
                 /* Text is not null-terminated; copy into owned storage. */
@@ -96,7 +96,7 @@ void ClayFrame_AppendCommands(
             case CLAY_RENDER_COMMAND_TYPE_IMAGE: {
                 Clay_ImageRenderData d = rc->renderData.image;
                 VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_IMG, id);
-                if (!c) return;
+                if (!c) continue;   /* 配额溢出：VmCmdBuffer_Append 已记账，这里继续算出真实需求 */
                 c->rect = rect;
                 VmDisplay_CopyStr(c->args.drawImg.imgId, sizeof(c->args.drawImg.imgId),
                                   imgResolver ? imgResolver(d.imageData) : "");
@@ -108,21 +108,21 @@ void ClayFrame_AppendCommands(
             }
             case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START: {
                 VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_CLIP_PUSH, id);
-                if (!c) return;
+                if (!c) continue;   /* 配额溢出：VmCmdBuffer_Append 已记账，这里继续算出真实需求 */
                 c->rect = rect;
                 c->args.clip = rect;
                 break;
             }
             case CLAY_RENDER_COMMAND_TYPE_SCISSOR_END: {
                 VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_CLIP_POP, id);
-                if (!c) return;
+                if (!c) continue;   /* 配额溢出：VmCmdBuffer_Append 已记账，这里继续算出真实需求 */
                 c->rect = rect;
                 c->args.clip = rect;
                 break;
             }
             case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_START: {
                 VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_OVERLAY_PUSH, id);
-                if (!c) return;
+                if (!c) continue;   /* 配额溢出：VmCmdBuffer_Append 已记账，这里继续算出真实需求 */
                 c->rect = rect;
                 VmDisplay_CopyStr(c->args.paint, sizeof(c->args.paint),
                                   color_to_css(rc->renderData.overlayColor.color));
@@ -130,13 +130,13 @@ void ClayFrame_AppendCommands(
             }
             case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_END: {
                 VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_OVERLAY_POP, id);
-                if (!c) return;
+                if (!c) continue;   /* 配额溢出：VmCmdBuffer_Append 已记账，这里继续算出真实需求 */
                 c->rect = rect;
                 break;
             }
             case CLAY_RENDER_COMMAND_TYPE_CUSTOM: {
                 VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_RECT, id);
-                if (!c) return;
+                if (!c) continue;   /* 配额溢出：VmCmdBuffer_Append 已记账，这里继续算出真实需求 */
                 c->rect = rect;
                 c->args.drawRect.rect = rect;
                 VmDisplay_CopyStr(c->args.drawRect.paint, sizeof(c->args.drawRect.paint),

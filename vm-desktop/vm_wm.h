@@ -15,9 +15,14 @@ extern "C" {
 #define VM_WM_MAX_WINDOWS 8
 #define VM_WM_TITLE_HEIGHT 28
 #define VM_WM_MAX_CURSORS 16
-/* 单窗口内容配额：实测一窗口 8–30 条命令，64 留出余量；
-   超出时合成阶段置 VmWm.layerOverflow，不静默截断。 */
-#define VM_WM_LAYER_COMMANDS 64
+/* 单窗口内容缓冲的容量上限（编译期，层数组按它分配）。 */
+#define VM_WM_LAYER_CAPACITY 1024
+/* 默认单窗口命令配额。普通窗口 20–30 条，列表类窗口（ProcMan/Files）实测
+   400 条以上：配额过小会截断内容并丢掉末尾的 clipPop，未闭合的裁剪会把
+   后续窗口（任务栏在最后）整片吃掉。
+   可用环境变量 VM_WM_LAYER_QUOTA 覆盖（1..VM_WM_LAYER_CAPACITY），
+   超出时合成阶段置 VmWm.layerOverflow 并在画面上大字告警。 */
+#define VM_WM_LAYER_DEFAULT_QUOTA 1024
 
 typedef Clay_RenderCommandArray (*VmWindowLayout)(void *userData);
 /* Guest-internal key handler: return 1 if the key was consumed. */
@@ -36,14 +41,21 @@ enum {
 /* 装饰上的 × 只发关闭请求，真正移除由持有者决定。 */
 typedef void (*VmWindowCloseHandler)(int windowId, void *userData);
 
+typedef struct VmWm VmWm;
+/* 窗口集合 / 焦点 / 最小化变化后的通知。任务栏这类「列出所有窗口」的界面
+   靠它立即重建，而不是等定时刷新。回调里只允许置脏，不得增删窗口。 */
+typedef void (*VmWmWindowListHandler)(VmWm *wm, void *userData);
+
 /* 窗口内容缓冲：装饰 + 内容，坐标已是画布坐标。
    合成阶段按 z 序并入输出流，窗口因此成为可独立失效的内容单元。 */
 typedef struct {
-    VmDrawCommand commands[VM_WM_LAYER_COMMANDS];
+    VmDrawCommand commands[VM_WM_LAYER_CAPACITY];
     int count;
     int contentDirty;   /* 需要重新 layout + 重生成命令 */
     int chromeDirty;    /* 仅装饰变化（标题/边框/按钮着色） */
     uint32_t builtFrame;
+    /* 最后一次把 contentDirty 置 1 的原因（字面量，仅诊断用）。 */
+    const char *dirtyWhy;
 } VmWindowLayer;
 
 typedef struct {
@@ -80,7 +92,7 @@ typedef struct {
     time_t lastSeen;   /* updated on every input from this client */
 } VmCursor;
 
-typedef struct {
+struct VmWm {
     int width, height;
     VmWindow windows[VM_WM_MAX_WINDOWS];
     int count;
@@ -100,19 +112,39 @@ typedef struct {
     int pointerX, pointerY;
     int pointerDown;
     int pointerValid;
+    /* 每次 mousedown 递增。外壳等「不抢焦点但要点一次算一次」的窗口用它
+       做按下沿判定，不依赖 Clay 的 PRESSED_THIS_FRAME（该状态只在有指针
+       事件的帧推进，同一次按下会在后续重建帧里重复触发）。 */
+    int pointerDownSeq;
     /* 上一次指针命中的窗口：hover 态转移时旧窗口也要重建。 */
     int lastHitId;
+    /* 正在跑 layout 的窗口 id（-1 表示不在布局中）。宿主据它把「布局中作废」
+       收窄到单个窗口，而不是退化成全量作废。 */
+    int layoutWinId;
     /* 窗口装饰参数；未设置时用 VmTheme_Default()->chrome */
     VmChrome chrome;
     /* 窗口内容是否裁剪到 body 矩形（默认 1）。 */
     int contentClip;
     /* 装饰或窗口状态变化后置位，由外部帧 provider 消费。 */
     int dirty;
-    /* 某个窗口的命令超出 VM_WM_LAYER_COMMANDS，合成时有内容被截断。 */
+    /* 最后一次把 dirty 置 1 的原因（字面量，仅诊断用）。 */
+    const char *dirtyWhy;
+    /* 单窗口命令配额（运行时，来自 VM_WM_LAYER_QUOTA 或默认值）。 */
+    int quotaCommands;
+    /* 某个窗口的命令超出配额，合成时有内容被截断。 */
     int layerOverflow;
     /* 累计调用 build_one_window 的次数：验证「未脏窗口不重跑布局」的观测点。 */
     uint32_t layoutCount;
-} VmWm;
+    /* 本轮合成中超出单窗口配额的窗口（-1 表示没有）：画面上会大字告警。 */
+    int overflowWinId;
+    int overflowCount;   /* 该窗口真实需要的命令条数 = 写入数 + 被丢弃数 */
+    char overflowTitle[64];
+    /* 窗口列表变化通知（任务栏等界面订阅）。 */
+    VmWmWindowListHandler listHandler;
+    void *listUserData;
+};
+
+void VmWm_SetWindowListHandler(VmWm *wm, VmWmWindowListHandler handler, void *userData);
 
 VmWm *VmWm_Create(int width, int height);
 void VmWm_Free(VmWm *wm);
@@ -166,6 +198,10 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
 
 /* 窗口两两重叠区域的并集：z 序变化时只有这块区域显示会变。返回 1 表示存在重叠。 */
 int VmWm_OverlapUnion(VmWm *wm, VmRect *out);
+
+/* 只读诊断转储：窗口集合 / z 序 / 焦点 / 每个窗口的失效状态与原因。
+   不改变任何状态，供 guest 侧排查「谁该重建、谁没重建」。tag 用来区分调用点。 */
+void VmWm_Dump(const VmWm *wm, const char *tag);
 
 /* 光标箭头 data URL：一次性放进 resources，不随帧重复下发。 */
 const char *VmWm_CursorDataUrl(void);

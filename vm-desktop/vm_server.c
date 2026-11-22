@@ -29,7 +29,9 @@ typedef int vm_socket;
 
 #define VM_MAX_CLIENTS 16
 #define VM_RECV_BUFFER 8192
-#define VM_FRAME_BUFFER (1024 * 1024)
+/* 单帧 JSON 缓冲。窗口内容多时一帧可到几百 KB（tile 切分后每块都带命令），
+   1MB 会让整帧被静默丢弃，表现为画面整体不更新。 */
+#define VM_FRAME_BUFFER (4 * 1024 * 1024)
 
 typedef struct {
     vm_socket fd;

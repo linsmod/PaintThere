@@ -169,8 +169,9 @@ int Jpx_Button(int win, const char *id, const char *text) {
     Clay_Color base = accent(app);
     Clay_Color hover = mix(base, (Clay_Color){255, 255, 255, 255}, 0.2f);
     if (app->theme.hoverColor) hover = Jpx__Color(app->theme.hoverColor, hover);
-    int hovered = Clay_Hovered();
-    int pressed = hovered && app->wm && app->wm->pointerDown;
+    Clay_Color pressedColor = mix(base, (Clay_Color){0, 0, 0, 255}, 0.28f);
+    int down = app->wm && app->wm->pointerDown;
+    int hovered = 0;
     Clay_TextElementConfig cfg = text_config(
         app, Jpx__Color(app->theme.accentTextColor, (Clay_Color){255, 255, 255, 255}), 1, 0);
     CLAY(Jpx__Id(win, id), {
@@ -179,8 +180,9 @@ int Jpx_Button(int win, const char *id, const char *text) {
             .padding = {16, 16, 7, 7},
             .childAlignment = {CLAY_ALIGN_X_CENTER, CLAY_ALIGN_Y_CENTER},
         },
-        .backgroundColor = pressed ? mix(base, (Clay_Color){0, 0, 0, 255}, 0.28f)
-                                   : (hovered ? hover : base),
+        /* Clay_Hovered() 必须在元素声明内部求值：在 CLAY(...) 之前调用拿到的是
+           父容器的 hover，同一窗口里所有按钮会一起亮。 */
+        .backgroundColor = !Clay_Hovered() ? base : (down ? pressedColor : hover),
         .cornerRadius = CLAY_CORNER_RADIUS((float)app->theme.radius),
         .border = {.color = mix(base, (Clay_Color){0, 0, 0, 255}, 0.35f),
                    .width = CLAY_BORDER_ALL(1)},
@@ -254,11 +256,9 @@ int Jpx_TextInput(int win, const char *id, char *buf, size_t cap, size_t *len) {
     Jpx__FocusRegister(w, id, len, &slot->ed);
 
     int focused = strcmp(w->focusId, id) == 0;
-    int hovered = Clay_Hovered();
+    int hovered = 0;
     Clay_Color fgColor = fg(app);
     Clay_TextElementConfig cfg = text_config(app, fgColor, 0, 0);
-    Clay_Color edge = focused ? accent(app)
-                              : (hovered ? mix(border(app), accent(app), 0.35f) : border(app));
 
     CLAY(Jpx__Id(win, id), {
         .layout = {
@@ -271,7 +271,11 @@ int Jpx_TextInput(int win, const char *id, char *buf, size_t cap, size_t *len) {
             .childAlignment = {CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER},
         },
         .backgroundColor = Jpx__Color(app->theme.inputBgColor, (Clay_Color){18, 21, 32, 255}),
-        .border = {.color = edge, .width = CLAY_BORDER_ALL(focused ? 2 : 1)},
+        /* hover 在元素声明内判定：在 CLAY 之前取会拿到父容器的 hover。 */
+        .border = {.color = focused ? accent(app)
+                          : (Clay_Hovered() ? mix(border(app), accent(app), 0.35f)
+                                            : border(app)),
+                   .width = CLAY_BORDER_ALL(focused ? 2 : 1)},
         .cornerRadius = CLAY_CORNER_RADIUS((float)app->theme.radius),
     }) {
         hovered = Clay_Hovered();

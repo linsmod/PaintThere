@@ -30,7 +30,11 @@ VmDrawCommand *VmDisplay_Append(VmDisplayList *list, VmCmdType type, const char 
 }
 
 VmDrawCommand *VmCmdBuffer_Append(VmCmdBuffer *buf, VmCmdType type, const char *id) {
-    if (!buf || !buf->commands || buf->count >= buf->cap) return NULL;
+    if (!buf || !buf->commands) return NULL;
+    if (buf->count >= buf->cap) {
+        buf->rejected++;
+        return NULL;
+    }
     VmDrawCommand *cmd = &buf->commands[buf->count++];
     memset(cmd, 0, sizeof(*cmd));
     cmd->type = type;

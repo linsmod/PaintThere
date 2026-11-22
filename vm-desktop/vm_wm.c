@@ -25,6 +25,19 @@ VmWm *VmWm_Create(int width, int height) {
     wm->nextSeq = 0;
     wm->focusId = -1;
     wm->dragId = -1;
+    wm->layoutWinId = -1;
+    wm->overflowWinId = -1;
+    wm->quotaCommands = VM_WM_LAYER_DEFAULT_QUOTA;
+    /* 配额可由环境变量调小做压测/演示：VM_WM_LAYER_QUOTA=200 */
+    {
+        const char *quota = getenv("VM_WM_LAYER_QUOTA");
+        if (quota && *quota) {
+            int v = atoi(quota);
+            if (v < 1) v = 1;
+            if (v > VM_WM_LAYER_CAPACITY) v = VM_WM_LAYER_CAPACITY;
+            wm->quotaCommands = v;
+        }
+    }
     wm->focusClientId[0] = '\0';
     wm->chrome = VmTheme_Default()->chrome;
     wm->contentClip = 1;
@@ -32,39 +45,65 @@ VmWm *VmWm_Create(int width, int height) {
     return wm;
 }
 
+/* 置脏统一走这里：contentDirty 与「原因」一起记，dump 时能直接看出
+   某个窗口是谁弄脏的、还是根本没人弄脏。 */
+static void layer_dirty(VmWindow *win, const char *why) {
+    if (!win) return;
+    win->layer.contentDirty = 1;
+    win->layer.dirtyWhy = why;
+}
+
+static void wm_dirty(VmWm *wm, const char *why) {
+    if (!wm) return;
+    wm->dirty = 1;
+    wm->dirtyWhy = why;
+}
+
 /* 全体窗口内容作废：装饰参数或主题变了，没有哪个窗口能幸免。 */
-static void mark_all_content_dirty(VmWm *wm) {
-    for (int i = 0; i < wm->count; i++) wm->windows[i].layer.contentDirty = 1;
+static void mark_all_content_dirty(VmWm *wm, const char *why) {
+    for (int i = 0; i < wm->count; i++) layer_dirty(&wm->windows[i], why);
+}
+
+/* 窗口列表/焦点/最小化变化：通知订阅者（任务栏据此立即重建）。 */
+static void notify_window_list(VmWm *wm) {
+    if (wm && wm->listHandler) wm->listHandler(wm, wm->listUserData);
+}
+
+void VmWm_SetWindowListHandler(VmWm *wm, VmWmWindowListHandler handler, void *userData) {
+    if (!wm) return;
+    wm->listHandler = handler;
+    wm->listUserData = userData;
+    notify_window_list(wm);
 }
 
 void VmWm_SetChrome(VmWm *wm, const VmChrome *chrome) {
     if (!wm) return;
     wm->chrome = chrome ? *chrome : VmTheme_Default()->chrome;
-    mark_all_content_dirty(wm);
-    wm->dirty = 1;
+    mark_all_content_dirty(wm, "chrome");
+    wm_dirty(wm, "chrome");
 }
 
 void VmWm_SetContentClip(VmWm *wm, int enabled) {
     if (!wm) return;
     wm->contentClip = enabled ? 1 : 0;
-    mark_all_content_dirty(wm);
-    wm->dirty = 1;
+    mark_all_content_dirty(wm, "content-clip");
+    wm_dirty(wm, "content-clip");
 }
 
 /* 帧级的「有东西变了」但定位不到窗口：保守地把全部内容作废。
    能定位到窗口时用 VmWm_InvalidateWindow，只重建那一个。 */
 void VmWm_Invalidate(VmWm *wm) {
     if (!wm) return;
-    mark_all_content_dirty(wm);
-    wm->dirty = 1;
+    mark_all_content_dirty(wm, "invalidate-all");
+    wm_dirty(wm, "invalidate-all");
 }
 
 void VmWm_InvalidateWindow(VmWm *wm, int id) {
     if (!wm) return;
     VmWindow *win = VmWm_FindWindow(wm, id);
     if (!win) return;
-    win->layer.contentDirty = 1;
-    wm->dirty = 1;
+    layer_dirty(win, "invalidate-window");
+    wm_dirty(wm, "invalidate-window");
 }
 
 int VmWm_IsDirty(const VmWm *wm) {
@@ -110,8 +149,9 @@ VmWindow *VmWm_AddWindow(VmWm *wm, int id, const char *title,
     win->focused = 0;
     win->minimized = 0;
     win->flags = 0;
-    win->layer.contentDirty = 1;   /* 新窗口没有内容，首次合成必须构建 */
-    wm->dirty = 1;
+    layer_dirty(win, "new");   /* 新窗口没有内容，首次合成必须构建 */
+    wm_dirty(wm, "add-window");
+    notify_window_list(wm);
     return win;
 }
 
@@ -123,7 +163,8 @@ void VmWm_RemoveWindow(VmWm *wm, int id) {
         wm->count--;
         if (wm->focusId == id) wm->focusId = -1;
         if (wm->dragId == id) wm->dragId = -1;
-        wm->dirty = 1;
+        wm_dirty(wm, "remove-window");
+        notify_window_list(wm);
         return;
     }
 }
@@ -200,7 +241,7 @@ void VmWm_Raise(VmWm *wm, int id) {
     if (!win) return;
     win->z = wm->nextZ++;
     /* 只是前后次序变了：内容一个字没动，合成阶段按新 z 序重排即可。 */
-    wm->dirty = 1;
+    wm_dirty(wm, "raise");
 }
 
 void VmWm_Focus(VmWm *wm, int id) {
@@ -213,10 +254,12 @@ void VmWm_Focus(VmWm *wm, int id) {
     VmWm_Raise(wm, id);
     /* 焦点改变标题/边框着色与控件焦点态：旧焦点与新焦点都要重建内容。 */
     for (int i = 0; i < wm->count; i++) {
-        if (wm->windows[i].id == id || wm->windows[i].id == prev)
-            wm->windows[i].layer.contentDirty = 1;
+        if (wm->windows[i].id == id) layer_dirty(&wm->windows[i], "focus-gain");
+        else if (wm->windows[i].id == prev) layer_dirty(&wm->windows[i], "focus-lose");
     }
-    wm->dirty = 1;
+    wm_dirty(wm, "focus");
+    /* 任务栏等界面显示焦点态，必须立刻重建，不能等定时刷新兜底。 */
+    notify_window_list(wm);
 }
 
 void VmWm_SetWindowFlags(VmWm *wm, int id, unsigned flags) {
@@ -228,8 +271,8 @@ void VmWm_SetWindowFlags(VmWm *wm, int id, unsigned flags) {
         win->focused = 0;
     }
     /* 装饰性由 flags 决定（UNDECORATED 会去掉标题与边框）：内容必须重建。 */
-    win->layer.contentDirty = 1;
-    wm->dirty = 1;
+    layer_dirty(win, "flags");
+    wm_dirty(wm, "flags");
 }
 
 unsigned VmWm_WindowFlags(VmWm *wm, int id) {
@@ -283,17 +326,19 @@ void VmWm_Minimize(VmWm *wm, int id) {
     win->minimized = 1;
     if (wm->focusId == id) { wm->focusId = -1; win->focused = 0; }
     if (wm->dragId == id) wm->dragId = -1;
-    win->layer.contentDirty = 1;   /* 失焦会改标题着色 */
-    wm->dirty = 1;
+    layer_dirty(win, "minimize");   /* 失焦会改标题着色 */
+    wm_dirty(wm, "minimize");
+    notify_window_list(wm);
 }
 
 void VmWm_Restore(VmWm *wm, int id) {
     VmWindow *win = VmWm_FindWindow(wm, id);
     if (!win) return;
     win->minimized = 0;
-    win->layer.contentDirty = 1;
+    layer_dirty(win, "restore");
     if (!(win->flags & VM_WIN_NOFOCUS)) VmWm_Focus(wm, id);
-    wm->dirty = 1;
+    wm_dirty(wm, "restore");
+    notify_window_list(wm);
 }
 
 int VmWm_IsMinimized(VmWm *wm, int id) {
@@ -312,8 +357,8 @@ void VmWm_Move(VmWm *wm, int id, int x, int y) {
     win->x = x;
     win->y = y;
     /* 内容命令在生成时就带了 body 偏移，位置一变每条坐标都过期：必须重建。 */
-    win->layer.contentDirty = 1;
-    wm->dirty = 1;
+    layer_dirty(win, "move");
+    wm_dirty(wm, "move");
 }
 
 void VmWm_KeyModifiers(VmWm *wm, int *ctrl, int *shift, int *alt) {
@@ -457,7 +502,10 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
         wm->pointerY = y;
         wm->pointerValid = 1;
     }
-    if (isDown) wm->pointerDown = 1;
+    if (isDown) {
+        wm->pointerDown = 1;
+        wm->pointerDownSeq++;   /* 一次按下只算一次，供外壳做按下沿判定 */
+    }
     if (isUp) wm->pointerDown = 0;
 
     VmWindow *hit = VmWm_HitTest(wm, x, y);
@@ -467,10 +515,10 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
         int hitId = hit ? hit->id : -1;
         if (wm->lastHitId != hitId) {
             VmWindow *prevHit = VmWm_FindWindow(wm, wm->lastHitId);
-            if (prevHit) prevHit->layer.contentDirty = 1;
+            if (prevHit) layer_dirty(prevHit, "hit-leave");
             wm->lastHitId = hitId;
         }
-        if (hit) hit->layer.contentDirty = 1;
+        if (hit) layer_dirty(hit, "hit");
     }
     /* Focus arbitration: window state changes only from the owning client.
        A mousedown from any client claims ownership first. */
@@ -484,7 +532,7 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
         chrome_button_rects(wm, hit, &closeRect, &minRect, &size);
         if (size > 0 && rect_contains(closeRect, x, y)) {
             if (hit->closeHandler) hit->closeHandler(hit->id, hit->closeUserData);
-            wm->dirty = 1;
+            wm_dirty(wm, "close-button");
             sync_pointer_state(wm);
             return 1;
         }
@@ -553,10 +601,10 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     if (isMove || isDown || isUp || isWheel ||
         strcmp(kind, "keydown") == 0 || strcmp(kind, "keyup") == 0) {
         /* 键盘只可能改变焦点窗口的内容（输入文本、caret、控件描边）。 */
-        if (focus) focus->layer.contentDirty = 1;
-        wm->dirty = 1;
+        if (focus) layer_dirty(focus, "input-focus");
+        wm_dirty(wm, "input");
     }
-    if (changed) wm->dirty = 1;
+    if (changed) wm_dirty(wm, "input-changed");
     return changed;
 }
 
@@ -638,8 +686,11 @@ static void append_clip_cmd(VmCmdBuffer *out, VmCmdType type, const char *id, Vm
     c->args.clip = r;
 }
 
-static void build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
-                             const VmChrome *ch, const char *(*fontResolver)(uint16_t)) {
+/* 返回 1 表示超配额。超限时整段内容被替换为纯色块 + 提示文字，
+   needOut 给出该窗口真实需要的命令条数（写入数 + 被丢弃数）。 */
+static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
+                            const VmChrome *ch, const char *(*fontResolver)(uint16_t),
+                            int *needOut) {
     char idbuf[64];
     VmRect body;
     VmWm_WindowBody(wm, win, &body);
@@ -711,28 +762,67 @@ static void build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
 
     /* 窗口内容裁到 body：防止控件溢出画到别的窗口上。 */
     int clipped = wm->contentClip && win->layout && bodyW > 0 && bodyH > 0;
+    int decorCount = out->count;   /* 装饰命令到此为止，截断时回退到这里 */
     if (clipped) {
         snprintf(idbuf, sizeof(idbuf), "w%d_clip", win->id);
         append_clip_cmd(out, VM_CMD_CLIP_PUSH, idbuf, body);
     }
 
+    int truncated = 0;
     if (win->layout && win->clayCtx) {
         Clay_SetCurrentContext(win->clayCtx);
+        /* 让宿主知道「当前在跑谁的布局」：布局回调里发的作废能收窄到这一个窗口，
+           而不是退化成全量作废（任务栏这类非 JPX 窗口尤其需要）。 */
+        int prevLayout = wm->layoutWinId;
+        wm->layoutWinId = win->id;
         Clay_RenderCommandArray cmds = win->layout(win->userData);
         ClayFrame_AppendCommands(out, cmds.internalArray, cmds.length,
                                  bodyX, bodyY, fontResolver, NULL);
+        truncated = (out->count >= out->cap);
+        wm->layoutWinId = prevLayout;
+    }
+
+    if (truncated) {
+        /* 超配额：整段内容丢弃，改画纯色块 + 一行字。
+           这样层里没有半截裁剪，绝不会把后面的窗口（任务栏）裁掉。
+           简单优先：宁可这个窗口显示「超了」，也不让它影响别人。 */
+        int need = out->count + out->rejected;
+        if (needOut) *needOut = need;
+        out->count = decorCount;
+        out->rejected = 0;
+
+        snprintf(idbuf, sizeof(idbuf), "w%d_over", win->id);
+        append_rect_cmd(out, idbuf, bodyX, bodyY, bodyW, bodyH, "rgba(150,24,48,1)", 0);
+
+        char msg[128];
+        snprintf(msg, sizeof(msg), "配额超了 %d 条", need - wm->quotaCommands);
+        int fs = 20;
+        int tw = VmFont_Width(ch->titleFontId, fs, msg, -1);
+        if (tw <= 0) tw = (int)strlen(msg) * (fs / 2);
+        int lh = VmFont_LineHeight(ch->titleFontId, fs);
+        if (lh <= 0) lh = fs;
+        int tx = bodyX + (bodyW - tw) / 2;
+        int ty = bodyY + (bodyH - lh) / 2;
+        if (tx < bodyX) tx = bodyX;
+        if (ty < bodyY) ty = bodyY;
+        snprintf(idbuf, sizeof(idbuf), "w%d_overtext", win->id);
+        append_text_cmd(out, idbuf, tx, ty, tw, lh, msg, ch->titleFontId, fs,
+                        "rgba(255,255,255,1)");
+        return 1;
     }
 
     if (clipped) {
         snprintf(idbuf, sizeof(idbuf), "w%d_clip_end", win->id);
         append_clip_cmd(out, VM_CMD_CLIP_POP, idbuf, body);
     }
+    return 0;
 }
 
-/* 把一条窗口图层并入输出流；容量不足返回 0，由调用方置 overflow。 */
-static int append_layer(VmDisplayList *out, const VmWindowLayer *layer) {
+/* 把一条窗口图层并入输出流；容量不足返回 0，由调用方置 overflow。
+   cap 由调用方给：告警帧会给横幅预留两条，不能把整帧塞死。 */
+static int append_layer(VmDisplayList *out, const VmWindowLayer *layer, int cap) {
     if (!layer || layer->count <= 0) return 1;
-    if (out->count + layer->count > VM_DISPLAY_MAX_COMMANDS) return 0;
+    if (out->count + layer->count > cap) return 0;
     memcpy(&out->commands[out->count], layer->commands,
            (size_t)layer->count * sizeof(VmDrawCommand));
     out->count += layer->count;
@@ -744,25 +834,62 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
     if (!wm || !out) return;
     const VmChrome *ch = &wm->chrome;
 
-    /* 阶段 1：只为脏窗口重建内容 —— 唯一接触 Clay 的地方。 */
+    /* 阶段 1：只为脏窗口重建内容 —— 唯一接触 Clay 的地方。
+       超限信息每帧重算，但只在「溢出窗口自己没被重建」时沿用上一帧：
+       它没重建，说明内容没变，告警不该消失。 */
+    int prevOverflowWin = wm->overflowWinId;
+    int prevOverflowCount = wm->overflowCount;
+    char prevOverflowTitle[64];
+    snprintf(prevOverflowTitle, sizeof(prevOverflowTitle), "%s", wm->overflowTitle);
+    int rebuiltIds[VM_WM_MAX_WINDOWS];
+    int rebuiltCount = 0;
+    wm->overflowWinId = -1;
+    wm->overflowCount = 0;
+    wm->overflowTitle[0] = '\0';
     for (int i = 0; i < wm->count; i++) {
         VmWindow *win = &wm->windows[i];
         VmWindowLayer *layer = &win->layer;
         if (!layer->contentDirty && !layer->chromeDirty) continue;
+        if (rebuiltCount < VM_WM_MAX_WINDOWS) rebuiltIds[rebuiltCount++] = win->id;
         wm->layoutCount++;
-        VmCmdBuffer buf = {layer->commands, VM_WM_LAYER_COMMANDS, 0};
-        build_one_window(wm, &buf, win, ch, fontResolver);
+        VmCmdBuffer buf = {layer->commands, wm->quotaCommands, 0, 0};
+        int need = 0;
+        int truncated = build_one_window(wm, &buf, win, ch, fontResolver, &need);
         layer->count = buf.count;
-        /* 写满说明该窗口内容超出配额，帧里会缺命令：显式记录，不静默通过。 */
-        if (buf.count >= VM_WM_LAYER_COMMANDS) wm->layerOverflow = 1;
+        /* 超出配额：内容已被替换成纯色块 + 提示，这里只记录与告警。 */
+        if (truncated) {
+            wm->layerOverflow = 1;
+            if (need > wm->overflowCount) {
+                wm->overflowCount = need;
+                wm->overflowWinId = win->id;
+                snprintf(wm->overflowTitle, sizeof(wm->overflowTitle), "%s",
+                         win->title ? win->title : "");
+            }
+        }
         layer->contentDirty = 0;
         layer->chromeDirty = 0;
+        layer->dirtyWhy = NULL;
         layer->builtFrame = frameId;
+    }
+
+    /* 上一帧的溢出窗口本帧没被重建，说明内容没变：沿用，告警不闪。
+       它若被重建了，本帧的结果（可能已不溢出）才是准的。 */
+    if (wm->overflowWinId < 0 && prevOverflowWin >= 0) {
+        int touched = 0;
+        for (int k = 0; k < rebuiltCount; k++) {
+            if (rebuiltIds[k] == prevOverflowWin) { touched = 1; break; }
+        }
+        if (!touched) {
+            wm->overflowWinId = prevOverflowWin;
+            wm->overflowCount = prevOverflowCount;
+            snprintf(wm->overflowTitle, sizeof(wm->overflowTitle), "%s", prevOverflowTitle);
+        }
     }
 
     /* 阶段 2：按 z 序合并 —— 纯命令拷贝，不再跑任何布局。 */
     VmDisplay_Clear(out);
     out->frameId = frameId;
+    const int frameCap = VM_DISPLAY_MAX_COMMANDS;
     for (int pass = 0; pass < 2; pass++) {
         int wantTop = pass;
         for (int z = 1; z < wm->nextZ; z++) {
@@ -771,7 +898,7 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
                 if (win->z != z || win->minimized) continue;
                 int top = (win->flags & VM_WIN_TOPMOST) ? 1 : 0;
                 if (top != wantTop) continue;
-                if (!append_layer(out, &win->layer)) wm->layerOverflow = 1;
+                if (!append_layer(out, &win->layer, frameCap)) wm->layerOverflow = 1;
             }
         }
     }
@@ -816,4 +943,42 @@ int VmWm_OverlapUnion(VmWm *wm, VmRect *out) {
         }
     }
     return found;
+}
+
+/* 只读诊断转储：一行汇总 + 一行一窗口，字段固定，便于 grep / diff 两次快照。
+   dirty 为 0 且 built 停在旧帧号的窗口，就是「该重建却没人重建」的对象。 */
+void VmWm_Dump(const VmWm *wm, const char *tag) {
+    if (!wm) return;
+    printf("[wm] %s n=%d focus=%d nextZ=%d layout=%u overflow=%d over={id=%d need=%d \"%s\"} "
+           "dirty=%d(%s) ptr=(%d,%d) down=%d lastHit=%d\n",
+           tag ? tag : "-", wm->count, wm->focusId, wm->nextZ, wm->layoutCount,
+           wm->layerOverflow, wm->overflowWinId, wm->overflowCount, wm->overflowTitle,
+           wm->dirty, wm->dirtyWhy ? wm->dirtyWhy : "-",
+           wm->pointerX, wm->pointerY, wm->pointerDown, wm->lastHitId);
+    for (int i = 0; i < wm->count; i++) {
+        const VmWindow *w = &wm->windows[i];
+        printf("[wm]   id=%-5d z=%-2d seq=%-2d flags=0x%02x f=%d min=%d cmds=%-3d "
+               "dirty=%d(%-15s) built=%-4u rect=(%d,%d,%d,%d) \"%s\"\n",
+               w->id, w->z, w->createdSeq, w->flags, w->focused, w->minimized,
+               w->layer.count, w->layer.contentDirty,
+               w->layer.dirtyWhy ? w->layer.dirtyWhy : "-",
+               w->layer.builtFrame, w->x, w->y, w->w, w->h, w->title ? w->title : "");
+        /* 命令条数偏多时给出类型分布：一眼分辨「内容行太多」还是「装饰重复」。 */
+        if (w->layer.count > 40) {
+            int nRect = 0, nText = 0, nBorder = 0, nClip = 0;
+            for (int k = 0; k < w->layer.count; k++) {
+                switch (w->layer.commands[k].type) {
+                    case VM_CMD_DRAW_RECT: nRect++; break;
+                    case VM_CMD_DRAW_TEXT: nText++; break;
+                    case VM_CMD_DRAW_BORDER: nBorder++; break;
+                    case VM_CMD_CLIP_PUSH:
+                    case VM_CMD_CLIP_POP: nClip++; break;
+                    default: break;
+                }
+            }
+            printf("[wm]     cmds rect=%d text=%d border=%d clip=%d\n",
+                   nRect, nText, nBorder, nClip);
+        }
+    }
+    fflush(stdout);
 }

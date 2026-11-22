@@ -28,9 +28,22 @@ void Jpx__Invalidate(JpxApp *app) {
     if (!app) return;
     app->dirty = 1;
     /* layout 期间知道是哪个窗口在动，只作废它；否则（主题、标题这类
-       影响面不确定的操作）只能保守地全量作废。 */
-    if (app->layoutWinId > 0) VmWm_InvalidateWindow(app->wm, app->layoutWinId);
+       影响面不确定的操作）只能保守地全量作废。
+       用 WM 记录的 layoutWinId：外壳任务栏不是 JPX 窗口，JPX 自己记不到。 */
+    if (app->wm && app->wm->layoutWinId > 0)
+        VmWm_InvalidateWindow(app->wm, app->wm->layoutWinId);
     else VmWm_Invalidate(app->wm);
+}
+
+/* 诊断开关：JPX_TRACE=1 时在输入处理与每帧合成后各转储一次 WM 状态。
+   只读一次环境变量，关闭时几乎零开销。 */
+static int trace_on(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *v = getenv("JPX_TRACE");
+        cached = (v && *v && strcmp(v, "0") != 0) ? 1 : 0;
+    }
+    return cached;
 }
 
 static unsigned long long jpx_now_ms(void) {
@@ -128,6 +141,8 @@ static const char *frame_provider(void *userData, unsigned int *frameId) {
     *frameId = app->frameId++;
     free(app->tilesJson);
     app->tilesJson = build_tiles(app, 0);
+    /* 合成之后的窗口状态：built=<frameId> 表示这一帧重建过，dirty=1 表示还有遗留。 */
+    if (trace_on()) VmWm_Dump(app->wm, "after-build");
     /* 诊断：这一帧重跑了几个窗口的布局。正常应只 +1（被作废的那个），
        若一次 +窗口总数说明失效又被放大成全量。 */
     if (app->opt.logLevel >= 2) {
@@ -156,6 +171,8 @@ static void input_handler(const char *body, size_t length, void *userData) {
                (int)(length > 160 ? 160 : length), body);
         fflush(stdout);
     }
+    /* 输入之后的窗口状态：谁被作废、因何作废、任务栏在不在作废名单里。 */
+    if (trace_on()) VmWm_Dump(app->wm, "after-input");
 }
 
 /* caret 闪烁：仅有聚焦控件时才翻相位并出帧，否则保持空闲零帧。 */

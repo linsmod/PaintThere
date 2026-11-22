@@ -125,6 +125,7 @@ Clay RenderCommandArray
 - guest 先用 `VmWm_BuildFrame` 产出按 z 序排好的全局坐标完整帧，再由 `vm_tiles.c` 切到各 tile：只纳入与 tile 相交的绘制命令，`clip`/`overlay` 成对保留，`loadImg` 走 resources。按命令签名做差异，只发变化的 tile。
 - 桌面背景仍由客户端本地 draw program 绘制在独立 `bg` canvas；tile 画布透明叠在上面，因此不随每帧重发背景。
 - 光标资源通过 `resources` 事件一次性下发 `loadImg('cursor', dataUrl)`；每帧只发 `drawImg` 引用 imgId。
+- 容量控制：客户端槽位满时服务端仍接受连接，回一条 `event: control` / `data: {"op":"serverFull","retryMs":2000}` 后立即断开；客户端按 `retryMs` 退避重连，不允许连接挂在 backlog 上空等。
 
 ## Clay 命令映射
 

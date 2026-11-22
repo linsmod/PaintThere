@@ -31,7 +31,7 @@
 - `showLoading` / `hideLoading`：成对包裹一批 `setTile`。`showLoading` 后暂停 present 并画遮罩；`hideLoading` 时一次性把所有 tile 贴到主画布。
 - 删除 `VmOps` 的 `create/bind/clear/clearScreen/composite`；`app.js` 的 `setDrawTarget` 仅作为前端内部渲染机制保留，不再是协议概念。
 - 资源（`definePattern` / `defineStyle` / `defineDrawProgram` / `startDrawProgram` / `loadImg` 光标）仍走 `event: resources`。
-- 帧率策略不变：无变化不出帧；新连接先 resources + fullframe；`/redraw` 触发全量重发。
+- 帧率策略不变：无变化不出帧；新连接先 resources + fullframe。字体位图/图片解码就绪后由前端用 tile 命令快照本地重放，不触发服务端重发。
 
 ## 实现步骤
 
@@ -58,11 +58,12 @@
 - `demo_wm.c`：删除旧 `DemoWindowLayer` / `BuildOps`；改用 `VmWm_BuildFrame` + `VmTileGrid_Build`。
 - 光标 SVG 资源移入 `BuildResources`；`vm_wm.c` 新增 `VmWm_CursorDataUrl()` 提供 data URL，`append_cursor_commands` 不再逐帧发 `loadImg`。
 - 删除 `VmWm_BuildWindowLayer` / `VmWm_BuildCursorLayer`（本轮引入且已无用）。
-- `FrameProvider` 仍按 `g_dirty` 自适应；`FullFrameProvider` / `RedrawHandler` 保留。
+- `FrameProvider` 仍按 `g_dirty` 自适应；`FullFrameProvider` 保留供新客户端建立基线；`/redraw` 端点与 `VmRedrawHandler` 已删除。
 
 ### 4. 前端（`assets/vm_renderer.js`、`assets/app.js`）
 
 - `vm_renderer.js`：删除 `layers` / `registerLayer` / 旧 `execOps`；新增 tile 管理：`config` 创建 48 个小 canvas，`setTile` 清空并以 `setDrawTarget(tileCtx)` 执行 cmds，`showLoading` 画遮罩并暂停 present，`hideLoading` 调 `present`（清主画布后按 index 贴所有 tile）。
+- `tileCmds` 保存每块最后一份命令快照；字体/图片就绪回调经 `scheduleReplay` 合并到一次 rAF，重画受影响的 tile 后按需 present，不再 POST `/redraw`。
 - 无 `showLoading/hideLoading` 的帧在末尾兜底 present。
 - `__vmRenderer` 增 `tiles` / `loading` 字段，便于宿主探针验证。
 - `app.js`：`loadImg` 图片 onload 后触发 `textNeedsReplay()`，否则资源-only 的光标要等到下一次状态变化才出现；更新 `setDrawTarget` 注释，不再提「层绑定」。
@@ -101,6 +102,8 @@ gcc -std=c11 -I"H:\github_repos\clay" -I. demo_wm.c clay_frame_adapter.c vm_disp
 - [x] 4 前端：`vm_renderer.js` 管理 48 个小画布与 loading 批次；`app.js` 图片就绪触发重放。
 - [x] 5 文档：设计、任务、工作流与三份索引已更新。
 - [x] 6 验证：gcc 构建通过；SSE fullframe 含 48 块 + loading 边界；指针移动增量帧仅 1–2 块；浏览器 48 tiles、焦点蓝灰互换、光标着色、console 无错误，截图 `temp/wm_tiles_focus.png`。
+- [x] 7 `/redraw` 移除：用户指出该设计责任倒置、全局广播、自激冗余且无自愈；改为前端保存 tile 命令快照，资源就绪后合并到本地 rAF 重放。服务端删除 `POST /redraw` 与 `VmRedrawHandler`。
+- [x] 8 槽位满处理：用户指出新连接挂起不可接受。`vm_accept` 在槽位满时也 accept，回 `event: control` / `{"op":"serverFull","retryMs":2000}` 后断开；前端收到后关闭 EventSource 并退避重连。
 
 ## 已知限制
 

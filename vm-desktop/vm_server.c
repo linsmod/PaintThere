@@ -53,8 +53,6 @@ struct VmServer {
     void *resourceUserData;
     VmFullFrameProvider fullFrameProvider;
     void *fullFrameUserData;
-    VmRedrawHandler redrawHandler;
-    void *redrawUserData;
     unsigned int currentFrameId;
     char currentFrame[VM_FRAME_BUFFER];
     int hasFrame;
@@ -494,14 +492,6 @@ static void vm_handle_request(VmServer *s, VmClient *client) {
         return;
     }
 
-    if (strcmp(method, "POST") == 0 && strcmp(path, "/redraw") == 0) {
-        if (s->redrawHandler) s->redrawHandler(s->redrawUserData);
-        vm_send_response(client->fd, 200, "OK", "application/json", "{\"ok\":true}", 11);
-        VM_CLOSE(client->fd);
-        client->fd = VM_INVALID;
-        return;
-    }
-
     if (strcmp(method, "POST") == 0 && strcmp(path, "/input") == 0) {
         char *body = headerEnd + 4;
         size_t bodyLen = client->recvLen - (size_t)(body - req);
@@ -533,21 +523,41 @@ static void vm_handle_request(VmServer *s, VmClient *client) {
     client->fd = VM_INVALID;
 }
 
+/* 客户端槽位满时仍要 accept：否则连接留在 backlog 里，对端一直空等。
+   回一条专用控制事件并立刻断开，客户端按 retryMs 退避重连。 */
+static void vm_reject_full(vm_socket fd) {
+    static const char body[] = "{\"op\":\"serverFull\",\"retryMs\":2000}";
+    char resp[512];
+    int n = snprintf(resp, sizeof(resp),
+                     "HTTP/1.1 200 OK\r\n"
+                     "Content-Type: text/event-stream\r\n"
+                     "Cache-Control: no-cache\r\n"
+                     "Connection: close\r\n\r\n"
+                     "event: control\ndata: %s\n\n",
+                     body);
+    if (n > 0) vm_send_all(fd, resp, (size_t)n);
+    VM_CLOSE(fd);
+}
+
 static void vm_accept(VmServer *s) {
+    int slot = -1;
     for (int i = 0; i < VM_MAX_CLIENTS; i++) {
-        if (s->clients[i].fd != VM_INVALID) continue;
-        struct sockaddr_in addr;
+        if (s->clients[i].fd == VM_INVALID) { slot = i; break; }
+    }
+    struct sockaddr_in addr;
 #ifdef _WIN32
-        int addrLen = sizeof(addr);
+    int addrLen = sizeof(addr);
 #else
-        socklen_t addrLen = sizeof(addr);
+    socklen_t addrLen = sizeof(addr);
 #endif
-        vm_socket fd = accept(s->listenFd, (struct sockaddr *)&addr, &addrLen);
-        if (fd == VM_INVALID) return;
-        memset(&s->clients[i], 0, sizeof(s->clients[i]));
-        s->clients[i].fd = fd;
+    vm_socket fd = accept(s->listenFd, (struct sockaddr *)&addr, &addrLen);
+    if (fd == VM_INVALID) return;
+    if (slot < 0) {
+        vm_reject_full(fd);
         return;
     }
+    memset(&s->clients[slot], 0, sizeof(s->clients[slot]));
+    s->clients[slot].fd = fd;
 }
 
 VmServer *VmServer_Create(unsigned short port, const char *webRoot) {
@@ -618,12 +628,6 @@ void VmServer_SetFullFrameProvider(VmServer *s, VmFullFrameProvider provider, vo
     if (!s) return;
     s->fullFrameProvider = provider;
     s->fullFrameUserData = userData;
-}
-
-void VmServer_SetRedrawHandler(VmServer *s, VmRedrawHandler handler, void *userData) {
-    if (!s) return;
-    s->redrawHandler = handler;
-    s->redrawUserData = userData;
 }
 
 static void vm_poll_frames(VmServer *s) {

@@ -17,7 +17,6 @@
 static VmWm *g_wm;
 static unsigned int g_frameId;
 static int g_dirty = 1;   /* adaptive frame rate: only publish on change */
-static int g_forceFull = 0; /* 下一次出帧必须是全量（新客户端/字体就绪） */
 static char *g_resourcesJson = NULL;
 static char *g_tilesJson = NULL;
 static char *g_fullTilesJson = NULL;
@@ -231,16 +230,8 @@ static const char *FrameProvider(void *userData, unsigned int *frameId) {
     g_dirty = 0;
     *frameId = g_frameId++;
     free(g_tilesJson);
-    g_tilesJson = BuildTiles(g_forceFull);
-    g_forceFull = 0;
+    g_tilesJson = BuildTiles(0);
     return g_tilesJson;
-}
-
-/* 客户端请求整屏重绘（字体就绪、tile 内容丢失等情况）。 */
-static void RedrawHandler(void *userData) {
-    (void)userData;
-    g_forceFull = 1;
-    g_dirty = 1;
 }
 
 static const char *FullFrameProvider(void *userData) {
@@ -285,7 +276,6 @@ int main(int argc, char **argv) {
     VmServer_SetInputHandler(server, InputHandler, NULL);
     VmServer_SetResourceProvider(server, ResourceProvider, NULL);
     VmServer_SetFullFrameProvider(server, FullFrameProvider, NULL);
-    VmServer_SetRedrawHandler(server, RedrawHandler, NULL);
 
     printf("WM demo on http://127.0.0.1:%u/ (two windows, focus + drag)\n", port);
     fflush(stdout);

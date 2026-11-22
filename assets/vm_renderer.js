@@ -18,11 +18,10 @@ const INPUT_URL = `${BASE}/input`;
 
 window.__vmRenderer = { ready: false, frames: 0, resources: 0, tiles: 0, loading: false, error: '' };
 
-// 文本光栅化是异步的：首帧可能还没位图，就绪后请服务端重发一次全量合成。
-function requestRedraw() {
-  fetch('/redraw', { method: 'POST' }).catch(() => {});
-}
-setTextNeedsReplay(requestRedraw);
+// 字体位图与图片解码是异步的：就绪后由本地重放受影响的 tile，不惊动服务端。
+// boot() 建立 tile 状态后接入真正的重放函数；此前的就绪通知由首次重放兜底。
+let replaySink = null;
+setTextNeedsReplay(() => { if (replaySink) replaySink(); });
 
 async function boot() {
   const stage = document.createElement('div');
@@ -74,6 +73,7 @@ async function boot() {
   /* Remote tiles：网格由 WM 指令下发，前端只管理远端小画布并按 index 贴齐。
      窗口、图层、z 序与脏区都不在协议里。 */
   const tileCanvases = [];
+  const tileCmds = [];
   let grid = null;
 
   const configTiles = (op) => {
@@ -82,6 +82,7 @@ async function boot() {
         grid.tileW === op.tileW && grid.tileH === op.tileH && tileCanvases.length === total) return;
     grid = { cols: op.cols, rows: op.rows, tileW: op.tileW, tileH: op.tileH, w: op.w, h: op.h };
     tileCanvases.length = 0;
+    tileCmds.length = 0;
     for (let i = 0; i < total; i++) {
       const tile = document.createElement('canvas');
       tile.width = op.tileW;
@@ -101,17 +102,42 @@ async function boot() {
     window.__vmRenderer.tiles = tileCanvases.length;
   };
 
-  const setTile = (op) => {
-    const tile = tileCanvases[op.index];
+  const drawTile = (index, cmds) => {
+    const tile = tileCanvases[index];
     if (!tile) return;
     const tctx = tile.getContext('2d');
     tctx.clearRect(0, 0, tile.width, tile.height);
     setDrawTarget(tctx);
-    for (const c of (op.cmds || [])) {
+    for (const c of cmds) {
       const fn = commandHandlers[c.cmd];
       if (fn) { try { fn(...c.args); } catch (e) { console.error('cmd failed:', c.cmd, e); } }
     }
   };
+
+  const setTile = (op) => {
+    tileCmds[op.index] = op.cmds || [];
+    drawTile(op.index, tileCmds[op.index]);
+  };
+
+  // 多个资源同时就绪时合并为一次重放；批次未结束时不提前贴屏。
+  let replayQueued = false;
+  const replayTiles = () => {
+    if (!grid) return;
+    for (let i = 0; i < tileCanvases.length; i++) {
+      if (tileCmds[i]) drawTile(i, tileCmds[i]);
+    }
+    if (!window.__vmRenderer.loading) present();
+  };
+  const scheduleReplay = () => {
+    if (replayQueued) return;
+    replayQueued = true;
+    requestAnimationFrame(() => {
+      replayQueued = false;
+      replayTiles();
+    });
+  };
+  replaySink = scheduleReplay;
+  scheduleReplay();
 
   const showLoading = () => {
     cvCtx.save();
@@ -144,35 +170,55 @@ async function boot() {
     if (!batched) present();
   };
 
-  const es = new EventSource(EVENTS_URL);
-  es.addEventListener('resources', (e) => {
-    try {
-      const list = JSON.parse(e.data);
-      for (const c of list) {
-        const fn = commandHandlers[c.cmd];
-        if (fn) fn(...c.args);
-      }
-      replayBackgroundPrograms();
-      window.__vmRenderer.resources += list.length;
-    } catch (err) { window.__vmRenderer.error = 'resource: ' + err; }
-  });
-  es.addEventListener('fullframe', (e) => {
-    try {
-      const f = JSON.parse(e.data);
-      if (Array.isArray(f.ops)) execOps(f.ops);
-      window.__vmRenderer.frames++;
-    } catch (err) { window.__vmRenderer.error = 'fullframe: ' + err; }
-  });
-  es.onmessage = (e) => {
-    try {
-      const f = JSON.parse(e.data);
-      if (Array.isArray(f.ops)) {
-        execOps(f.ops);
+  let reconnectTimer = 0;
+  const connectEvents = () => {
+    clearTimeout(reconnectTimer);
+    window.__vmRenderer.error = '';
+    const source = new EventSource(EVENTS_URL);
+    let rejected = false;
+
+    source.addEventListener('resources', (e) => {
+      try {
+        const list = JSON.parse(e.data);
+        for (const c of list) {
+          const fn = commandHandlers[c.cmd];
+          if (fn) fn(...c.args);
+        }
+        replayBackgroundPrograms();
+        window.__vmRenderer.resources += list.length;
+      } catch (err) { window.__vmRenderer.error = 'resource: ' + err; }
+    });
+    source.addEventListener('fullframe', (e) => {
+      try {
+        const f = JSON.parse(e.data);
+        if (Array.isArray(f.ops)) execOps(f.ops);
         window.__vmRenderer.frames++;
-      }
-    } catch (err) { window.__vmRenderer.error = 'frame: ' + err; }
+      } catch (err) { window.__vmRenderer.error = 'fullframe: ' + err; }
+    });
+    source.addEventListener('control', (e) => {
+      try {
+        const c = JSON.parse(e.data);
+        if (c.op !== 'serverFull') return;
+        rejected = true;
+        source.close();
+        window.__vmRenderer.error = 'serverFull';
+        reconnectTimer = setTimeout(connectEvents, Math.max(500, c.retryMs || 2000));
+      } catch (err) { /* 控制事件解析失败时交给 EventSource 自身重连 */ }
+    });
+    source.onmessage = (e) => {
+      try {
+        const f = JSON.parse(e.data);
+        if (Array.isArray(f.ops)) {
+          execOps(f.ops);
+          window.__vmRenderer.frames++;
+        }
+      } catch (err) { window.__vmRenderer.error = 'frame: ' + err; }
+    };
+    source.onerror = () => {
+      if (!rejected) window.__vmRenderer.error = 'SSE disconnected';
+    };
   };
-  es.onerror = () => { window.__vmRenderer.error = 'SSE disconnected'; };
+  connectEvents();
 
   let cid = null;
   try { cid = sessionStorage.getItem('vmCid'); } catch (e) { /* 无存储环境 */ }

@@ -4,10 +4,12 @@
 
 #include "jpx/jpx.h"
 #include "vm_sys.h"
+#include "vm_fs.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 static JpxApp *g_app;
 
@@ -38,10 +40,19 @@ typedef struct {
     unsigned long long sampleMs;
 } ProcState;
 
+/* Files 的数据源。目录扫描很快，不需要定时器：进入目录或点刷新时采样即可。 */
+typedef struct {
+    char path[VM_FS_PATH_MAX];
+    VmFsEntry rows[VM_FS_MAX_ENTRIES];
+    int count;
+    int total;
+} FilesState;
+
 static WindowAState g_a;
 static WindowBState g_b;
 static WindowCState g_c;
 static ProcState g_procs;
+static FilesState g_files;
 
 /* 输入框已接管可打印键与编辑键；这里只收控件未消费的键（Enter 等）。 */
 static int on_key(int winId, const char *key, const char *code, int isDown,
@@ -190,6 +201,100 @@ static void layout_d(int win, void *user) {
     Jpx_ListEnd(win);
 }
 
+static void files_refresh(FilesState *st) {
+    st->count = VmFs_ListDir(st->path, st->rows, VM_FS_MAX_ENTRIES, &st->total);
+}
+
+static void files_enter(FilesState *st, const char *name) {
+    char next[VM_FS_PATH_MAX];
+    int n = snprintf(next, sizeof(next), "%s/%s", st->path, name);
+    if (n <= 0 || n >= VM_FS_PATH_MAX) return;
+    snprintf(st->path, sizeof(st->path), "%s", next);
+    files_refresh(st);
+}
+
+static void files_up(FilesState *st) {
+    char *slash = strrchr(st->path, '/');
+    if (!slash) slash = strrchr(st->path, '\\');
+    if (!slash) return;
+    if (slash == st->path) st->path[1] = '\0';
+    else *slash = '\0';
+    files_refresh(st);
+}
+
+/* Files：名称 / 大小 / 修改日期 / [打开]。和 ProcMan 一样只格式化可见行，
+   Windows 下目录项名字经 UTF-16 -> UTF-8 转换后直接显示中文。 */
+static void layout_e(int win, void *user) {
+    FilesState *st = (FilesState *)user;
+    static char header[VM_FS_PATH_MAX + 64];
+    static char cells[24][3][VM_FS_NAME_MAX + 32];
+    static const char *cols[3];
+
+    const char *tail = st->path;
+    int pathLen = (int)strlen(tail);
+    if (pathLen > 56) tail += pathLen - 56;
+    snprintf(header, sizeof(header), "%s  (%d items)", tail, st->total);
+    Jpx_Label(win, header);
+
+    Jpx_RowBegin(win);
+    int up = Jpx_Button(win, "up", "上级");
+    int refresh = Jpx_Button(win, "refresh", "刷新");
+    Jpx_RowEnd(win);
+    if (up) {
+        files_up(st);
+        Jpx_Invalidate(g_app);
+        return;
+    }
+    if (refresh) {
+        files_refresh(st);
+        Jpx_Invalidate(g_app);
+        return;
+    }
+
+    if (!Jpx_ListBegin(win, "files", 210, st->count)) return;
+    int first = 0, last = -1;
+    Jpx_ListVisibleRange(win, "files", &first, &last);
+    if (last - first >= 24) last = first + 23;
+
+    int widths[3] = {0, 56, 84};
+    for (int i = 0; i < st->count; i++) {
+        const char *btn = NULL;
+        if (i >= first && i <= last) {
+            VmFsEntry *e = &st->rows[i];
+            int slot = i - first;
+            snprintf(cells[slot][0], sizeof(cells[slot][0]), "%s%s",
+                     e->name, e->isDir ? "/" : "");
+            if (e->isDir) {
+                snprintf(cells[slot][1], sizeof(cells[slot][1]), "<DIR>");
+                btn = "打开";
+            } else {
+                snprintf(cells[slot][1], sizeof(cells[slot][1]), "%.1f KB",
+                         e->size / 1024.0);
+            }
+            time_t t = (time_t)(e->mtimeMs / 1000);
+            struct tm *tmVal = localtime(&t);
+            if (tmVal)
+                snprintf(cells[slot][2], sizeof(cells[slot][2]), "%04d-%02d-%02d",
+                         tmVal->tm_year + 1900, tmVal->tm_mon + 1, tmVal->tm_mday);
+            else
+                snprintf(cells[slot][2], sizeof(cells[slot][2]), "-");
+            cols[0] = cells[slot][0];
+            cols[1] = cells[slot][1];
+            cols[2] = cells[slot][2];
+        } else {
+            cols[0] = cols[1] = cols[2] = "";
+        }
+
+        int hit = Jpx_ListRowEx(win, "files", cols, widths, 3, 0, btn);
+        if (hit & 2) {
+            files_enter(st, st->rows[i].name);
+            Jpx_Invalidate(g_app);
+            break;
+        }
+    }
+    Jpx_ListEnd(win);
+}
+
 int main(int argc, char **argv) {
     static char fontPath[512];
     JpxOptions opt = {0};
@@ -214,12 +319,13 @@ int main(int argc, char **argv) {
     theme.hoverColor = "rgba(240,140,40,1)";
     Jpx_SetTheme(g_app, &theme);
 
+    /* 五个窗口排成上三下二，互不重叠：上排 200px，下排 320px。 */
     JpxWindowDesc a = {0};
     a.title = "Window A";
-    a.x = 60;
-    a.y = 60;
-    a.w = 360;
-    a.h = 300;
+    a.x = 30;
+    a.y = 30;
+    a.w = 245;
+    a.h = 200;
     a.layout = layout_a;
     a.user = &g_a;
     a.onClose = on_close;
@@ -227,19 +333,19 @@ int main(int argc, char **argv) {
 
     JpxWindowDesc b = {0};
     b.title = "Window B";
-    b.x = 300;
-    b.y = 200;
-    b.w = 360;
-    b.h = 300;
+    b.x = 285;
+    b.y = 30;
+    b.w = 245;
+    b.h = 200;
     b.layout = layout_b;
     b.user = &g_b;
     b.onClose = on_close;
 
     JpxWindowDesc c = {0};
     c.title = "List";
-    c.x = 40;
-    c.y = 380;
-    c.w = 380;
+    c.x = 540;
+    c.y = 30;
+    c.w = 230;
     c.h = 200;
     c.layout = layout_c;
     c.user = &g_c;
@@ -247,18 +353,32 @@ int main(int argc, char **argv) {
 
     JpxWindowDesc d = {0};
     d.title = "ProcMan";
-    d.x = 420;
-    d.y = 380;
-    d.w = 360;
-    d.h = 200;
+    d.x = 30;
+    d.y = 250;
+    d.w = 370;
+    d.h = 320;
     d.layout = layout_d;
     d.user = &g_procs;
     d.onClose = on_close;
 
+    JpxWindowDesc e = {0};
+    e.title = "Files";
+    e.x = 420;
+    e.y = 250;
+    e.w = 350;
+    e.h = 320;
+    e.layout = layout_e;
+    e.user = &g_files;
+    e.onClose = on_close;
+
     procs_sample(&g_procs);
+    if (!VmFs_Cwd(g_files.path, sizeof(g_files.path)))
+        snprintf(g_files.path, sizeof(g_files.path), ".");
+    files_refresh(&g_files);
 
     if (Jpx_WindowOpen(g_app, &a) == 0 || Jpx_WindowOpen(g_app, &b) == 0 ||
-        Jpx_WindowOpen(g_app, &c) == 0 || Jpx_WindowOpen(g_app, &d) == 0) {
+        Jpx_WindowOpen(g_app, &c) == 0 || Jpx_WindowOpen(g_app, &d) == 0 ||
+        Jpx_WindowOpen(g_app, &e) == 0) {
         fprintf(stderr, "demo_jpx: window open failed\n");
         Jpx_Destroy(g_app);
         return 1;

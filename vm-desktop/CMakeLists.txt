@@ -52,6 +52,8 @@ add_executable(demo_jpx
     vm_clipboard.c
     vm_sys_win32.c
     vm_sys_stub.c
+    vm_fs_win32.c
+    vm_fs_stub.c
 )
 target_include_directories(demo_jpx PRIVATE "${CLAY_DIR}" "${MSTB_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx")
@@ -91,11 +93,19 @@ if(WIN32)
 endif()
 target_include_directories(test_text_edit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
+# 文件抽象层断言：路径 UTF-8 往返、元数据、错误分类。与 test_sys 同理，两个实现互斥。
+add_executable(test_fs
+    test_fs.c
+    vm_fs_win32.c
+    vm_fs_stub.c
+)
+target_include_directories(test_fs PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+
 # C 版渲染宿主：复用 canvas-cpp / ant 引擎执行前端脚本。
 add_executable(vm_renderer renderer/main.c)
 target_link_libraries(vm_renderer PRIVATE canvas)
 
-set_target_properties(demo_wm demo_jpx vm_renderer test_frame test_text_edit PROPERTIES
+set_target_properties(demo_wm demo_jpx vm_renderer test_frame test_text_edit test_sys test_fs PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"

@@ -112,6 +112,10 @@ def main():
         "-DCMAKE_BUILD_TYPE=Release",
         f"-DCMAKE_C_COMPILER={GCC}",
         f"-DCMAKE_CXX_COMPILER={GXX}",
+        # 本机 mingw64/x86_64-w64-mingw32/bin/as.exe 启动即 0xC0000139
+        # （DLL 入口点找不到），gcc 默认按相对路径挑中它；-B 强制用 bin 下可用的那份。
+        "-DCMAKE_C_FLAGS=-BC:/msys64/mingw64/bin/",
+        "-DCMAKE_CXX_FLAGS=-BC:/msys64/mingw64/bin/",
         f"-DCANVAS_SOURCE={CANVAS_SRC}",
         f"-DANT_ROOT={ANT_ROOT}",
         f"-DCLAY_DIR={CLAY_DIR}",

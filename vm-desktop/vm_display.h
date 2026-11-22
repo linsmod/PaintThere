@@ -116,7 +116,9 @@ typedef struct {
         VmDrawTextArgs drawText;
         VmDrawImgArgs drawImg;
         VmRect clip;
-        const char *paint;
+        /* overlay 颜色。必须是内联数组而不是指针：命令要跨帧复用、并且要
+           跨进程传给 WMS，指针会指向调用方的临时缓冲。 */
+        char paint[VM_DISPLAY_MAX_STR];
     } args;
 } VmDrawCommand;
 

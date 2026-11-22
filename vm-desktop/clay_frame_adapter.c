@@ -124,7 +124,8 @@ void ClayFrame_AppendCommands(
                 VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_OVERLAY_PUSH, id);
                 if (!c) return;
                 c->rect = rect;
-                c->args.paint = color_to_css(rc->renderData.overlayColor.color);
+                VmDisplay_CopyStr(c->args.paint, sizeof(c->args.paint),
+                                  color_to_css(rc->renderData.overlayColor.color));
                 break;
             }
             case CLAY_RENDER_COMMAND_TYPE_OVERLAY_COLOR_END: {

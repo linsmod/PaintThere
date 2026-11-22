@@ -152,7 +152,7 @@ static Clay_RenderCommandArray LayoutA(void *userData) {
             .layout = {.sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(32)},
                        .padding = CLAY_PADDING_ALL(6)},
             .backgroundColor = (Clay_Color){255,255,255,255},
-            .border = {.color = (Clay_Color){180,186,194,255}, .width = CLAY_BORDER_ALL(1)},
+            .border = {.color = (Clay_Color){180,186,194,255}, .width = CLAY_BORDER_OUTSIDE(1)},
         }) {
             CLAY_TEXT(textStr,
                       CLAY_TEXT_CONFIG({.fontId = 0, .fontSize = 14,

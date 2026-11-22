@@ -50,7 +50,7 @@ Clay_RenderCommandArray DemoLayout_Build(void) {
                 .padding = CLAY_PADDING_ALL(16),
             },
             .backgroundColor = WINDOW,
-            .border = {.color = BORDER, .width = CLAY_BORDER_ALL(2)},
+            .border = {.color = BORDER, .width = CLAY_BORDER_OUTSIDE(2)},
         }) {
             CLAY_TEXT(CLAY_STRING("VM Instruction Desktop"),
                       CLAY_TEXT_CONFIG({.fontId = 1, .fontSize = 24, .textColor = TITLE}));

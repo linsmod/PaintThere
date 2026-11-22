@@ -92,7 +92,7 @@ void Jpx_PanelBegin(int win) {
         },
         .backgroundColor = Jpx__Color(app->theme.inputBgColor, (Clay_Color){255, 255, 255, 255}),
         .cornerRadius = CLAY_CORNER_RADIUS((float)app->theme.radius),
-        .border = {.color = border(app), .width = CLAY_BORDER_ALL(1)},
+        .border = {.color = border(app), .width = CLAY_BORDER_OUTSIDE(1)},
     });
 }
 void Jpx_PanelEnd(int win) { (void)win; Clay__CloseElement(); }
@@ -185,7 +185,7 @@ int Jpx_Button(int win, const char *id, const char *text) {
         .backgroundColor = !Clay_Hovered() ? base : (down ? pressedColor : hover),
         .cornerRadius = CLAY_CORNER_RADIUS((float)app->theme.radius),
         .border = {.color = mix(base, (Clay_Color){0, 0, 0, 255}, 0.35f),
-                   .width = CLAY_BORDER_ALL(1)},
+                   .width = CLAY_BORDER_OUTSIDE(1)},
     }) {
         hovered = Clay_Hovered();
         jpx_text(Jpx__Str(text), cfg);
@@ -217,7 +217,7 @@ int Jpx_Checkbox(int win, const char *id, const char *label, int *checked) {
             .backgroundColor = *checked ? accent(app)
                                         : Jpx__Color(app->theme.inputBgColor,
                                                      (Clay_Color){18, 21, 32, 255}),
-            .border = {.color = border(app), .width = CLAY_BORDER_ALL(1)},
+            .border = {.color = border(app), .width = CLAY_BORDER_OUTSIDE(1)},
             .cornerRadius = CLAY_CORNER_RADIUS(3),
         }) {
             if (*checked) {
@@ -275,7 +275,7 @@ int Jpx_TextInput(int win, const char *id, char *buf, size_t cap, size_t *len) {
         .border = {.color = focused ? accent(app)
                           : (Clay_Hovered() ? mix(border(app), accent(app), 0.35f)
                                             : border(app)),
-                   .width = CLAY_BORDER_ALL(focused ? 2 : 1)},
+                   .width = CLAY_BORDER_OUTSIDE(focused ? 2 : 1)},
         .cornerRadius = CLAY_CORNER_RADIUS((float)app->theme.radius),
     }) {
         hovered = Clay_Hovered();
@@ -354,7 +354,7 @@ int Jpx_ListBox(int win, const char *id, const char *const *items, int count,
             .childGap = 2,
         },
         .backgroundColor = Jpx__Color(app->theme.inputBgColor, (Clay_Color){255, 255, 255, 255}),
-        .border = {.color = border(app), .width = CLAY_BORDER_ALL(1)},
+        .border = {.color = border(app), .width = CLAY_BORDER_OUTSIDE(1)},
     }) {
         for (int i = 0; i < count && i < visibleRows; i++) {
             int isSel = selected && *selected == i;
@@ -437,7 +437,7 @@ int Jpx_ListBegin(int win, const char *id, int height, int totalRows) {
         },
         .clip = {.vertical = true, .childOffset = {0, -(float)l->offset}},
         .backgroundColor = Jpx__Color(app->theme.inputBgColor, (Clay_Color){255, 255, 255, 255}),
-        .border = {.color = border(app), .width = CLAY_BORDER_ALL(1)},
+        .border = {.color = border(app), .width = CLAY_BORDER_OUTSIDE(1)},
     });
     app->activeList = (int)(l - app->lists) + 1;
     return 1;
@@ -523,7 +523,7 @@ int Jpx_ListRowEx(int win, const char *id, const char *const *cols, const int *w
                 .backgroundColor = Clay_Hovered()
                                        ? mix(border(app), accent(app), 0.4f)
                                        : (Clay_Color){40, 45, 62, 255},
-                .border = {.color = border(app), .width = CLAY_BORDER_ALL(1)},
+                .border = {.color = border(app), .width = CLAY_BORDER_OUTSIDE(1)},
                 .cornerRadius = CLAY_CORNER_RADIUS(2),
             }) {
                 jpx_text(Jpx__Str(btnText), text_config(app, fg(app), 0, 0));

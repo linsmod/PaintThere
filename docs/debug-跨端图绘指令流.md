@@ -1,6 +1,6 @@
 # 跨端图绘指令流 · 调试经验
 
-最后核对：2026-11-21
+最后核对：2026-11-23
 
 ## 启动与验证
 
@@ -25,6 +25,16 @@
 - **子控件坐标**：递归渲染时子控件 `Left/Top` 是相对父容器的，必须累加父容器偏移才是窗体绝对坐标；命中测试则相反，逐层减去父容器 Left/Top。
 - **构建环境**：本机只有 .NET SDK（无 VS MSBuild），`IWshRuntimeLibrary` COMReference 无法编译，清理前主项目需要用临时桩件绕过。清理后已移除 COM 引用，可直接 `dotnet build`。
 - **PowerShell 注意**：长链命令（多次 `agent-browser` + `Start-Sleep`）容易被切成后台执行；拆分短命令执行。不要在 PowerShell 用 heredoc（`<<`）。
+
+### VM 桌面（guest 侧）
+
+- **guest 侧观测**：`JPX_TRACE=1` 启动 `demo_jpx` 后，每次输入处理与每帧合成后打印 `[wm]` 转储：窗口集合、z 序、焦点、以及每个窗口的 `cmds / dirty(原因) / built=<frame>`。`dirty=0` 且 `built` 停在旧帧号的窗口，就是“该重建却没人重建”的对象；`over={id need "title"}` 给出超配额窗口的真实需求条数。这份数据全在 guest 内存里，不要去抓跨端帧反推。
+- **配额压测**：`VM_WM_LAYER_QUOTA=200` 把单窗口命令配额调小（1..1024）启动，超限窗口会整块显示纯色 + “配额超了 N 条”，用来验证告警与截断路径。
+- **窗口层内容被截断会污染后续所有窗口**：`build_one_window` 把内容写进定长层缓冲，写满时末尾的 `clipPop` 丢失；这条未闭合的裁剪会让排在后面的窗口（任务栏在置顶 pass 最后合并）整片消失。现在超配额直接整段丢弃内容、改画纯色块 + "配额超了 N 条"，前缀天然零未闭合。
+- **前端瓦片被污染不会自愈**：tile 差分按内容 hash 只发变化的块。某块曾渲染出未闭合裁剪后，只要它的命令不再变化就一直保持错误画面，必须重启或强制全量才恢复。改动渲染逻辑后先刷新页面再判断"改没改好"。
+- **`CLAY_BORDER_ALL(w)` 隐含 `betweenChildren = w`**：Clay 会为容器的**每对相邻子元素**生成一条 `w` 像素的分隔矩形（`TOP_TO_BOTTOM` 是横线）。列表容器 368 行 → 367 条 1px 矩形，宽度等于容器宽、颜色等于 border 色，看起来像"莫名其妙的细线"，并直接把单窗口命令数从 60 抬到 447。只想画外框时用 `CLAY_BORDER_OUTSIDE(w)`（`betweenChildren = 0`）。
+- **不要用 `Clay_OnHover` 做点击判定**：该回调在 `Clay_SetPointerState` 内部被调用，且用的是**更新前**的 `pointerInfo`；`PRESSED_THIS_FRAME` 会滞留到下一次指针事件，于是"按下"在抬起时才触发一次，"再点一次"就变成第二次触发。外壳（任务栏）已改为读 `VmWm.pointerDownSeq` 的按下沿。
+- **`Clay_Hovered()` 必须在元素声明内部求值**：写在 `CLAY(...)` 之前拿到的是父容器的 hover，同一窗口里所有按钮会一起高亮。`CLAY` 宏先 `OpenElement` 再求值声明，所以 `.backgroundColor = Clay_Hovered() ? a : b` 才是本元素的。
 
 ## 环境信息
 

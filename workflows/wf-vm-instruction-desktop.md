@@ -151,6 +151,7 @@ agent-browser --session vm close
 - **任务栏/Dock 类条目顺序不能用 z 序**。`VmWm_Enumerate` 是按 z 升序的（合成需要），而 `VmWm_Raise` 在每次聚焦时把窗口 z 抬到最大——直接用它会让人一戳条目就换位。用 `VmWm_EnumerateCreated`（按 `createdSeq`，创建后不变）。判断依据：任何「用户认为位置固定」的 UI 列表，都要问一句它依赖的顺序会不会因为交互而变。
 - **Clay 的 current context 是进程级状态，销毁窗口前必须切走**。开始菜单点击启动项时会关掉菜单再开程序窗口；若被销毁的菜单正好是当前 ctx，`free(arenaMem)` 后就留下悬空指针，下一次 Clay 调用直接崩，并伴随成串的 `Clay attempted to make an out of bounds array access`。修法：`Jpx__WindowDestroy` 在 `free` 前用 `Clay_GetCurrentContext() == w->ctx` 判断，切到另一个仍存活窗口的 ctx。定位手法：临时在 error handler 里打印 `app->layoutWinId`——如果告警全是 `layoutWin=0`，说明它发生在布局之外，就在窗口创建/销毁路径上，而不是某个窗口的内容溢出。
 - **弹出菜单里的按钮在 layout 回调中只记意图，实际开关窗口放到定时器里做**。在 `layout_menu` 里直接 `Jpx_WindowClose(g_menuWin)` 等于在布局回调中途销毁自己所在的窗口；改成设置 `g_pendingLaunch`，由 60ms 定时器执行。stderr 重定向到文件时记得 `setvbuf(stderr, NULL, _IONBF, 0)` 或显式 `fflush`，否则崩溃前打的探针日志会全丢。
+- **定时器回调不要由框架无条件标脏，否则轮询型 timer 会一直刷帧**。`tick_handler` 原本只要任一 timer 触发就 `app->dirty = 1`，而开始菜单的 60ms pending 检查绝大多数时候什么都不做——结果空闲时也每帧出图，`frame=N` 日志刷到几千，看起来像「停不下来」。正确契约是回调自己在状态真变化时调 `Jpx_Invalidate`（`caret_blink` / `procs_tick` / `launcher_tick` 都已如此）。验证方法：启动后静等几秒，数 stderr 里 `frame=` 的行数是否还在增长；空闲应为 0。另外 `start_vm_desktop.py` 用 `Popen` 起的是独立进程，Ctrl+C 打断不了它，停止要用 `Stop-Process -Name demo_jpx -Force`。
 
 ## 退出条件
 

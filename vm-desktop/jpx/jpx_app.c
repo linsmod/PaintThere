@@ -175,16 +175,16 @@ static void caret_blink(void *userData) {
 static void tick_handler(void *userData) {
     JpxApp *app = (JpxApp *)userData;
     unsigned long long now = jpx_now_ms();
-    int fired = 0;
     for (int i = 0; i < JPX_MAX_TIMERS; i++) {
         JpxTimer *t = &app->timers[i];
         if (!t->used) continue;
         if (t->last != 0 && now - t->last < (unsigned long long)t->ms) continue;
         t->last = now;
+        /* 出帧由回调自己决定：caret_blink / procs_tick / launcher_tick 都会
+           在真正改变状态时调 Jpx_Invalidate。这里无条件标脏会让纯轮询型
+           定时器（如开始菜单的 pending 检查）每 60ms 空转出一帧。 */
         if (t->fn) t->fn(t->user);
-        fired = 1;
     }
-    if (fired) app->dirty = 1;
 }
 
 JpxApp *Jpx_Create(const JpxOptions *opt) {

@@ -50,11 +50,13 @@ add_executable(demo_jpx
     vm_theme.c
     vm_shell.c
     vm_clipboard.c
+    vm_sys_win32.c
+    vm_sys_stub.c
 )
 target_include_directories(demo_jpx PRIVATE "${CLAY_DIR}" "${MSTB_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx")
 if(WIN32)
-    target_link_libraries(demo_jpx PRIVATE ws2_32)
+    target_link_libraries(demo_jpx PRIVATE ws2_32 psapi)
 endif()
 
 # 帧断言测试：不开服务、不开浏览器，直接断言度量/装饰/裁剪/脏标记/输入路由。

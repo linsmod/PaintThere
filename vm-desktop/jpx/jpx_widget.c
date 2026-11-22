@@ -504,6 +504,20 @@ int Jpx_ListRow(int win, const char *id, const char *const *cols, const int *wid
     return Jpx_ListRowEx(win, id, cols, widths, ncols, selected, NULL);
 }
 
+void Jpx_ListVisibleRange(int win, const char *id, int *first, int *last) {
+    JpxApp *app = Jpx__App();
+    int f = 0, l = -1;
+    if (app && id) {
+        JpxList *l2 = find_list(app, win, id, 0);
+        if (l2) {
+            f = l2->offset / l2->rowH;
+            l = (l2->offset + l2->viewH - 1) / l2->rowH;
+        }
+    }
+    if (first) *first = f;
+    if (last) *last = l;
+}
+
 void Jpx_ListEnd(int win) {
     (void)win;
     Clay__CloseElement();
@@ -533,8 +547,9 @@ int Jpx__ListWheel(JpxApp *app, int winId, int x, int y, int deltaY) {
         if (!l->used || l->winId != winId || !l->hasRect) continue;
         if (l->maxOffset <= 0) continue;
         if (x < l->rx || x >= l->rx + l->rw || y < l->ry || y >= l->ry + l->rh) continue;
-        /* 一格滚轮 = 3 行；deltaY 正数表示向下滚。 */
-        int step = (deltaY > 0 ? 1 : -1) * l->rowH * 3;
+        /* 标准滚轮一格 deltaY = 120（像素），折算 3 行；正数表示向下滚。
+           按比例折算让「大 deltaY」也能一次跳很远，触控板的细碎增量也自然。 */
+        int step = deltaY * 3 * l->rowH / 120;
         int next = l->offset + step;
         if (next < 0) next = 0;
         if (next > l->maxOffset) next = l->maxOffset;

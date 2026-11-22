@@ -3,6 +3,7 @@
    运行：demo_jpx.exe 9000 ../assets */
 
 #include "jpx/jpx.h"
+#include "vm_sys.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,9 +29,19 @@ typedef struct {
     int selected;
 } WindowCState;
 
+/* ProcMan 的数据源。采样必须发生在 layout 之外：332 个进程的
+   Toolhelp 快照 + OpenProcess × 332 要几十毫秒，放进布局会直接卡帧。 */
+typedef struct {
+    VmSysProc rows[VM_SYS_MAX_PROCS];
+    int count;
+    int total;
+    unsigned long long sampleMs;
+} ProcState;
+
 static WindowAState g_a;
 static WindowBState g_b;
 static WindowCState g_c;
+static ProcState g_procs;
 
 /* 输入框已接管可打印键与编辑键；这里只收控件未消费的键（Enter 等）。 */
 static int on_key(int winId, const char *key, const char *code, int isDown,
@@ -114,6 +125,71 @@ static void layout_c(int win, void *user) {
     Jpx_Label(win, status);
 }
 
+static void procs_sample(ProcState *st) {
+    unsigned long long t0 = VmSys_UptimeMs();
+    st->count = VmSys_ListProcs(st->rows, VM_SYS_MAX_PROCS, &st->total);
+    st->sampleMs = VmSys_UptimeMs() - t0;
+}
+
+static void procs_tick(void *user) {
+    ProcState *st = (ProcState *)user;
+    if (!g_app) return;
+    procs_sample(st);
+    Jpx_Invalidate(g_app);
+}
+
+/* ProcMan：进程名 / PID / 内存 / CPU / [结束]。
+   只有可见行才格式化文本——332 行全格式化要 332 份字符串缓冲，
+   而屏幕上同时最多看到 6 行。 */
+static void layout_d(int win, void *user) {
+    ProcState *st = (ProcState *)user;
+    static char header[128];
+    static char cells[24][4][32];
+    static const char *cols[4];
+
+    int self = (int)VmSys_SelfPid();
+    snprintf(header, sizeof(header), "%d procs (shown %d), sample %llu ms",
+             st->total, st->count, st->sampleMs);
+    Jpx_Label(win, header);
+
+    if (!Jpx_ListBegin(win, "procs", 120, st->count)) return;
+    int first = 0, last = -1;
+    Jpx_ListVisibleRange(win, "procs", &first, &last);
+    if (last - first >= 24) last = first + 23;
+
+    int widths[4] = {0, 46, 66, 44};
+    for (int i = 0; i < st->count; i++) {
+        const char *btn = NULL;
+        if (i >= first && i <= last) {
+            int slot = i - first;
+            VmSysProc *p = &st->rows[i];
+            snprintf(cells[slot][0], sizeof(cells[slot][0]), "%s", p->name);
+            snprintf(cells[slot][1], sizeof(cells[slot][1]), "%d", (int)p->pid);
+            snprintf(cells[slot][2], sizeof(cells[slot][2]), "%.1f MB",
+                     (double)p->memBytes / (1024.0 * 1024.0));
+            snprintf(cells[slot][3], sizeof(cells[slot][3]), "%d%%", p->cpuPermille / 10);
+            cols[0] = cells[slot][0];
+            cols[1] = cells[slot][1];
+            cols[2] = cells[slot][2];
+            cols[3] = cells[slot][3];
+            /* 不给自己一个「结束」按钮：点了就把演示程序自己杀掉。 */
+            if ((int)p->pid != self) btn = "结束";
+        } else {
+            cols[0] = cols[1] = cols[2] = cols[3] = "";
+        }
+
+        int hit = Jpx_ListRowEx(win, "procs", cols, widths, 4, 0, btn);
+        if (hit & 2) {
+            if (VmSys_KillProc(st->rows[i].pid) == VM_SYS_OK) {
+                procs_sample(st);
+                Jpx_Invalidate(g_app);
+                break;
+            }
+        }
+    }
+    Jpx_ListEnd(win);
+}
+
 int main(int argc, char **argv) {
     static char fontPath[512];
     JpxOptions opt = {0};
@@ -169,12 +245,25 @@ int main(int argc, char **argv) {
     c.user = &g_c;
     c.onClose = on_close;
 
+    JpxWindowDesc d = {0};
+    d.title = "ProcMan";
+    d.x = 420;
+    d.y = 380;
+    d.w = 360;
+    d.h = 200;
+    d.layout = layout_d;
+    d.user = &g_procs;
+    d.onClose = on_close;
+
+    procs_sample(&g_procs);
+
     if (Jpx_WindowOpen(g_app, &a) == 0 || Jpx_WindowOpen(g_app, &b) == 0 ||
-        Jpx_WindowOpen(g_app, &c) == 0) {
+        Jpx_WindowOpen(g_app, &c) == 0 || Jpx_WindowOpen(g_app, &d) == 0) {
         fprintf(stderr, "demo_jpx: window open failed\n");
         Jpx_Destroy(g_app);
         return 1;
     }
+    Jpx_TimerEvery(g_app, 2000, procs_tick, &g_procs);
 
     int rc = Jpx_Run(g_app);
     Jpx_Destroy(g_app);

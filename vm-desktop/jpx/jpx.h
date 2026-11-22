@@ -76,6 +76,9 @@ int  Jpx_ListRow(int win, const char *id, const char *const *cols,
 /* 行尾附加一个按钮：返回值 bit0 = 行被点击，bit1 = 按钮被点击（两者互斥）。 */
 int  Jpx_ListRowEx(int win, const char *id, const char *const *cols,
                    const int *widths, int ncols, int selected, const char *btnText);
+/* 当前可见的行下标区间（含部分可见的首尾行）。用临时缓冲拼列文本时先查它，
+   只格式化这几行，不必为几百行数据准备几百份字符串缓冲。 */
+void Jpx_ListVisibleRange(int win, const char *id, int *first, int *last);
 void Jpx_ListEnd(int win);
 
 /* ---- 运行时 ---- */

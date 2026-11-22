@@ -184,6 +184,16 @@ void Jpx__WindowDestroy(JpxApp *app, int winId) {
     if (!app) return;
     JpxWindow *w = Jpx__Window(app, winId);
     if (!w) return;
+    /* Clay 的 current context 是进程级状态。销毁的窗口若正是它，必须切到
+       另一个仍存活的 ctx，否则下一次 Clay 调用会踩已释放的 arena。 */
+    if (Clay_GetCurrentContext() == w->ctx) {
+        for (int i = 0; i < VM_WM_MAX_WINDOWS; i++) {
+            if (app->windows[i].used && app->windows[i].id != winId) {
+                Clay_SetCurrentContext(app->windows[i].ctx);
+                break;
+            }
+        }
+    }
     VmWm_RemoveWindow(app->wm, winId);
     free(w->arenaMem);
     memset(w, 0, sizeof(*w));

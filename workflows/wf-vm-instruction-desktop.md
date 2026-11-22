@@ -148,6 +148,8 @@ agent-browser --session vm close
 - **union 里放低频大结构会拖累每一个实例**。`VmDrawCommand` 的 union 含 `VmDefinePatternArgs`（896 B），于是每条 `drawRect` 也占 992 B；实测一帧只有 8 条资源命令、200 多条绘制命令，命令数组 496 KB。把资源类移出到独立数组后 496 B / 263 KB。判断方法：找出 union 里最大的成员，乘上数组长度，再问一句「它出现的频率配得上这个代价吗」。同类陷阱：`VmDisplayDelta.changed[]` 复制整条命令，命令一变胖它就跟着变胖。
 - **颜色/枚举这类纯函数要单独验**。默认主题色与解析函数的 fallback 恰好相同时，解析恒失败也不会显形；给 `Jpx__Color` 换个非默认色（如橙色 hover）才暴露「`rgb()` 分支永远走不到」的 bug。
 - **任务栏/Dock 类条目顺序不能用 z 序**。`VmWm_Enumerate` 是按 z 升序的（合成需要），而 `VmWm_Raise` 在每次聚焦时把窗口 z 抬到最大——直接用它会让人一戳条目就换位。用 `VmWm_EnumerateCreated`（按 `createdSeq`，创建后不变）。判断依据：任何「用户认为位置固定」的 UI 列表，都要问一句它依赖的顺序会不会因为交互而变。
+- **Clay 的 current context 是进程级状态，销毁窗口前必须切走**。开始菜单点击启动项时会关掉菜单再开程序窗口；若被销毁的菜单正好是当前 ctx，`free(arenaMem)` 后就留下悬空指针，下一次 Clay 调用直接崩，并伴随成串的 `Clay attempted to make an out of bounds array access`。修法：`Jpx__WindowDestroy` 在 `free` 前用 `Clay_GetCurrentContext() == w->ctx` 判断，切到另一个仍存活窗口的 ctx。定位手法：临时在 error handler 里打印 `app->layoutWinId`——如果告警全是 `layoutWin=0`，说明它发生在布局之外，就在窗口创建/销毁路径上，而不是某个窗口的内容溢出。
+- **弹出菜单里的按钮在 layout 回调中只记意图，实际开关窗口放到定时器里做**。在 `layout_menu` 里直接 `Jpx_WindowClose(g_menuWin)` 等于在布局回调中途销毁自己所在的窗口；改成设置 `g_pendingLaunch`，由 60ms 定时器执行。stderr 重定向到文件时记得 `setvbuf(stderr, NULL, _IONBF, 0)` 或显式 `fflush`，否则崩溃前打的探针日志会全丢。
 
 ## 退出条件
 

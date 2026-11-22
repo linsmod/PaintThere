@@ -54,6 +54,15 @@ static WindowCState g_c;
 static ProcState g_procs;
 static FilesState g_files;
 
+/* 开始菜单：默认只开基础窗口，两个演示程序由菜单启动。
+   id 为 0 表示当前未打开；关闭后菜单恢复「启动」状态。 */
+static int g_menuWin;
+static int g_procWin;
+static int g_filesWin;
+static JpxWindowDesc g_menuDesc;
+static JpxWindowDesc g_procDesc;
+static JpxWindowDesc g_filesDesc;
+
 /* 输入框已接管可打印键与编辑键；这里只收控件未消费的键（Enter 等）。 */
 static int on_key(int winId, const char *key, const char *code, int isDown,
                   int ctrl, int shift, int alt, void *user) {
@@ -75,6 +84,21 @@ static int on_key(int winId, const char *key, const char *code, int isDown,
 static void on_close(int winId, void *user) {
     (void)user;
     Jpx_WindowClose(g_app, winId);
+}
+
+/* 两个程序窗口被 × 关闭时要清掉 id，否则开始菜单会一直显示「运行中」。 */
+static void on_proc_close(int winId, void *user) {
+    (void)user;
+    Jpx_WindowClose(g_app, winId);
+    g_procWin = 0;
+    Jpx_Invalidate(g_app);
+}
+
+static void on_files_close(int winId, void *user) {
+    (void)user;
+    Jpx_WindowClose(g_app, winId);
+    g_filesWin = 0;
+    Jpx_Invalidate(g_app);
 }
 
 static void layout_a(int win, void *user) {
@@ -144,7 +168,8 @@ static void procs_sample(ProcState *st) {
 
 static void procs_tick(void *user) {
     ProcState *st = (ProcState *)user;
-    if (!g_app) return;
+    /* 程序被开始菜单关掉后不必再定时采样整张进程表。 */
+    if (!g_app || !g_procWin) return;
     procs_sample(st);
     Jpx_Invalidate(g_app);
 }
@@ -251,7 +276,7 @@ static void layout_e(int win, void *user) {
         return;
     }
 
-    if (!Jpx_ListBegin(win, "files", 210, st->count)) return;
+    if (!Jpx_ListBegin(win, "files", 180, st->count)) return;
     int first = 0, last = -1;
     Jpx_ListVisibleRange(win, "files", &first, &last);
     if (last - first >= 24) last = first + 23;
@@ -295,6 +320,77 @@ static void layout_e(int win, void *user) {
     Jpx_ListEnd(win);
 }
 
+/* 菜单按钮在 layout 回调里只记意图，实际开关窗口放到定时器里做：
+   正在布局的窗口不能在回调中途被销毁。 */
+static int g_pendingLaunch = -1;   /* -1 无 / 0 ProcMan / 1 Files */
+static int g_pendingCloseMenu;
+
+static void launcher_close_menu(void) {
+    if (g_menuWin) {
+        Jpx_WindowClose(g_app, g_menuWin);
+        g_menuWin = 0;
+    }
+}
+
+static void launcher_tick(void *user) {
+    (void)user;
+    if (!g_app) return;
+    if (g_pendingCloseMenu) {
+        g_pendingCloseMenu = 0;
+        launcher_close_menu();
+        Jpx_Invalidate(g_app);
+    }
+    if (g_pendingLaunch < 0) return;
+    int which = g_pendingLaunch;
+    g_pendingLaunch = -1;
+
+    launcher_close_menu();
+    if (which == 0) {
+        /* 已经打开就关掉重开，新窗口自然在最上层，等价于切回该程序。 */
+        if (g_procWin) {
+            Jpx_WindowClose(g_app, g_procWin);
+            g_procWin = 0;
+        }
+        procs_sample(&g_procs);
+        g_procWin = Jpx_WindowOpen(g_app, &g_procDesc);
+    } else {
+        if (g_filesWin) {
+            Jpx_WindowClose(g_app, g_filesWin);
+            g_filesWin = 0;
+        }
+        files_refresh(&g_files);
+        g_filesWin = Jpx_WindowOpen(g_app, &g_filesDesc);
+    }
+    Jpx_Invalidate(g_app);
+}
+
+static void layout_start(int win, void *user) {
+    (void)user;
+    if (Jpx_Button(win, "start", "开始")) {
+        if (g_menuWin) launcher_close_menu();
+        else g_menuWin = Jpx_WindowOpen(g_app, &g_menuDesc);
+        Jpx_Invalidate(g_app);
+    }
+}
+
+static void layout_menu(int win, void *user) {
+    (void)user;
+    Jpx_Label(win, "启动程序");
+    if (Jpx_Button(win, "m_proc", "ProcMan - 进程管理")) {
+        g_pendingLaunch = 0;
+        Jpx_Invalidate(g_app);
+    }
+    if (Jpx_Button(win, "m_files", "Files - 文件浏览")) {
+        g_pendingLaunch = 1;
+        Jpx_Invalidate(g_app);
+    }
+    Jpx_Separator(win);
+    if (Jpx_Button(win, "m_close", "关闭菜单")) {
+        g_pendingCloseMenu = 1;
+        Jpx_Invalidate(g_app);
+    }
+}
+
 int main(int argc, char **argv) {
     static char fontPath[512];
     JpxOptions opt = {0};
@@ -319,13 +415,14 @@ int main(int argc, char **argv) {
     theme.hoverColor = "rgba(240,140,40,1)";
     Jpx_SetTheme(g_app, &theme);
 
-    /* 五个窗口排成上三下二，互不重叠：上排 200px，下排 320px。 */
+    /* 基础窗口上三下二，底部留给开始按钮。ProcMan / Files 不在这里打开，
+       由开始菜单启动；菜单弹出时覆盖在下方窗口之上。 */
     JpxWindowDesc a = {0};
     a.title = "Window A";
     a.x = 30;
     a.y = 30;
     a.w = 245;
-    a.h = 200;
+    a.h = 190;
     a.layout = layout_a;
     a.user = &g_a;
     a.onClose = on_close;
@@ -336,7 +433,7 @@ int main(int argc, char **argv) {
     b.x = 285;
     b.y = 30;
     b.w = 245;
-    b.h = 200;
+    b.h = 190;
     b.layout = layout_b;
     b.user = &g_b;
     b.onClose = on_close;
@@ -346,30 +443,44 @@ int main(int argc, char **argv) {
     c.x = 540;
     c.y = 30;
     c.w = 230;
-    c.h = 200;
+    c.h = 190;
     c.layout = layout_c;
     c.user = &g_c;
     c.onClose = on_close;
 
-    JpxWindowDesc d = {0};
-    d.title = "ProcMan";
-    d.x = 30;
-    d.y = 250;
-    d.w = 370;
-    d.h = 320;
-    d.layout = layout_d;
-    d.user = &g_procs;
-    d.onClose = on_close;
+    JpxWindowDesc start = {0};
+    start.title = "Start";
+    start.x = 30;
+    start.y = 510;
+    start.w = 140;
+    start.h = 80;
+    start.layout = layout_start;
+    start.onClose = on_close;
 
-    JpxWindowDesc e = {0};
-    e.title = "Files";
-    e.x = 420;
-    e.y = 250;
-    e.w = 350;
-    e.h = 320;
-    e.layout = layout_e;
-    e.user = &g_files;
-    e.onClose = on_close;
+    g_procDesc.title = "ProcMan";
+    g_procDesc.x = 30;
+    g_procDesc.y = 240;
+    g_procDesc.w = 370;
+    g_procDesc.h = 250;
+    g_procDesc.layout = layout_d;
+    g_procDesc.user = &g_procs;
+    g_procDesc.onClose = on_proc_close;
+
+    g_filesDesc.title = "Files";
+    g_filesDesc.x = 420;
+    g_filesDesc.y = 240;
+    g_filesDesc.w = 350;
+    g_filesDesc.h = 250;
+    g_filesDesc.layout = layout_e;
+    g_filesDesc.user = &g_files;
+    g_filesDesc.onClose = on_files_close;
+
+    g_menuDesc.title = "Start Menu";
+    g_menuDesc.x = 30;
+    g_menuDesc.y = 290;
+    g_menuDesc.w = 220;
+    g_menuDesc.h = 200;
+    g_menuDesc.layout = layout_menu;
 
     procs_sample(&g_procs);
     if (!VmFs_Cwd(g_files.path, sizeof(g_files.path)))
@@ -377,13 +488,13 @@ int main(int argc, char **argv) {
     files_refresh(&g_files);
 
     if (Jpx_WindowOpen(g_app, &a) == 0 || Jpx_WindowOpen(g_app, &b) == 0 ||
-        Jpx_WindowOpen(g_app, &c) == 0 || Jpx_WindowOpen(g_app, &d) == 0 ||
-        Jpx_WindowOpen(g_app, &e) == 0) {
+        Jpx_WindowOpen(g_app, &c) == 0 || Jpx_WindowOpen(g_app, &start) == 0) {
         fprintf(stderr, "demo_jpx: window open failed\n");
         Jpx_Destroy(g_app);
         return 1;
     }
     Jpx_TimerEvery(g_app, 2000, procs_tick, &g_procs);
+    Jpx_TimerEvery(g_app, 60, launcher_tick, NULL);
 
     int rc = Jpx_Run(g_app);
     Jpx_Destroy(g_app);

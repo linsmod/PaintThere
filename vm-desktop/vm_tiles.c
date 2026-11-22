@@ -78,7 +78,7 @@ int VmTileGrid_Build(VmTileGrid *grid, const VmDisplayList *frame, int full, VmT
         VmDisplay_Clear(&s_tileScratch);
         for (int i = 0; i < frame->count; i++) {
             const VmDrawCommand *src = &frame->commands[i];
-            /* 光标资源已在 resources 事件下发，不随每帧重复。 */
+            /* 防御：资源命令已独立存储、不进 commands，若误混入则跳过。 */
             if (src->type == VM_CMD_LOAD_IMG) continue;
             /* clip / overlay 必须成对保留，否则 tile 内绘制状态会失衡。 */
             int keepPair = (src->type == VM_CMD_CLIP_PUSH || src->type == VM_CMD_CLIP_POP ||

@@ -68,7 +68,7 @@ static void build_resources(JpxApp *app) {
         VmDisplay_CopyStr(bg->args.drawRect.paint, sizeof(bg->args.drawRect.paint), "s_desktop");
     }
 
-    VmDrawCommand *p = VmDisplay_Append(&res, VM_CMD_DEFINE_DRAW_PROGRAM, "def_prog_desktop");
+    VmResourceCommand *p = VmDisplay_AppendResource(&res, VM_CMD_DEFINE_DRAW_PROGRAM, "def_prog_desktop");
     if (p) {
         VmDisplay_CopyStr(p->args.defineProgram.programId,
                           sizeof(p->args.defineProgram.programId), "prog_desktop");
@@ -76,7 +76,7 @@ static void build_resources(JpxApp *app) {
         VmDisplay_CopyStr(p->args.defineProgram.layerId,
                           sizeof(p->args.defineProgram.layerId), "bg");
     }
-    p = VmDisplay_Append(&res, VM_CMD_START_PROGRAM, "start_prog_desktop");
+    p = VmDisplay_AppendResource(&res, VM_CMD_START_PROGRAM, "start_prog_desktop");
     if (p) {
         VmDisplay_CopyStr(p->args.programControl.programId,
                           sizeof(p->args.programControl.programId), "prog_desktop");
@@ -85,7 +85,7 @@ static void build_resources(JpxApp *app) {
     }
 
     /* 光标只下发一次，每帧只引用 imgId。 */
-    p = VmDisplay_Append(&res, VM_CMD_LOAD_IMG, "res_cursor");
+    p = VmDisplay_AppendResource(&res, VM_CMD_LOAD_IMG, "res_cursor");
     if (p) {
         VmDisplay_CopyStr(p->args.loadImg.imgId, sizeof(p->args.loadImg.imgId), "cursor");
         VmDisplay_CopyStr(p->args.loadImg.dataUrl, sizeof(p->args.loadImg.dataUrl),

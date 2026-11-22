@@ -32,7 +32,7 @@ static void BuildResources(void) {
 
     /* 桌面与窗口样式统一由主题生成，WM 装饰与控件共用一份 token。 */
     VmTheme_AppendResources(&res, VmTheme_Default());
-    VmDrawCommand *p;
+    VmResourceCommand *p;
 
     VmDisplay_Init(&g_desktopProgramCommands);
     VmDrawCommand *bg = VmDisplay_Append(&g_desktopProgramCommands, VM_CMD_DRAW_RECT, "desktop_bg");
@@ -41,17 +41,17 @@ static void BuildResources(void) {
     bg->args.drawRect.rect = r;
     VmDisplay_CopyStr(bg->args.drawRect.paint, sizeof(bg->args.drawRect.paint), "s_desktop");
 
-    p = VmDisplay_Append(&res, VM_CMD_DEFINE_DRAW_PROGRAM, "def_prog_desktop");
+    p = VmDisplay_AppendResource(&res, VM_CMD_DEFINE_DRAW_PROGRAM, "def_prog_desktop");
     VmDisplay_CopyStr(p->args.defineProgram.programId, sizeof(p->args.defineProgram.programId), "prog_desktop");
     p->args.defineProgram.commands = &g_desktopProgramCommands;
     VmDisplay_CopyStr(p->args.defineProgram.layerId, sizeof(p->args.defineProgram.layerId), "bg");
 
-    p = VmDisplay_Append(&res, VM_CMD_START_PROGRAM, "start_prog_desktop");
+    p = VmDisplay_AppendResource(&res, VM_CMD_START_PROGRAM, "start_prog_desktop");
     VmDisplay_CopyStr(p->args.programControl.programId, sizeof(p->args.programControl.programId), "prog_desktop");
     VmDisplay_CopyStr(p->args.programControl.mode, sizeof(p->args.programControl.mode), "once");
 
     /* 光标箭头只下发一次；每帧只发 drawImg 引用 imgId。 */
-    p = VmDisplay_Append(&res, VM_CMD_LOAD_IMG, "res_cursor");
+    p = VmDisplay_AppendResource(&res, VM_CMD_LOAD_IMG, "res_cursor");
     VmDisplay_CopyStr(p->args.loadImg.imgId, sizeof(p->args.loadImg.imgId), "cursor");
     VmDisplay_CopyStr(p->args.loadImg.dataUrl, sizeof(p->args.loadImg.dataUrl),
                       VmWm_CursorDataUrl());

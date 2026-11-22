@@ -38,9 +38,9 @@ const VmTheme *VmTheme_Default(void) {
     return &kDefaultTheme;
 }
 
-static VmDrawCommand *append_pattern(VmDisplayList *out, const char *defId, const char *patternId,
-                                     VmPatternType type) {
-    VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DEFINE_PATTERN, defId);
+static VmResourceCommand *append_pattern(VmDisplayList *out, const char *defId, const char *patternId,
+                                         VmPatternType type) {
+    VmResourceCommand *c = VmDisplay_AppendResource(out, VM_CMD_DEFINE_PATTERN, defId);
     if (!c) return NULL;
     VmDisplay_CopyStr(c->args.definePattern.patternId,
                       sizeof(c->args.definePattern.patternId), patternId);
@@ -48,9 +48,9 @@ static VmDrawCommand *append_pattern(VmDisplayList *out, const char *defId, cons
     return c;
 }
 
-static VmDrawCommand *append_style(VmDisplayList *out, const char *defId, const char *styleId,
-                                   const char *bgPattern) {
-    VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DEFINE_STYLE, defId);
+static VmResourceCommand *append_style(VmDisplayList *out, const char *defId, const char *styleId,
+                                       const char *bgPattern) {
+    VmResourceCommand *c = VmDisplay_AppendResource(out, VM_CMD_DEFINE_STYLE, defId);
     if (!c) return NULL;
     VmDisplay_CopyStr(c->args.defineStyle.styleId,
                       sizeof(c->args.defineStyle.styleId), styleId);
@@ -65,7 +65,7 @@ void VmTheme_AppendResources(VmDisplayList *out, const VmTheme *theme) {
     if (!out) return;
     const VmTheme *t = theme ? theme : &kDefaultTheme;
 
-    VmDrawCommand *p = append_pattern(out, "def_p_desktop", "p_desktop", VM_PATTERN_GRADIENT);
+    VmResourceCommand *p = append_pattern(out, "def_p_desktop", "p_desktop", VM_PATTERN_GRADIENT);
     if (p) {
         VmDisplay_CopyStr(p->args.definePattern.from, sizeof(p->args.definePattern.from),
                           t->desktopFrom);

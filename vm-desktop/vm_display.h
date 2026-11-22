@@ -9,6 +9,7 @@ extern "C" {
 #endif
 
 #define VM_DISPLAY_MAX_COMMANDS 512
+#define VM_DISPLAY_MAX_RESOURCES 16
 #define VM_DISPLAY_MAX_ID 64
 #define VM_DISPLAY_MAX_TEXT 256
 #define VM_DISPLAY_MAX_STR 128
@@ -116,17 +117,28 @@ typedef struct {
         VmDrawImgArgs drawImg;
         VmRect clip;
         const char *paint;
+    } args;
+} VmDrawCommand;
+
+/* 资源与程序生命周期命令：注册一次、长期有效，数量少但参数大。
+   独立于绘制命令存储，避免每条绘制命令都为它们的 union 成员付出尺寸。 */
+typedef struct {
+    VmCmdType type;
+    char id[VM_DISPLAY_MAX_ID];
+    union {
         VmLoadImgArgs loadImg;
         VmDefinePatternArgs definePattern;
         VmDefineStyleArgs defineStyle;
         VmDefineProgramArgs defineProgram;
         VmProgramControlArgs programControl;
     } args;
-} VmDrawCommand;
+} VmResourceCommand;
 
 typedef struct VmDisplayList {
     VmDrawCommand commands[VM_DISPLAY_MAX_COMMANDS];
     int count;
+    VmResourceCommand resources[VM_DISPLAY_MAX_RESOURCES];
+    int resourceCount;
     uint32_t frameId;
 } VmDisplayList;
 
@@ -150,6 +162,8 @@ void VmDisplay_Init(VmDisplayList *list);
 void VmDisplay_CopyStr(char *dst, size_t cap, const char *src);
 void VmDisplay_Clear(VmDisplayList *list);
 VmDrawCommand *VmDisplay_Append(VmDisplayList *list, VmCmdType type, const char *id);
+/* 资源/程序控制命令走独立数组：不进 commands，不参与逐帧 diff 与 tile 切分。 */
+VmResourceCommand *VmDisplay_AppendResource(VmDisplayList *list, VmCmdType type, const char *id);
 VmDrawCommand *VmDisplay_Find(VmDisplayList *list, const char *id);
 int VmDisplay_CommandEqual(const VmDrawCommand *a, const VmDrawCommand *b);
 /* Compute a structural delta from prev -> current. Delta references current's storage. */

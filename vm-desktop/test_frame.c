@@ -430,6 +430,10 @@ int main(int argc, char **argv) {
     }
     if (!fontPath) fontPath = "../assets/font.ttf";
     if (!g_quiet) printf("test_frame: font=%s\n", fontPath);
+    /* 架构预算：资源类 args 已外置，命令结构再被撑大就会在这里失败。 */
+    expect(sizeof(VmDrawCommand) <= 512, "draw command within size budget");
+    if (!g_quiet) printf("test_frame: sizeof(cmd)=%zu sizeof(list)=%zu\n",
+                         sizeof(VmDrawCommand), sizeof(VmDisplayList));
     test_font(fontPath);
     test_wm_chrome_and_clip();
     test_wm_input();

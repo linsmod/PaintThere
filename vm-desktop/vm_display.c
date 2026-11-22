@@ -29,6 +29,15 @@ VmDrawCommand *VmDisplay_Append(VmDisplayList *list, VmCmdType type, const char 
     return cmd;
 }
 
+VmResourceCommand *VmDisplay_AppendResource(VmDisplayList *list, VmCmdType type, const char *id) {
+    if (!list || list->resourceCount >= VM_DISPLAY_MAX_RESOURCES) return NULL;
+    VmResourceCommand *r = &list->resources[list->resourceCount++];
+    memset(r, 0, sizeof(*r));
+    r->type = type;
+    if (id) snprintf(r->id, sizeof(r->id), "%s", id);
+    return r;
+}
+
 VmDrawCommand *VmDisplay_Find(VmDisplayList *list, const char *id) {
     if (!list || !id) return NULL;
     for (int i = 0; i < list->count; i++) {
@@ -87,31 +96,15 @@ int VmDisplay_CommandEqual(const VmDrawCommand *a, const VmDrawCommand *b) {
         case VM_CMD_OVERLAY_PUSH:
         case VM_CMD_OVERLAY_POP:
             return str_equal(a->args.paint, b->args.paint);
+        /* 资源与程序控制命令不在 commands 里，不参与逐帧比较。 */
         case VM_CMD_LOAD_IMG:
-            return str_equal(a->args.loadImg.imgId, b->args.loadImg.imgId) &&
-                   str_equal(a->args.loadImg.dataUrl, b->args.loadImg.dataUrl);
-        case VM_CMD_DEFINE_PATTERN: {
-            const VmDefinePatternArgs *x = &a->args.definePattern, *y = &b->args.definePattern;
-            return str_equal(x->patternId, y->patternId) && x->type == y->type &&
-                   str_equal(x->color, y->color) && str_equal(x->from, y->from) &&
-                   str_equal(x->to, y->to) && str_equal(x->direction, y->direction) &&
-                   str_equal(x->imgId, y->imgId) && str_equal(x->tiling, y->tiling);
-        }
-        case VM_CMD_DEFINE_STYLE: {
-            const VmDefineStyleArgs *x = &a->args.defineStyle, *y = &b->args.defineStyle;
-            return str_equal(x->styleId, y->styleId) && str_equal(x->bgPattern, y->bgPattern) &&
-                   str_equal(x->border, y->border) && str_equal(x->fontId, y->fontId) &&
-                   str_equal(x->fontSize, y->fontSize) && str_equal(x->textColor, y->textColor);
-        }
+        case VM_CMD_DEFINE_PATTERN:
+        case VM_CMD_DEFINE_STYLE:
         case VM_CMD_DEFINE_DRAW_PROGRAM:
-            return str_equal(a->args.defineProgram.programId, b->args.defineProgram.programId) &&
-                   str_equal(a->args.defineProgram.layerId, b->args.defineProgram.layerId) &&
-                   a->args.defineProgram.commands == b->args.defineProgram.commands;
         case VM_CMD_START_PROGRAM:
         case VM_CMD_PAUSE_PROGRAM:
         case VM_CMD_RESUME_PROGRAM:
-            return str_equal(a->args.programControl.programId, b->args.programControl.programId) &&
-                   str_equal(a->args.programControl.mode, b->args.programControl.mode);
+            return 0;
         case VM_CMD_NONE:
             return 1;
     }

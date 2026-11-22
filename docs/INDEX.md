@@ -8,3 +8,4 @@
 - `task-remote-tiles.md` — Remote tiles 协议替换分层合成指令的执行记录、协议 schema 与验证结果。
 - `task-jpx.md` — JPX 应用框架与桌面外壳：分层归属、WM/JPX 分界规则、新增组件接口、`jpx.h` 公开接口、分阶段验收。
 - `test-timing.md` — 各测试程序的命令、断言数与实测耗时，新增测试时同步登记。
+- `design-jpx-layer.md` — 窗口图层化设计（冻结于 2026-11-22）：图层只在 guest 内、每窗口内容缓冲、脏标记表、`BuildFrame` 两阶段、容量与内存代价、不承诺的收益。

@@ -129,14 +129,31 @@ static void emit_command(StrBuf *b, const VmDrawCommand *c) {
             break;
         }
         case VM_CMD_OVERLAY_POP: puts_(b, "overlayPop\",\"args\":["); break;
+        case VM_CMD_NONE:
+        default:
+            puts_(b, "none\",\"args\":[");
+            break;
+    }
+    puts_(b, "],\"rect\":");
+    rect_json(b, c->rect);
+    puts_(b, "}");
+}
+
+/* 资源与程序控制命令的序列化，输出格式与它们原先在 commands 里时完全一致。
+   rect 恒为零矩形：这类命令不属于任何绘制区域。 */
+static void emit_resource(StrBuf *b, const VmResourceCommand *r) {
+    puts_(b, "{\"id\":");
+    json_string(b, r->id);
+    puts_(b, ",\"cmd\":\"");
+    switch (r->type) {
         case VM_CMD_LOAD_IMG: {
             puts_(b, "loadImg\",\"args\":[");
-            json_string(b, c->args.loadImg.imgId);
-            puts_(b, ","); json_string(b, c->args.loadImg.dataUrl);
+            json_string(b, r->args.loadImg.imgId);
+            puts_(b, ","); json_string(b, r->args.loadImg.dataUrl);
             break;
         }
         case VM_CMD_DEFINE_PATTERN: {
-            const VmDefinePatternArgs *a = &c->args.definePattern;
+            const VmDefinePatternArgs *a = &r->args.definePattern;
             puts_(b, "definePattern\",\"args\":[");
             json_string(b, a->patternId);
             puts_(b, ",{\"type\":\"");
@@ -153,7 +170,7 @@ static void emit_command(StrBuf *b, const VmDrawCommand *c) {
             break;
         }
         case VM_CMD_DEFINE_STYLE: {
-            const VmDefineStyleArgs *a = &c->args.defineStyle;
+            const VmDefineStyleArgs *a = &r->args.defineStyle;
             puts_(b, "defineStyle\",\"args\":[");
             json_string(b, a->styleId);
             puts_(b, ",{");
@@ -170,7 +187,7 @@ static void emit_command(StrBuf *b, const VmDrawCommand *c) {
             break;
         }
         case VM_CMD_DEFINE_DRAW_PROGRAM: {
-            const VmDefineProgramArgs *a = &c->args.defineProgram;
+            const VmDefineProgramArgs *a = &r->args.defineProgram;
             puts_(b, "defineDrawProgram\",\"args\":[");
             json_string(b, a->programId);
             puts_(b, ",");
@@ -184,23 +201,22 @@ static void emit_command(StrBuf *b, const VmDrawCommand *c) {
         case VM_CMD_START_PROGRAM:
         case VM_CMD_PAUSE_PROGRAM:
         case VM_CMD_RESUME_PROGRAM: {
-            const char *name = c->type == VM_CMD_START_PROGRAM ? "startDrawProgram" :
-                               c->type == VM_CMD_PAUSE_PROGRAM ? "pauseDrawProgram" : "resumeDrawProgram";
+            const char *name = r->type == VM_CMD_START_PROGRAM ? "startDrawProgram" :
+                               r->type == VM_CMD_PAUSE_PROGRAM ? "pauseDrawProgram" : "resumeDrawProgram";
             printf_(b, "%s\",\"args\":[", name);
-            json_string(b, c->args.programControl.programId);
-            if (c->type == VM_CMD_START_PROGRAM) {
+            json_string(b, r->args.programControl.programId);
+            if (r->type == VM_CMD_START_PROGRAM) {
                 puts_(b, ",");
-                json_string(b, c->args.programControl.mode ? c->args.programControl.mode : "once");
+                json_string(b, r->args.programControl.mode ? r->args.programControl.mode : "once");
             }
             break;
         }
         case VM_CMD_NONE:
+        default:
             puts_(b, "none\",\"args\":[");
             break;
     }
-    puts_(b, "],\"rect\":");
-    rect_json(b, c->rect);
-    puts_(b, "}");
+    puts_(b, "],\"rect\":[0,0,0,0]}");
 }
 
 static char *serialize(const VmDisplayList *list, int withEnvelope) {
@@ -210,8 +226,16 @@ static char *serialize(const VmDisplayList *list, int withEnvelope) {
         printf_(&b, "{\"type\":\"frame\",\"frameId\":%u,\"commands\":[", list->frameId);
     else
         puts_(&b, "[");
+    /* 资源命令先输出：它们本来就是先注册、后引用，顺序与改造前一致。 */
+    int first = 1;
+    for (int i = 0; i < list->resourceCount; i++) {
+        if (!first) puts_(&b, ",");
+        first = 0;
+        emit_resource(&b, &list->resources[i]);
+    }
     for (int i = 0; i < list->count; i++) {
-        if (i) puts_(&b, ",");
+        if (!first) puts_(&b, ",");
+        first = 0;
         emit_command(&b, &list->commands[i]);
     }
     puts_(&b, withEnvelope ? "]}" : "]");
@@ -233,8 +257,15 @@ char *VmSerialize_DeltaFrameJson(const VmDisplayList *list, const VmDisplayDelta
     StrBuf b = {0};
     printf_(&b, "{\"type\":\"frame\",\"frameId\":%u,\"incremental\":true,\"commands\":[",
             list->frameId);
+    int first = 1;
+    for (int i = 0; i < list->resourceCount; i++) {
+        if (!first) puts_(&b, ",");
+        first = 0;
+        emit_resource(&b, &list->resources[i]);
+    }
     for (int i = 0; i < list->count; i++) {
-        if (i) puts_(&b, ",");
+        if (!first) puts_(&b, ",");
+        first = 0;
         emit_command(&b, &list->commands[i]);
     }
     /* dirty 是单个矩形 [x,y,w,h]；没有脏区时是空数组 []。

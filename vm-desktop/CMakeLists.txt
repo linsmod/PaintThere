@@ -75,6 +75,18 @@ add_executable(test_text_edit
     test_text_edit.c
     jpx/jpx_text_edit.c
 )
+
+# 平台能力抽象层断言：只验证内核事实（进程表、内存、CPU 差分、错误分类）。
+# 两个实现文件互斥：win32 用 #ifdef _WIN32，stub 用 #ifndef _WIN32。
+add_executable(test_sys
+    test_sys.c
+    vm_sys_win32.c
+    vm_sys_stub.c
+)
+target_include_directories(test_sys PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+if(WIN32)
+    target_link_libraries(test_sys PRIVATE psapi)
+endif()
 target_include_directories(test_text_edit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 # C 版渲染宿主：复用 canvas-cpp / ant 引擎执行前端脚本。

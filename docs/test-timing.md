@@ -5,6 +5,7 @@
 | 测试 | 命令 | 断言数 | 实测耗时 | 依赖 |
 |---|---|---|---|---|
 | `test_frame` | `.\vm-desktop\build\test_frame.exe --probe` | 104 | 23 ms | `assets/font.ttf`（默认 `../assets/font.ttf`） |
+| `test_sys` | `.\vm-desktop\build\test_sys.exe --probe` | 16 | 6 ms | 无（进程表、内存、CPU 差分、错误分类） |
 | `test_text_edit` | `.\vm-desktop\build\test_text_edit.exe --probe` | 66 | 11 ms | 无 |
 
 ## 说明

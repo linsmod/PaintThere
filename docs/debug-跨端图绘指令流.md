@@ -25,6 +25,7 @@
 - **子控件坐标**：递归渲染时子控件 `Left/Top` 是相对父容器的，必须累加父容器偏移才是窗体绝对坐标；命中测试则相反，逐层减去父容器 Left/Top。
 - **构建环境**：本机只有 .NET SDK（无 VS MSBuild），`IWshRuntimeLibrary` COMReference 无法编译，清理前主项目需要用临时桩件绕过。清理后已移除 COM 引用，可直接 `dotnet build`。
 - **PowerShell 注意**：长链命令（多次 `agent-browser` + `Start-Sleep`）容易被切成后台执行；拆分短命令执行。不要在 PowerShell 用 heredoc（`<<`）。
+- **临时诊断打印优先走 stdout**：`Start-Process -RedirectStandardError` 在 PowerShell 下没能实时拿到 `fprintf(stderr, ...)` 的输出，一度以为"回调根本没被调用"，换成 `printf` 后立刻可见。排查"代码没生效"之前，先确认观测通道本身是通的。
 
 ### 渲染分辨率与坐标（前端）
 
@@ -43,6 +44,14 @@
 - **`CLAY_BORDER_ALL(w)` 隐含 `betweenChildren = w`**：Clay 会为容器的**每对相邻子元素**生成一条 `w` 像素的分隔矩形（`TOP_TO_BOTTOM` 是横线）。列表容器 368 行 → 367 条 1px 矩形，宽度等于容器宽、颜色等于 border 色，看起来像"莫名其妙的细线"，并直接把单窗口命令数从 60 抬到 447。只想画外框时用 `CLAY_BORDER_OUTSIDE(w)`（`betweenChildren = 0`）。
 - **不要用 `Clay_OnHover` 做点击判定**：该回调在 `Clay_SetPointerState` 内部被调用，且用的是**更新前**的 `pointerInfo`；`PRESSED_THIS_FRAME` 会滞留到下一次指针事件，于是"按下"在抬起时才触发一次，"再点一次"就变成第二次触发。外壳（任务栏）已改为读 `VmWm.pointerDownSeq` 的按下沿。
 - **`Clay_Hovered()` 必须在元素声明内部求值**：写在 `CLAY(...)` 之前拿到的是父容器的 hover，同一窗口里所有按钮会一起高亮。`CLAY` 宏先 `OpenElement` 再求值声明，所以 `.backgroundColor = Clay_Hovered() ? a : b` 才是本元素的。
+- **外壳 onHover 会带着旧位置回调**（根因未查明）：指针在别的窗口上时，任务栏条目的回调仍可能被触发一次（日志里 `down=0 seq=N`）。当前在 `shell_item_press` 里加了「`wm->pointerX/Y` 必须落在任务栏矩形内」的兜底挡掉；真正的触发路径还没定位，遇到类似"在 A 上按下却触发了 B 的条目"先查这里。
+- **读 guest dump 要同时看 `min / max / focused`**：只看一眼焦点容易误判。曾把"点任务栏条目后窗口被 raise"当成 bug，实际是该窗口当时处于最小化状态、走了还原分支（还原会重新聚焦并 raise）。
+- **测试里点标题栏按钮不要写死坐标**：按钮从两个变三个时，最小化按钮整体左移 20px，两条断言直接失效。按钮位置由 `chrome_button_rects` 决定，测试应跟着几何算；最大化后标题栏在 `y = 0..30`，与还原态不同。
+
+## 调试脚本
+
+- `tools/drive_vm_desktop.py` — 用 HTTP `/input` 合成指针事件驱动 `demo_jpx`（move / down / up / key / wait / snap），全程保持一条 SSE 连接并累积帧流。用来复现"点哪里、窗口怎么变"。
+- `tools/inspect_vm_frame.py` — 回放抓到的 SSE 流，按前端语义维护 48 块瓦片，把 tile 局部坐标还原成画布绝对坐标后列出文本；`--hist` 看每次增量帧改了哪些块，`--tiles` 看每块命令数。
 
 ## 环境信息
 

@@ -4,6 +4,7 @@
 /* JPX 内部共享声明：应用代码不得 include。 */
 
 #include "jpx.h"
+#include "jpx_text_edit.h"
 
 #include "clay.h"
 #include "vm_display.h"
@@ -16,6 +17,9 @@
 
 #define JPX_MAX_TIMERS 8
 #define JPX_TITLE_CAP 64
+#define JPX_ID_CAP 48
+#define JPX_MAX_TEXT_INPUTS 16
+#define JPX_MAX_FOCUSABLE 32
 
 typedef struct {
     int used;
@@ -25,6 +29,20 @@ typedef struct {
     void (*fn)(void *);
     void *user;
 } JpxTimer;
+
+/* 文本输入框的持久编辑状态，按控件 id 匹配，与声明顺序无关。 */
+typedef struct {
+    int used;
+    char id[JPX_ID_CAP];
+    JpxTextEdit ed;
+} JpxEditSlot;
+
+/* 本帧登记的可聚焦控件（声明序）：Tab 循环与按键路由用它。 */
+typedef struct {
+    char id[JPX_ID_CAP];
+    size_t *len;             /* 回写用，可为 NULL */
+    JpxTextEdit *ed;         /* 文本输入的编辑状态；非文本框为 NULL */
+} JpxFocusable;
 
 typedef struct {
     JpxApp *app;
@@ -36,6 +54,12 @@ typedef struct {
     int used;
     int pointerDownLast;   /* 上一帧本窗口是否被按下，用于取按下沿 */
     int pressEdge;         /* 本帧是否发生「按下」沿 */
+
+    /* 控件焦点：焦点框、可聚焦控件登记、文本输入的持久状态 */
+    char focusId[JPX_ID_CAP];
+    JpxFocusable focusables[JPX_MAX_FOCUSABLE];
+    int focusableCount;
+    JpxEditSlot edits[JPX_MAX_TEXT_INPUTS];
 } JpxWindow;
 
 struct JpxApp {
@@ -61,6 +85,7 @@ struct JpxApp {
     char *fullJson;
 
     int ctrl, shift, alt;      /* 最近一次按键事件的修饰键 */
+    int caretOn;               /* caret 闪烁相位：500ms 翻转一次 */
     JpxTimer timers[JPX_MAX_TIMERS];
     int nextTimerId;
 
@@ -80,6 +105,12 @@ Clay_String Jpx__Str(const char *text);
 /* 无应用语义 id 的装饰元素：父元素 id + 帧内序号，避免同窗口内重复 id。
    对应 Clay 的 CLAY_SIDI_LOCAL 语义。 */
 Clay_ElementId Jpx__LocalId(JpxApp *app, const char *name);
+
+/* jpx_window.c：控件焦点链 */
+JpxEditSlot *Jpx__EditSlot(JpxWindow *win, const char *id);
+void Jpx__FocusRegister(JpxWindow *win, const char *id, size_t *len, JpxTextEdit *ed);
+void Jpx__FocusTab(JpxWindow *win, int dir);
+int  Jpx__FocusKey(JpxWindow *win, const char *key, int ctrl, int shift);
 
 /* jpx_window.c */
 JpxWindow *Jpx__WindowCreate(JpxApp *app, const JpxWindowDesc *desc);

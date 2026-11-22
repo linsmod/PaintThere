@@ -39,6 +39,7 @@ add_executable(demo_jpx
     jpx/jpx_window.c
     jpx/jpx_theme.c
     jpx/jpx_widget.c
+    jpx/jpx_text_edit.c
     clay_frame_adapter.c
     vm_display.c
     vm_serialize_json.c

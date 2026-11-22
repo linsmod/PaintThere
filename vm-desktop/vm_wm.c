@@ -279,6 +279,12 @@ void VmWm_Move(VmWm *wm, int id, int x, int y) {
     win->y = y;
 }
 
+void VmWm_KeyModifiers(VmWm *wm, int *ctrl, int *shift, int *alt) {
+    if (ctrl) *ctrl = wm ? wm->keyCtrl : 0;
+    if (shift) *shift = wm ? wm->keyShift : 0;
+    if (alt) *alt = wm ? wm->keyAlt : 0;
+}
+
 void VmWm_SetKeyHandler(VmWm *wm, int id, VmWindowKeyHandler handler, void *userData) {
     VmWindow *win = VmWm_FindWindow(wm, id);
     if (!win) return;
@@ -384,7 +390,17 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     int y = extract_int(jsonBody, "y", -1);
     int button = extract_int(jsonBody, "button", 0);
     int deltaY = extract_int(jsonBody, "deltaY", 0);
+    int ctrl = extract_int(jsonBody, "ctrl", 0);
+    int shift = extract_int(jsonBody, "shift", 0);
+    int alt = extract_int(jsonBody, "alt", 0);
     int changed = 0;
+
+    /* 修饰键跟随最近一次键盘事件：keyHandler 的签名不含它们，由查询接口取。 */
+    if (strcmp(kind, "keydown") == 0 || strcmp(kind, "keyup") == 0) {
+        wm->keyCtrl = ctrl;
+        wm->keyShift = shift;
+        wm->keyAlt = alt;
+    }
 
     int isDown = (strcmp(kind, "mousedown") == 0);
     int isUp = (strcmp(kind, "mouseup") == 0);

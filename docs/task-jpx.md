@@ -415,7 +415,7 @@ agent-browser --session jpx close
 - [x] 阶段 A：共享基础 + 前置修复（2026-11-22 完成）
 - [x] 阶段 B：WM 接口补齐 + 桌面外壳（2026-11-22 完成）
 - [x] 阶段 C：JPX 宿主（2026-11-22 完成）
-- [ ] 阶段 D：控件、文本编辑、剪贴板接入（D1 文本编辑状态机完成）
+- [ ] 阶段 D：控件、文本编辑、剪贴板接入（D1 状态机、D2 输入框接线完成）
 - [ ] 阶段 E：首个真实程序 + guest 部署
 
 ### 阶段 A 执行记录
@@ -500,3 +500,29 @@ agent-browser --session jpx close
 未接线：`Jpx_TextInput` 仍是渲染态；修饰键（`ctrl/shift/alt`）目前没从 `VmWm` 传到 `VmWindowKeyHandler`（签名只有 `key/code/isDown`），D2 需要在 WM 层补「最近一次按键修饰键」的查询，否则 Tab/Shift+Tab 与 D3 的 Ctrl+C/V/X 无法区分。
 
 恢复点：D2 从 `vm_wm.c` 的键盘解析补修饰键、`jpx_window.c` 的 `window_key_cb` 接控件焦点链、`jpx_widget.c` 的 `Jpx_TextInput` 接 `JpxTextEdit` 开始。
+
+**D2（2026-11-22 完成）**：控件焦点链与文本输入接线。
+
+新增：`JpxWindow` 的焦点状态（`focusId`、每帧按声明序重建的 `focusables`、按控件 id 匹配的 `edits` 持久编辑槽）、`Jpx__EditSlot`/`Jpx__FocusRegister`/`Jpx__FocusTab`/`Jpx__FocusKey`（`jpx_window.c`）、`caret_blink` 的 500ms 相位 timer（`jpx_app.c`）。
+修改：`window_key_cb` 的优先级改为「焦点控件 → Tab 循环 → 应用 `onKey`」；`Jpx_TextInput` 接 `JpxTextEdit`（未聚焦渲染整段文本，聚焦时渲染「前段 + 1px 竖条 + 后段」以精确定位 caret，点击聚焦并把 `*len` 回写）；`VmWm` 补 `keyCtrl/keyShift/keyAlt` 与 `VmWm_KeyModifiers`（`VmWindowKeyHandler` 签名不含修饰键）；`demo_jpx` 改为 A 窗口两个输入框 + B 窗口一个输入框，Enter 走应用回调。
+
+验证证据（`demo_jpx.exe 9036 ..\assets` + curl 合成输入）：
+
+- 点 Name 输入框 → 输入 `abc` → 帧内出现 `"abc"`（相对 x=82）。
+- Tab → 焦点到 Email → 输入 `xy` → 两个框内容并存。
+- Shift+Tab → 回 Name → Backspace → 内容变 `ab`。
+- 直接点 Email → 输入 `q` 进入 Email（点击聚焦，不依赖 Tab）。
+- B 窗口 notes 输入 `zz`，A 的 Email 仍是 `q`（窗口间焦点互相独立）。
+- caret：间隔 600ms 抓帧，`1x14` 竖条矩形出现/消失交替。
+- Enter 不被输入框消费，`onKey` 收到并把标签写成 `Enter: ok`。
+- 空闲：单连接 3 秒只有 1 个 `fullframe` 基线，`event: tiles` 0 次。
+- `test_frame --probe` 96 项 0 失败（新增 5 项修饰键断言）；`test_text_edit --probe` 66 项 0 失败。
+
+期间修掉的偏差：
+
+- 空文本输入框没有子元素，`CLAY_SIZING_FIT` 的高度算成 0，背景矩形被 tile 切分丢弃；表现是 y 间距少一截、控件像不存在。改为固定高度 `fontSize + 14`（上下 padding 12 + border 2）。
+- `demo_jpx` 的 `layout_a` 每帧用 `snprintf` 覆盖 `label`，把 `onKey` 写入的消息冲掉。改为只在按钮点击时写，布局只读。
+
+已知限制：选区高亮尚未绘制（选区语义已正确，只是看不到高亮）；点击定位 caret 只落到末尾，未按点击 x 反算字符位置；文本超出宽度时没有横向滚动。
+
+恢复点：D3 剪贴板——`Ctrl+C/V/X` 接 `vm_clipboard`，需要把「焦点控件选中的区间」序列化成 UTF-8 存到剪贴板，并在粘贴时按容量截断。

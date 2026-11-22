@@ -150,6 +150,18 @@ static void input_handler(const char *body, size_t length, void *userData) {
     }
 }
 
+/* caret 闪烁：仅有聚焦控件时才翻相位并出帧，否则保持空闲零帧。 */
+static void caret_blink(void *userData) {
+    JpxApp *app = (JpxApp *)userData;
+    for (int i = 0; i < VM_WM_MAX_WINDOWS; i++) {
+        JpxWindow *w = &app->windows[i];
+        if (!w->used || !w->focusId[0]) continue;
+        app->caretOn = !app->caretOn;
+        Jpx__Invalidate(app);
+        return;
+    }
+}
+
 static void tick_handler(void *userData) {
     JpxApp *app = (JpxApp *)userData;
     unsigned long long now = jpx_now_ms();
@@ -222,7 +234,9 @@ JpxApp *Jpx_Create(const JpxOptions *opt) {
     VmServer_SetTickHandler(app->server, 16, tick_handler, app);
 
     g_jpx = app;
+    app->caretOn = 1;
     app->dirty = 1;
+    Jpx_TimerEvery(app, 500, caret_blink, app);
     return app;
 }
 

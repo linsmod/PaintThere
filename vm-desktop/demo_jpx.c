@@ -13,12 +13,21 @@ static JpxApp *g_app;
 typedef struct {
     int clicks;
     char label[64];
-    char text[128];
-    size_t textLen;
+    char name[64];
+    size_t nameLen;
+    char email[64];
+    size_t emailLen;
 } WindowAState;
 
-static WindowAState g_a;
+typedef struct {
+    char notes[64];
+    size_t notesLen;
+} WindowBState;
 
+static WindowAState g_a;
+static WindowBState g_b;
+
+/* 输入框已接管可打印键与编辑键；这里只收控件未消费的键（Enter 等）。 */
 static int on_key(int winId, const char *key, const char *code, int isDown,
                   int ctrl, int shift, int alt, void *user) {
     (void)winId;
@@ -28,17 +37,12 @@ static int on_key(int winId, const char *key, const char *code, int isDown,
     (void)alt;
     if (!isDown) return 0;
     WindowAState *state = (WindowAState *)user;
-    if (strcmp(key, "Backspace") == 0) {
-        if (state->textLen > 0) state->text[--state->textLen] = '\0';
-    } else if (strlen(key) == 1 && (unsigned char)key[0] >= 0x20 &&
-               state->textLen + 2 < sizeof(state->text)) {
-        state->text[state->textLen++] = key[0];
-        state->text[state->textLen] = '\0';
-    } else {
-        return 0;
+    if (strcmp(key, "Enter") == 0) {
+        snprintf(state->label, sizeof(state->label), "Enter: %s", state->name);
+        Jpx_Invalidate(g_app);
+        return 1;
     }
-    Jpx_Invalidate(g_app);
-    return 1;
+    return 0;
 }
 
 static void on_close(int winId, void *user) {
@@ -49,21 +53,28 @@ static void on_close(int winId, void *user) {
 static void layout_a(int win, void *user) {
     WindowAState *state = (WindowAState *)user;
 
-    Jpx_Label(win, "Type below; focus this client with a click");
-    Jpx_TextInput(win, "input", state->text, sizeof(state->text), &state->textLen);
+    Jpx_Label(win, "Tab moves focus; click an input to focus it");
+    Jpx_Label(win, "Name");
+    Jpx_TextInput(win, "name", state->name, sizeof(state->name), &state->nameLen);
+    Jpx_Label(win, "Email");
+    Jpx_TextInput(win, "email", state->email, sizeof(state->email), &state->emailLen);
 
     Jpx_RowBegin(win);
     int clicked = Jpx_Button(win, "btn", "Click me");
     Jpx_RowEnd(win);
-    if (clicked) state->clicks++;
+    if (clicked) {
+        state->clicks++;
+        snprintf(state->label, sizeof(state->label), "Clicked: %d", state->clicks);
+    }
 
-    snprintf(state->label, sizeof(state->label), "Clicked: %d", state->clicks);
-    Jpx_Label(win, state->label);
+    /* label 由按钮点击或 Enter 写入，布局里不能每帧覆盖，否则应用层的消息被冲掉。 */
+    Jpx_Label(win, state->label[0] ? state->label : "Clicked: 0");
 }
 
 static void layout_b(int win, void *user) {
-    (void)user;
+    WindowBState *state = (WindowBState *)user;
     Jpx_Label(win, "Window B");
+    Jpx_TextInput(win, "notes", state->notes, sizeof(state->notes), &state->notesLen);
     Jpx_PanelBegin(win);
     Jpx_Label(win, "A panel drawn from theme tokens");
     Jpx_Separator(win);
@@ -100,7 +111,7 @@ int main(int argc, char **argv) {
     a.x = 60;
     a.y = 60;
     a.w = 360;
-    a.h = 260;
+    a.h = 300;
     a.layout = layout_a;
     a.user = &g_a;
     a.onClose = on_close;
@@ -111,8 +122,9 @@ int main(int argc, char **argv) {
     b.x = 300;
     b.y = 200;
     b.w = 360;
-    b.h = 260;
+    b.h = 300;
     b.layout = layout_b;
+    b.user = &g_b;
     b.onClose = on_close;
 
     if (Jpx_WindowOpen(g_app, &a) == 0 || Jpx_WindowOpen(g_app, &b) == 0) {

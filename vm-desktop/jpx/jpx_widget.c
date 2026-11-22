@@ -221,28 +221,79 @@ int Jpx_Checkbox(int win, const char *id, const char *label, int *checked) {
     return 0;
 }
 
-/* 阶段 C：只做展示与点击聚焦。编辑、caret、选区、剪贴板在阶段 D 补。 */
+/* 单行文本输入：编辑状态按控件 id 持久化，输入路由在 jpx_window.c 的焦点链。
+   选区高亮尚未绘制（语义已正确），caret 用「前段文本 + 竖条 + 后段文本」定位。 */
 int Jpx_TextInput(int win, const char *id, char *buf, size_t cap, size_t *len) {
     JpxApp *app = Jpx__App();
-    if (!app || !buf) return 0;
+    if (!app || !buf || cap == 0 || !id) return 0;
+    JpxWindow *w = Jpx__Window(app, win);
+    if (!w) return 0;
+
     size_t n = len ? *len : strlen(buf);
-    if (n >= cap) n = cap ? cap - 1 : 0;
+    if (n >= cap) n = cap - 1;
+
+    JpxEditSlot *slot = Jpx__EditSlot(w, id);
+    if (!slot) return 0;
+    /* 首次挂载或应用改写了缓冲区：重建编辑状态，caret 落到末尾。 */
+    if (slot->ed.buf != buf || slot->ed.cap != cap || slot->ed.len != n) {
+        Jpx__TextEditInit(&slot->ed, buf, cap, n);
+    }
+    if (len) *len = slot->ed.len;
+    Jpx__FocusRegister(w, id, len, &slot->ed);
+
+    int focused = strcmp(w->focusId, id) == 0;
     int hovered = 0;
-    Clay_TextElementConfig cfg = text_config(app, fg(app), 0, 0);
+    Clay_Color fgColor = fg(app);
+    Clay_TextElementConfig cfg = text_config(app, fgColor, 0, 0);
+    Clay_Color edge = focused ? accent(app) : border(app);
+
     CLAY(Jpx__Id(win, id), {
         .layout = {
-            .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0)},
+            /* 单行输入框高度固定：空文本时没有子元素，FIT 会算出 0 高、整块被 tile 丢弃。 */
+            .sizing = {CLAY_SIZING_GROW(0),
+                       CLAY_SIZING_FIXED((float)(app->theme.fontSize + 14))},
+            .layoutDirection = CLAY_LEFT_TO_RIGHT,
+            .childGap = 0,
             .padding = {8, 8, 6, 6},
+            .childAlignment = {CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER},
         },
         .backgroundColor = Jpx__Color(app->theme.inputBgColor, (Clay_Color){255, 255, 255, 255}),
-        .border = {.color = Clay_Hovered() ? accent(app) : border(app), .width = CLAY_BORDER_ALL(1)},
+        .border = {.color = Clay_Hovered() ? accent(app) : edge, .width = CLAY_BORDER_ALL(1)},
         .cornerRadius = CLAY_CORNER_RADIUS((float)app->theme.radius),
     }) {
         hovered = Clay_Hovered();
-        Clay_String s = {.chars = buf, .length = (int32_t)n};
-        jpx_text(s, cfg);
+        size_t caret = slot->ed.caret;
+        if (caret > slot->ed.len) caret = slot->ed.len;
+
+        if (focused && app->caretOn) {
+            if (caret > 0) {
+                Clay_String before = {.chars = buf, .length = (int32_t)caret};
+                jpx_text(before, cfg);
+            }
+            CLAY(Jpx__LocalId(app, "caret"), {
+                .layout = {.sizing = {CLAY_SIZING_FIXED(1),
+                                      CLAY_SIZING_FIXED((float)app->theme.fontSize)}},
+                .backgroundColor = fgColor,
+            }) {}
+            if (slot->ed.len > caret) {
+                Clay_String after = {.chars = buf + caret,
+                                     .length = (int32_t)(slot->ed.len - caret)};
+                jpx_text(after, cfg);
+            }
+        } else if (slot->ed.len > 0) {
+            Clay_String s = {.chars = buf, .length = (int32_t)slot->ed.len};
+            jpx_text(s, cfg);
+        }
     }
-    if (pressed_this_frame(app, win, hovered)) Jpx__Invalidate(app);
+
+    if (pressed_this_frame(app, win, hovered)) {
+        if (!focused) {
+            snprintf(w->focusId, sizeof(w->focusId), "%s", id);
+            Jpx__TextEditSetCaret(&slot->ed, slot->ed.len);
+            app->caretOn = 1;
+        }
+        Jpx__Invalidate(app);
+    }
     return 0;
 }
 

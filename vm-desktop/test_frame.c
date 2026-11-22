@@ -228,6 +228,25 @@ static void test_wm_input(void) {
     expect(strcmp(g_probe.lastKey, "Tab") == 0, "key text is Tab");
     expect_int(g_probe.lastIsDown, 1, "keydown reported as isDown");
 
+    /* 修饰键不在 keyHandler 签名里，经 VmWm_KeyModifiers 查询。 */
+    int ctrl = 0, shift = 0, alt = 0;
+    VmWm_KeyModifiers(wm, &ctrl, &shift, &alt);
+    expect_int(shift, 0, "no shift for plain Tab");
+
+    const char *ctrlA = "{\"kind\":\"keydown\",\"key\":\"a\",\"code\":\"KeyA\","
+                        "\"ctrl\":1,\"clientId\":\"A\"}";
+    VmWm_HandleInput(wm, ctrlA, strlen(ctrlA));
+    VmWm_KeyModifiers(wm, &ctrl, &shift, &alt);
+    expect_int(ctrl, 1, "ctrl modifier reaches VmWm_KeyModifiers");
+    expect_int(shift, 0, "shift stays 0 for ctrl-only key");
+
+    const char *shiftTab = "{\"kind\":\"keydown\",\"key\":\"Tab\",\"code\":\"Tab\","
+                           "\"shift\":1,\"clientId\":\"A\"}";
+    VmWm_HandleInput(wm, shiftTab, strlen(shiftTab));
+    VmWm_KeyModifiers(wm, &ctrl, &shift, &alt);
+    expect_int(shift, 1, "shift modifier reaches VmWm_KeyModifiers");
+    expect_int(ctrl, 0, "ctrl cleared when not pressed");
+
     const char *wheel = "{\"kind\":\"wheel\",\"x\":100,\"y\":100,\"deltaY\":120,"
                         "\"clientId\":\"A\"}";
     VmWm_HandleInput(wm, wheel, strlen(wheel));

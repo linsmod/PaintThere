@@ -80,6 +80,8 @@ typedef struct {
     VmCursor cursors[VM_WM_MAX_CURSORS];
     int cursorCount;
     char focusClientId[64];
+    /* 最近一次键盘事件的修饰键；keyHandler 签名不含修饰键，用 VmWm_KeyModifiers 取 */
+    int keyCtrl, keyShift, keyAlt;
     /* 全局指针（最近一次指针事件的画布坐标）：用于跨窗口 hover 判定 */
     int pointerX, pointerY;
     int pointerDown;
@@ -105,6 +107,8 @@ void VmWm_Focus(VmWm *wm, int id);
 void VmWm_Raise(VmWm *wm, int id);
 void VmWm_Move(VmWm *wm, int id, int x, int y);
 void VmWm_SetKeyHandler(VmWm *wm, int id, VmWindowKeyHandler handler, void *userData);
+/* 最近一次键盘事件的修饰键；keyHandler 内部调用即得该次事件的修饰键。 */
+void VmWm_KeyModifiers(VmWm *wm, int *ctrl, int *shift, int *alt);
 void VmWm_SetWheelHandler(VmWm *wm, int id, VmWindowWheelHandler handler, void *userData);
 
 void VmWm_SetWindowFlags(VmWm *wm, int id, unsigned flags);

@@ -28,11 +28,94 @@ static void window_close_cb(int windowId, void *userData) {
     if (w && w->desc.onClose) w->desc.onClose(w->id, w->desc.user);
 }
 
+JpxEditSlot *Jpx__EditSlot(JpxWindow *win, const char *id) {
+    if (!win || !id) return NULL;
+    for (int i = 0; i < JPX_MAX_TEXT_INPUTS; i++) {
+        if (win->edits[i].used && strcmp(win->edits[i].id, id) == 0) return &win->edits[i];
+    }
+    for (int i = 0; i < JPX_MAX_TEXT_INPUTS; i++) {
+        if (win->edits[i].used) continue;
+        win->edits[i].used = 1;
+        snprintf(win->edits[i].id, sizeof(win->edits[i].id), "%s", id);
+        return &win->edits[i];
+    }
+    return NULL;
+}
+
+void Jpx__FocusRegister(JpxWindow *win, const char *id, size_t *len, JpxTextEdit *ed) {
+    if (!win || !id) return;
+    for (int i = 0; i < win->focusableCount; i++) {   /* 已登记则只更新指针 */
+        if (strcmp(win->focusables[i].id, id) == 0) {
+            win->focusables[i].len = len;
+            win->focusables[i].ed = ed;
+            return;
+        }
+    }
+    if (win->focusableCount >= JPX_MAX_FOCUSABLE) return;
+    JpxFocusable *f = &win->focusables[win->focusableCount++];
+    snprintf(f->id, sizeof(f->id), "%s", id);
+    f->len = len;
+    f->ed = ed;
+}
+
+void Jpx__FocusTab(JpxWindow *win, int dir) {
+    if (!win || win->focusableCount == 0) return;
+    int cur = -1;
+    for (int i = 0; i < win->focusableCount; i++) {
+        if (strcmp(win->focusables[i].id, win->focusId) == 0) {
+            cur = i;
+            break;
+        }
+    }
+    int next;
+    if (cur < 0) {
+        next = dir > 0 ? 0 : win->focusableCount - 1;
+    } else {
+        next = (cur + dir + win->focusableCount) % win->focusableCount;
+    }
+    snprintf(win->focusId, sizeof(win->focusId), "%s", win->focusables[next].id);
+    /* 从别处切入输入框时把 caret 放到末尾，避免 caret 停在旧位置。 */
+    JpxTextEdit *ed = win->focusables[next].ed;
+    if (ed) Jpx__TextEditSetCaret(ed, ed->len);
+}
+
+int Jpx__FocusKey(JpxWindow *win, const char *key, int ctrl, int shift) {
+    if (!win || !key || !win->focusId[0]) return 0;
+    for (int i = 0; i < win->focusableCount; i++) {
+        if (strcmp(win->focusables[i].id, win->focusId) != 0) continue;
+        JpxTextEdit *ed = win->focusables[i].ed;
+        if (!ed) return 0;
+        if (!Jpx__TextEditKey(ed, key, ctrl, shift)) return 0;
+        if (win->focusables[i].len) *win->focusables[i].len = ed->len;
+        return 1;
+    }
+    return 0;
+}
+
 static int window_key_cb(int windowId, const char *key, const char *code, int isDown,
                          void *userData) {
     JpxWindow *w = (JpxWindow *)userData;
-    if (!w || !w->desc.onKey) return 0;
+    if (!w) return 0;
     JpxApp *app = w->app;
+    VmWm_KeyModifiers(app->wm, &app->ctrl, &app->shift, &app->alt);
+
+    if (isDown) {
+        /* 焦点控件先吃：文本编辑消费掉大多数可打印键与编辑键。 */
+        if (Jpx__FocusKey(w, key, app->ctrl, app->shift)) {
+            app->caretOn = 1;
+            Jpx__Invalidate(app);
+            return 1;
+        }
+        /* Tab 在窗口内控件间循环，Shift 反向；无可聚焦控件时交给应用。 */
+        if (strcmp(key, "Tab") == 0 && w->focusableCount > 0) {
+            Jpx__FocusTab(w, app->shift ? -1 : 1);
+            app->caretOn = 1;
+            Jpx__Invalidate(app);
+            return 1;
+        }
+    }
+
+    if (!w->desc.onKey) return 0;
     return w->desc.onKey(windowId, key, code, isDown, app->ctrl, app->shift, app->alt,
                          w->desc.user);
 }
@@ -100,6 +183,7 @@ static Clay_RenderCommandArray window_layout_cb(void *userData) {
     Clay_SetCurrentContext(w->ctx);
     Clay_BeginLayout();
     app->localSerial = 0;
+    w->focusableCount = 0;   /* 可聚焦控件每帧按声明序重新登记 */
 
     /* 按下沿由 WM 的指针状态显式推导：Clay 的 onHover 回调在窗口上下文里
        不可靠地触发，控件交互统一用这个边沿 + Clay_Hovered() 判定。 */

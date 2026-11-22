@@ -69,11 +69,18 @@ add_executable(test_frame
 )
 target_include_directories(test_frame PRIVATE "${CLAY_DIR}" "${MSTB_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
 
+# 文本编辑状态机断言：纯逻辑，不链接 Clay / WM / 网络，毫秒级。
+add_executable(test_text_edit
+    test_text_edit.c
+    jpx/jpx_text_edit.c
+)
+target_include_directories(test_text_edit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+
 # C 版渲染宿主：复用 canvas-cpp / ant 引擎执行前端脚本。
 add_executable(vm_renderer renderer/main.c)
 target_link_libraries(vm_renderer PRIVATE canvas)
 
-set_target_properties(demo_wm demo_jpx vm_renderer test_frame PROPERTIES
+set_target_properties(demo_wm demo_jpx vm_renderer test_frame test_text_edit PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"

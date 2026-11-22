@@ -14,11 +14,12 @@
 
 static int g_failures;
 static int g_checks;
+static int g_quiet;   /* --probe：只输出失败与汇总，便于集中运行 */
 
 static void expect(int cond, const char *what) {
     g_checks++;
     if (cond) {
-        printf("PASS  %s\n", what);
+        if (!g_quiet) printf("PASS  %s\n", what);
     } else {
         g_failures++;
         printf("FAIL  %s\n", what);
@@ -28,7 +29,7 @@ static void expect(int cond, const char *what) {
 static void expect_int(int actual, int expected, const char *what) {
     g_checks++;
     if (actual == expected) {
-        printf("PASS  %s (=%d)\n", what, actual);
+        if (!g_quiet) printf("PASS  %s (=%d)\n", what, actual);
     } else {
         g_failures++;
         printf("FAIL  %s (expected %d, got %d)\n", what, expected, actual);
@@ -85,7 +86,7 @@ static int load_font_any(const char *preferred) {
     for (int i = 0; i < (int)(sizeof(candidates) / sizeof(candidates[0])); i++) {
         if (!candidates[i]) continue;
         if (VmFont_LoadFile(candidates[i], 0) == 0) {
-            printf("       loaded font: %s\n", candidates[i]);
+            if (!g_quiet) printf("       loaded font: %s\n", candidates[i]);
             return 0;
         }
     }
@@ -93,7 +94,7 @@ static int load_font_any(const char *preferred) {
 }
 
 static void test_font(const char *fontPath) {
-    printf("-- font: %s\n", fontPath);
+    if (!g_quiet) printf("-- font: %s\n", fontPath);
     expect_int(load_font_any(fontPath), 0, "load font slot 0");
 
     VmFontMetrics m = VmFont_Measure(0, 14, "Window A", -1);
@@ -101,7 +102,7 @@ static void test_font(const char *fontPath) {
     expect(m.lineStep > 0, "line step > 0");
     expect(m.baseline > 0 && m.baseline < m.height + m.lineStep, "baseline inside glyph box");
     expect_int(m.lines, 1, "single line");
-    printf("       \"Window A\" @14 -> w=%d h=%d baseline=%d lineStep=%d\n",
+    if (!g_quiet) printf("       \"Window A\" @14 -> w=%d h=%d baseline=%d lineStep=%d\n",
            m.width, m.height, m.baseline, m.lineStep);
 
     VmFontMetrics empty = VmFont_Measure(0, 14, "", 0);
@@ -115,7 +116,7 @@ static void test_font(const char *fontPath) {
     const char *cn = "跨端图绘指令流";
     VmFontMetrics cm = VmFont_Measure(0, 16, cn, (int)strlen(cn));
     expect(cm.width > 0, "CJK text width > 0");
-    printf("       \"%s\" @16 -> w=%d\n", cn, cm.width);
+    if (!g_quiet) printf("       \"%s\" @16 -> w=%d\n", cn, cm.width);
 
     int starts[16];
     const char *para = "the quick brown fox jumps over the lazy dog";
@@ -130,7 +131,7 @@ static void test_font(const char *fontPath) {
 }
 
 static void test_wm_chrome_and_clip(void) {
-    printf("-- wm: chrome / clip / dirty\n");
+    if (!g_quiet) printf("-- wm: chrome / clip / dirty\n");
     VmWm *wm = VmWm_Create(800, 600);
     expect(wm != NULL, "create wm");
     if (!wm) return;
@@ -204,7 +205,7 @@ static void test_wm_chrome_and_clip(void) {
 }
 
 static void test_wm_input(void) {
-    printf("-- wm: input routing\n");
+    if (!g_quiet) printf("-- wm: input routing\n");
     VmWm *wm = VmWm_Create(800, 600);
     if (!wm) return;
     VmWm_AddWindow(wm, 1, "A", 60, 60, 360, 260, dummy_layout, NULL);
@@ -260,7 +261,7 @@ static void feed(VmWm *wm, const char *json) {
 }
 
 static void test_wm_flags(void) {
-    printf("-- wm: flags / close / minimize\n");
+    if (!g_quiet) printf("-- wm: flags / close / minimize\n");
     VmWm *wm = VmWm_Create(800, 600);
     if (!wm) return;
     VmWm_AddWindow(wm, 1, "A", 60, 60, 360, 260, dummy_layout, NULL);
@@ -319,7 +320,7 @@ static void test_wm_flags(void) {
 }
 
 static void test_shell(void) {
-    printf("-- shell: taskbar\n");
+    if (!g_quiet) printf("-- shell: taskbar\n");
     VmWm *wm = VmWm_Create(800, 600);
     if (!wm) return;
     VmWm_AddWindow(wm, 1, "A", 60, 60, 360, 260, dummy_layout, NULL);
@@ -384,7 +385,7 @@ static void test_shell(void) {
 }
 
 static void test_clipboard(void) {
-    printf("-- clipboard\n");
+    if (!g_quiet) printf("-- clipboard\n");
     VmClipboard_Clear();
     expect_int(VmClipboard_HasText(), 0, "empty at start");
     VmClipboard_SetText("hello 世界");
@@ -400,8 +401,16 @@ static void test_clipboard(void) {
 }
 
 int main(int argc, char **argv) {
-    const char *fontPath = argc > 1 ? argv[1] : "../assets/font.ttf";
-    printf("test_frame: font=%s\n", fontPath);
+    const char *fontPath = NULL;
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--probe") == 0) {
+            g_quiet = 1;
+            continue;
+        }
+        if (!fontPath) fontPath = argv[i];
+    }
+    if (!fontPath) fontPath = "../assets/font.ttf";
+    if (!g_quiet) printf("test_frame: font=%s\n", fontPath);
     test_font(fontPath);
     test_wm_chrome_and_clip();
     test_wm_input();

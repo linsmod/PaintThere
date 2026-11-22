@@ -73,6 +73,10 @@ $p = Start-Process -FilePath ".\demo_wm.exe" -ArgumentList "9000" -PassThru -Red
 
 # 帧断言测试（不开服务，默认按候选路径找字体；最稳是一次性传入绝对路径）
 .\vm-desktop\build\test_frame.exe ..\assets\font.ttf
+# 集中运行用 --probe：只输出失败项与汇总
+.\vm-desktop\build\test_frame.exe --probe
+# 文本编辑状态机断言（纯逻辑，毫秒级，无外部依赖）
+.\vm-desktop\build\test_text_edit.exe --probe
 
 # 验证资源 + 首帧（自适应帧率下空闲无后续帧）
 curl -s --max-time 2 -N http://127.0.0.1:9000/events

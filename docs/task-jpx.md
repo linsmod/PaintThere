@@ -415,7 +415,7 @@ agent-browser --session jpx close
 - [x] 阶段 A：共享基础 + 前置修复（2026-11-22 完成）
 - [x] 阶段 B：WM 接口补齐 + 桌面外壳（2026-11-22 完成）
 - [x] 阶段 C：JPX 宿主（2026-11-22 完成）
-- [ ] 阶段 D：控件、文本编辑、剪贴板接入
+- [ ] 阶段 D：控件、文本编辑、剪贴板接入（D1 文本编辑状态机完成）
 - [ ] 阶段 E：首个真实程序 + guest 部署
 
 ### 阶段 A 执行记录
@@ -480,3 +480,23 @@ agent-browser --session jpx close
 已知限制：`Jpx_TextInput` 目前只渲染文本与边框，编辑（caret/选区/剪贴板）属阶段 D；`Jpx_ScrollBegin` 是静态裁剪容器，wheel 偏移待阶段 D 接入。
 
 恢复点：阶段 D 从 `jpx/jpx_widget.c` 的文本编辑模型（caret 闪烁、选区、Ctrl+C/V/X）与 `Jpx_ScrollBegin` 的 wheel 偏移接入开始。
+
+### 阶段 D 执行记录
+
+拆成 D1–D5 五步，每步独立验收（D1 状态机 → D2 输入框接线 → D3 剪贴板 → D4 滚动区 → D5 form demo 与泄漏检查）。
+
+**D1（2026-11-22 完成）**：文本编辑状态机，纯逻辑、不依赖 Clay/WM/网络。
+
+新增：`jpx/jpx_text_edit.h`/`.c`（`JpxTextEdit`：`buf/cap/len/caret/anchor`，caret 恒落在 UTF-8 字符边界；插入先删选区、容量不足时按字符边界收缩不写半字符；Backspace/Delete/左右键/Home/End/Shift 选区/Ctrl+A 消费，Tab/Enter/Escape/上下键/PageUp/Down 与 Ctrl 组合不消费）、`test_text_edit.c`（66 项断言，11 ms）、CMake `test_text_edit` 目标（不链接 Clay）。
+修改：`test_frame.c` 补 `--probe`（只输出失败与汇总），`docs/test-timing.md` 登记两个测试的耗时。
+
+验证证据：
+
+- `test_text_edit.exe --probe` → 66 项 0 失败；覆盖 ASCII 插入/中间插入、单字节与三字节字符的 Backspace/Delete、`Abc`+选区替换、无 Shift 方向键折叠选区、跨 CJK 选区删除、Ctrl+A、未消费键返回 0、`cap-1` 截断与「放不下整个字符就不写」、`init`/`SetCaret` 落在续字节时回退、非法序列（`0xFF`）不越界。
+- `test_frame.exe --probe` → 91 项 0 失败（`--probe` 改动未影响断言）。
+
+期间修掉的偏差：`Jpx__TextEditKey` 最初把 `shift` 也算作「组合键」直接返回 0，导致 Shift+a 得到的 `"A"` 输入不进去。Shift 的语义已经体现在 `key` 本身，只拦截 `ctrl`。
+
+未接线：`Jpx_TextInput` 仍是渲染态；修饰键（`ctrl/shift/alt`）目前没从 `VmWm` 传到 `VmWindowKeyHandler`（签名只有 `key/code/isDown`），D2 需要在 WM 层补「最近一次按键修饰键」的查询，否则 Tab/Shift+Tab 与 D3 的 Ctrl+C/V/X 无法区分。
+
+恢复点：D2 从 `vm_wm.c` 的键盘解析补修饰键、`jpx_window.c` 的 `window_key_cb` 接控件焦点链、`jpx_widget.c` 的 `Jpx_TextInput` 接 `JpxTextEdit` 开始。

@@ -88,6 +88,8 @@ VmWindow *VmWm_AddWindow(VmWm *wm, int id, const char *title,
     win->z = wm->nextZ++;
     win->focused = 0;
     win->minimized = 0;
+    win->flags = 0;
+    wm->dirty = 1;
     return win;
 }
 
@@ -99,6 +101,7 @@ void VmWm_RemoveWindow(VmWm *wm, int id) {
         wm->count--;
         if (wm->focusId == id) wm->focusId = -1;
         if (wm->dragId == id) wm->dragId = -1;
+        wm->dirty = 1;
         return;
     }
 }
@@ -109,15 +112,62 @@ VmWindow *VmWm_FindWindow(VmWm *wm, int id) {
     return NULL;
 }
 
-/* Hit test from top z to bottom; title bar included in window rect. */
+void VmWm_WindowBody(const VmWm *wm, const VmWindow *win, VmRect *out) {
+    if (!out) return;
+    if (!win) { *out = (VmRect){0, 0, 0, 0}; return; }
+    int bw = wm ? wm->chrome.borderWidth : 2;
+    int th = wm ? wm->chrome.titleHeight : VM_WM_TITLE_HEIGHT;
+    if (win->flags & VM_WIN_UNDECORATED) {
+        *out = (VmRect){(float)win->x, (float)win->y, (float)win->w, (float)win->h};
+        return;
+    }
+    int bw2 = 2 * bw;
+    int w = win->w - bw2;
+    int h = win->h - th - bw;
+    if (w < 0) w = 0;
+    if (h < 0) h = 0;
+    *out = (VmRect){(float)(win->x + bw), (float)(win->y + th), (float)w, (float)h};
+}
+
+static int rect_contains(VmRect r, int x, int y) {
+    return x >= (int)r.x && x < (int)(r.x + r.w) && y >= (int)r.y && y < (int)(r.y + r.h);
+}
+
+/* 标题栏右侧按钮：最小化 / 关闭。命中与绘制共用同一份几何，避免两处漂移。 */
+static void chrome_button_rects(const VmWm *wm, const VmWindow *win,
+                                VmRect *closeRect, VmRect *minRect, int *sizeOut) {
+    int bw = wm->chrome.borderWidth;
+    int th = wm->chrome.titleHeight;
+    int size = th - 2 * bw - 8;
+    if (size > 16) size = 16;
+    if (size < 8) size = 0;
+    if (sizeOut) *sizeOut = size;
+    if (size == 0) {
+        *closeRect = (VmRect){0, 0, 0, 0};
+        *minRect = *closeRect;
+        return;
+    }
+    int by = win->y + bw + (th - bw - size) / 2;
+    int closeX = win->x + win->w - bw - 4 - size;
+    int minX = closeX - size - 4;
+    *closeRect = (VmRect){(float)closeX, (float)by, (float)size, (float)size};
+    *minRect = (VmRect){(float)minX, (float)by, (float)size, (float)size};
+}
+
+/* Hit test: 置顶窗口整层优先，其次按 z 从高到低。 */
 VmWindow *VmWm_HitTest(VmWm *wm, int x, int y) {
     if (!wm) return NULL;
-    for (int z = wm->nextZ - 1; z >= 1; z--) {
-        for (int i = 0; i < wm->count; i++) {
-            VmWindow *win = &wm->windows[i];
-            if (win->z != z || win->minimized) continue;
-            if (x >= win->x && x < win->x + win->w &&
-                y >= win->y && y < win->y + win->h) return win;
+    for (int pass = 0; pass < 2; pass++) {
+        int wantTop = (pass == 0);
+        for (int z = wm->nextZ - 1; z >= 1; z--) {
+            for (int i = 0; i < wm->count; i++) {
+                VmWindow *win = &wm->windows[i];
+                if (win->z != z || win->minimized) continue;
+                int top = (win->flags & VM_WIN_TOPMOST) ? 1 : 0;
+                if (top != wantTop) continue;
+                if (x >= win->x && x < win->x + win->w &&
+                    y >= win->y && y < win->y + win->h) return win;
+            }
         }
     }
     return NULL;
@@ -130,9 +180,74 @@ void VmWm_Raise(VmWm *wm, int id) {
 
 void VmWm_Focus(VmWm *wm, int id) {
     if (!wm) return;
+    VmWindow *target = VmWm_FindWindow(wm, id);
+    if (target && (target->flags & VM_WIN_NOFOCUS)) return;
     for (int i = 0; i < wm->count; i++) wm->windows[i].focused = (wm->windows[i].id == id);
     wm->focusId = id;
     VmWm_Raise(wm, id);
+    wm->dirty = 1;
+}
+
+void VmWm_SetWindowFlags(VmWm *wm, int id, unsigned flags) {
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    if (!win) return;
+    win->flags = flags;
+    if (flags & VM_WIN_NOFOCUS) {
+        if (wm->focusId == id) wm->focusId = -1;
+        win->focused = 0;
+    }
+    wm->dirty = 1;
+}
+
+unsigned VmWm_WindowFlags(VmWm *wm, int id) {
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    return win ? win->flags : 0u;
+}
+
+void VmWm_SetCloseHandler(VmWm *wm, int id, VmWindowCloseHandler handler, void *userData) {
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    if (!win) return;
+    win->closeHandler = handler;
+    win->closeUserData = userData;
+}
+
+int VmWm_Enumerate(VmWm *wm, int *ids, int cap) {
+    if (!wm) return 0;
+    int n = 0;
+    for (int z = 1; z < wm->nextZ; z++) {
+        for (int i = 0; i < wm->count; i++) {
+            if (wm->windows[i].z != z) continue;
+            if (ids && n < cap) ids[n] = wm->windows[i].id;
+            n++;
+        }
+    }
+    return n;
+}
+
+void VmWm_Minimize(VmWm *wm, int id) {
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    if (!win) return;
+    win->minimized = 1;
+    if (wm->focusId == id) { wm->focusId = -1; win->focused = 0; }
+    if (wm->dragId == id) wm->dragId = -1;
+    wm->dirty = 1;
+}
+
+void VmWm_Restore(VmWm *wm, int id) {
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    if (!win) return;
+    win->minimized = 0;
+    if (!(win->flags & VM_WIN_NOFOCUS)) VmWm_Focus(wm, id);
+    wm->dirty = 1;
+}
+
+int VmWm_IsMinimized(VmWm *wm, int id) {
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    return win ? win->minimized : 0;
+}
+
+int VmWm_FocusId(const VmWm *wm) {
+    return wm ? wm->focusId : -1;
 }
 
 void VmWm_Move(VmWm *wm, int id, int x, int y) {
@@ -186,22 +301,24 @@ static void extract_str(const char *json, const char *key, char *out, size_t cap
 }
 
 /* Push pointer state into every window's Clay context.
-   hover 与 press 分开：指针落在哪个窗口就给哪个窗口局部坐标，非焦点窗口也能 hover 高亮；
-   press 只给焦点窗口，避免多个窗口同时进入按下态。 */
+   局部坐标按各自 body 矩形换算，非焦点窗口也能 hover；
+   press 只给指针命中的那个窗口（无焦点窗口如任务栏也要能收到点击），避免多窗口同时按下。 */
 static void sync_pointer_state(VmWm *wm) {
+    VmWindow *hit = wm->pointerValid ? VmWm_HitTest(wm, wm->pointerX, wm->pointerY) : NULL;
     for (int i = 0; i < wm->count; i++) {
         VmWindow *win = &wm->windows[i];
         if (!win->clayCtx) continue;
         Clay_SetCurrentContext(win->clayCtx);
-        const int bw = wm->chrome.borderWidth;
-        int localX = wm->pointerX - (win->x + bw);
-        int localY = wm->pointerY - (win->y + wm->chrome.titleHeight + bw);
+        VmRect body;
+        VmWm_WindowBody(wm, win, &body);
+        float localX = (float)wm->pointerX - body.x;
+        float localY = (float)wm->pointerY - body.y;
         int inside = wm->pointerValid && !win->minimized &&
                      localX >= 0 && localY >= 0 &&
-                     localX < win->w - 2 * bw && localY < win->h - wm->chrome.titleHeight - 2 * bw;
+                     localX < body.w && localY < body.h;
         if (inside) {
-            Clay_SetPointerState((Clay_Vector2){(float)localX, (float)localY},
-                                 win->focused && wm->pointerDown);
+            int press = (hit == win) && wm->pointerDown;
+            Clay_SetPointerState((Clay_Vector2){localX, localY}, press);
         } else {
             Clay_SetPointerState((Clay_Vector2){-1000.0f, -1000.0f}, 0);
         }
@@ -274,10 +391,31 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     int ownsFocus = (*clientId && strcmp(wm->focusClientId, clientId) == 0);
     if (isDown) ownsFocus = 1; /* this client just claimed focus above */
 
+    /* 装饰按钮先于焦点与拖动：命中即消费，不再启动拖动。 */
+    if (ownsFocus && isDown && hit && !(hit->flags & VM_WIN_UNDECORATED)) {
+        VmRect closeRect, minRect;
+        int size = 0;
+        chrome_button_rects(wm, hit, &closeRect, &minRect, &size);
+        if (size > 0 && rect_contains(closeRect, x, y)) {
+            if (hit->closeHandler) hit->closeHandler(hit->id, hit->closeUserData);
+            wm->dirty = 1;
+            sync_pointer_state(wm);
+            return 1;
+        }
+        if (size > 0 && rect_contains(minRect, x, y)) {
+            VmWm_Minimize(wm, hit->id);
+            sync_pointer_state(wm);
+            return 1;
+        }
+    }
+
     if (ownsFocus && (isDown || strcmp(kind, "click") == 0) && hit) {
-        VmWm_Focus(wm, hit->id);
-        changed = 1;
-        if (y < hit->y + wm->chrome.titleHeight && button == 0) {
+        if (!(hit->flags & VM_WIN_NOFOCUS)) {
+            VmWm_Focus(wm, hit->id);
+            changed = 1;
+        }
+        int draggable = !(hit->flags & (VM_WIN_UNDECORATED | VM_WIN_PINNED | VM_WIN_NOFOCUS));
+        if (draggable && y < hit->y + wm->chrome.titleHeight && button == 0) {
             wm->dragId = hit->id;
             wm->dragOffX = x - hit->x;
             wm->dragOffY = y - hit->y;
@@ -297,8 +435,10 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     /* Update local pointer for the focused window (content offset). */
     VmWindow *focus = VmWm_FindWindow(wm, wm->focusId);
     if (ownsFocus && focus && (isMove || isDown || isUp || strcmp(kind, "click") == 0)) {
-        focus->pointerX = x - (focus->x + wm->chrome.borderWidth);
-        focus->pointerY = y - (focus->y + wm->chrome.titleHeight + wm->chrome.borderWidth);
+        VmRect body;
+        VmWm_WindowBody(wm, focus, &body);
+        focus->pointerX = x - (int)body.x;
+        focus->pointerY = y - (int)body.y;
         if (isDown) focus->pointerDown = 1;
         if (isUp) focus->pointerDown = 0;
     }
@@ -307,8 +447,10 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
 
     /* 滚轮：交给指针所在窗口，WM 不消费滚动语义。 */
     if (isWheel && hit && hit->wheelHandler) {
-        int lx = x - (hit->x + wm->chrome.borderWidth);
-        int ly = y - (hit->y + wm->chrome.titleHeight + wm->chrome.borderWidth);
+        VmRect body;
+        VmWm_WindowBody(wm, hit, &body);
+        int lx = x - (int)body.x;
+        int ly = y - (int)body.y;
         if (hit->wheelHandler(hit->id, lx, ly, deltaY, hit->wheelUserData)) changed = 1;
     }
 
@@ -373,11 +515,23 @@ static void append_cursor_commands(VmWm *wm, VmDisplayList *out) {
     }
 }
 
+static void append_text_cmd(VmDisplayList *out, const char *id,
+                            int x, int y, int w, int h, const char *text,
+                            int fontId, int fontSize, const char *color) {
+    VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_TEXT, id);
+    if (!c) return;
+    VmRect box = {(float)x, (float)y, (float)w, (float)h};
+    c->rect = box;
+    c->args.drawText.rect = box;
+    VmDisplay_CopyStr(c->args.drawText.text, sizeof(c->args.drawText.text), text);
+    c->args.drawText.fontId = (uint16_t)fontId;
+    c->args.drawText.fontSize = (uint16_t)fontSize;
+    VmDisplay_CopyStr(c->args.drawText.color, sizeof(c->args.drawText.color), color);
+}
+
 static void append_title_cmd(VmDisplayList *out, const char *id,
                              int x, int y, int w, const VmChrome *ch,
                              const char *title, const char *color) {
-    VmDrawCommand *c = VmDisplay_Append(out, VM_CMD_DRAW_TEXT, id);
-    if (!c) return;
     int lineStep = VmFont_LineHeight(ch->titleFontId, ch->titleFontSize);
     if (lineStep <= 0) lineStep = ch->titleFontSize;
     int pad = 8;
@@ -386,13 +540,7 @@ static void append_title_cmd(VmDisplayList *out, const char *id,
     if (ty < y + ch->borderWidth) ty = y + ch->borderWidth;
     int tw = w - 2 * ch->borderWidth - 2 * pad;
     if (tw < 0) tw = 0;
-    VmRect box = {(float)tx, (float)ty, (float)tw, (float)lineStep};
-    c->rect = box;
-    c->args.drawText.rect = box;
-    VmDisplay_CopyStr(c->args.drawText.text, sizeof(c->args.drawText.text), title);
-    c->args.drawText.fontId = (uint16_t)ch->titleFontId;
-    c->args.drawText.fontSize = (uint16_t)ch->titleFontSize;
-    VmDisplay_CopyStr(c->args.drawText.color, sizeof(c->args.drawText.color), color);
+    append_text_cmd(out, id, tx, ty, tw, lineStep, title, ch->titleFontId, ch->titleFontSize, color);
 }
 
 static void append_clip_cmd(VmDisplayList *out, VmCmdType type, const char *id, VmRect r) {
@@ -402,6 +550,79 @@ static void append_clip_cmd(VmDisplayList *out, VmCmdType type, const char *id, 
     c->args.clip = r;
 }
 
+static void build_one_window(VmWm *wm, VmDisplayList *out, VmWindow *win,
+                             const VmChrome *ch, const char *(*fontResolver)(uint16_t)) {
+    char idbuf[64];
+    VmRect body;
+    VmWm_WindowBody(wm, win, &body);
+    int bodyX = (int)body.x, bodyY = (int)body.y;
+    int bodyW = (int)body.w, bodyH = (int)body.h;
+
+    snprintf(idbuf, sizeof(idbuf), "w%d_body", win->id);
+    append_rect_cmd(out, idbuf, bodyX, bodyY, bodyW, bodyH,
+                    win->bodyStyleId ? win->bodyStyleId : ch->windowStyleId, 0);
+
+    if (!(win->flags & VM_WIN_UNDECORATED)) {
+        const int bw = ch->borderWidth;
+        const int th = ch->titleHeight;
+
+        snprintf(idbuf, sizeof(idbuf), "w%d_title", win->id);
+        append_rect_cmd(out, idbuf, win->x + bw, win->y + bw,
+                        win->w - 2 * bw, th - bw,
+                        win->focused ? ch->titleFocusColor : ch->titleIdleColor, 0);
+
+        snprintf(idbuf, sizeof(idbuf), "w%d_ttext", win->id);
+        append_title_cmd(out, idbuf, win->x, win->y, win->w, ch, win->title,
+                         "rgba(255,255,255,1)");
+
+        VmRect closeRect, minRect;
+        int size = 0;
+        chrome_button_rects(wm, win, &closeRect, &minRect, &size);
+        if (size > 0) {
+            int barW = size / 2, barH = 2;
+            snprintf(idbuf, sizeof(idbuf), "w%d_min", win->id);
+            append_rect_cmd(out, idbuf,
+                            (int)minRect.x + (size - barW) / 2,
+                            (int)minRect.y + size / 2 - barH / 2,
+                            barW, barH, "rgba(255,255,255,0.85)", 0);
+
+            int lineStep = VmFont_LineHeight(ch->titleFontId, ch->titleFontSize);
+            if (lineStep <= 0) lineStep = ch->titleFontSize;
+            int glyphW = VmFont_Width(ch->titleFontId, ch->titleFontSize, "×", -1);
+            snprintf(idbuf, sizeof(idbuf), "w%d_close", win->id);
+            append_text_cmd(out, idbuf,
+                            (int)closeRect.x + (size - glyphW) / 2,
+                            (int)closeRect.y + (size - lineStep) / 2,
+                            glyphW > 0 ? glyphW : size, lineStep,
+                            "×", ch->titleFontId, ch->titleFontSize,
+                            "rgba(255,255,255,0.95)");
+        }
+
+        snprintf(idbuf, sizeof(idbuf), "w%d_border", win->id);
+        append_border_cmd(out, idbuf, win->x, win->y, win->w, win->h, bw,
+                          win->focused ? ch->borderFocusColor : ch->borderIdleColor);
+    }
+
+    /* 窗口内容裁到 body：防止控件溢出画到别的窗口上。 */
+    int clipped = wm->contentClip && win->layout && bodyW > 0 && bodyH > 0;
+    if (clipped) {
+        snprintf(idbuf, sizeof(idbuf), "w%d_clip", win->id);
+        append_clip_cmd(out, VM_CMD_CLIP_PUSH, idbuf, body);
+    }
+
+    if (win->layout && win->clayCtx) {
+        Clay_SetCurrentContext(win->clayCtx);
+        Clay_RenderCommandArray cmds = win->layout(win->userData);
+        ClayFrame_AppendCommands(out, cmds.internalArray, cmds.length,
+                                 bodyX, bodyY, fontResolver, NULL);
+    }
+
+    if (clipped) {
+        snprintf(idbuf, sizeof(idbuf), "w%d_clip_end", win->id);
+        append_clip_cmd(out, VM_CMD_CLIP_POP, idbuf, body);
+    }
+}
+
 void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
                      const char *(*fontResolver)(uint16_t)) {
     if (!wm || !out) return;
@@ -409,58 +630,16 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
     out->frameId = frameId;
 
     const VmChrome *ch = &wm->chrome;
-    const int bw = ch->borderWidth > 0 ? ch->borderWidth : 0;
-    const int th = ch->titleHeight > 0 ? ch->titleHeight : 0;
-    char idbuf[64];
-    /* Desktop background is a draw program on the bg layer, not sent per-frame. */
-
-    for (int z = 1; z < wm->nextZ; z++) {
-        for (int i = 0; i < wm->count; i++) {
-            VmWindow *win = &wm->windows[i];
-            if (win->z != z || win->minimized) continue;
-
-            int bodyX = win->x + bw, bodyY = win->y + th;
-            int bodyW = win->w - 2 * bw, bodyH = win->h - th - bw;
-            if (bodyW < 0) bodyW = 0;
-            if (bodyH < 0) bodyH = 0;
-
-            snprintf(idbuf, sizeof(idbuf), "w%d_body", win->id);
-            append_rect_cmd(out, idbuf, bodyX, bodyY, bodyW, bodyH, ch->windowStyleId, 0);
-
-            snprintf(idbuf, sizeof(idbuf), "w%d_title", win->id);
-            append_rect_cmd(out, idbuf, win->x + bw, win->y + bw,
-                            win->w - 2 * bw, th - bw,
-                            win->focused ? ch->titleFocusColor : ch->titleIdleColor, 0);
-
-            snprintf(idbuf, sizeof(idbuf), "w%d_ttext", win->id);
-            append_title_cmd(out, idbuf, win->x, win->y, win->w, ch, win->title,
-                             "rgba(255,255,255,1)");
-
-            snprintf(idbuf, sizeof(idbuf), "w%d_border", win->id);
-            append_border_cmd(out, idbuf, win->x, win->y, win->w, win->h, bw,
-                              win->focused ? ch->borderFocusColor : ch->borderIdleColor);
-
-            /* 窗口内容裁到 body：防止控件溢出画到别的窗口上。 */
-            int clipped = wm->contentClip && win->layout && bodyW > 0 && bodyH > 0;
-            if (clipped) {
-                snprintf(idbuf, sizeof(idbuf), "w%d_clip", win->id);
-                append_clip_cmd(out, VM_CMD_CLIP_PUSH, idbuf,
-                                (VmRect){(float)bodyX, (float)bodyY,
-                                         (float)bodyW, (float)bodyH});
-            }
-
-            if (win->layout && win->clayCtx) {
-                Clay_SetCurrentContext(win->clayCtx);
-                Clay_RenderCommandArray cmds = win->layout(win->userData);
-                ClayFrame_AppendCommands(out, cmds.internalArray, cmds.length,
-                                         bodyX, bodyY, fontResolver, NULL);
-            }
-
-            if (clipped) {
-                snprintf(idbuf, sizeof(idbuf), "w%d_clip_end", win->id);
-                append_clip_cmd(out, VM_CMD_CLIP_POP, idbuf,
-                                (VmRect){(float)bodyX, (float)bodyY,
-                                         (float)bodyW, (float)bodyH});
+    /* 普通窗口按 z 从低到高，再整层叠加置顶窗口（任务栏、悬浮提示）。 */
+    for (int pass = 0; pass < 2; pass++) {
+        int wantTop = pass;
+        for (int z = 1; z < wm->nextZ; z++) {
+            for (int i = 0; i < wm->count; i++) {
+                VmWindow *win = &wm->windows[i];
+                if (win->z != z || win->minimized) continue;
+                int top = (win->flags & VM_WIN_TOPMOST) ? 1 : 0;
+                if (top != wantTop) continue;
+                build_one_window(wm, out, win, ch, fontResolver);
             }
         }
     }

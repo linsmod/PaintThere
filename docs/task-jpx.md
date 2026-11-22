@@ -413,7 +413,7 @@ agent-browser --session jpx close
 ## 12. 进度
 
 - [x] 阶段 A：共享基础 + 前置修复（2026-11-22 完成）
-- [ ] 阶段 B：WM 接口补齐 + 桌面外壳
+- [x] 阶段 B：WM 接口补齐 + 桌面外壳（2026-11-22 完成）
 - [ ] 阶段 C：JPX 宿主
 - [ ] 阶段 D：控件、文本编辑、剪贴板接入
 - [ ] 阶段 E：首个真实程序 + guest 部署
@@ -434,3 +434,20 @@ agent-browser --session jpx close
 未验证：浏览器内按键与滚轮的实际交互路径（改用人工浏览器检查，未做自动化）。
 
 恢复点：阶段 B 起，从 `vm_wm.c` 的窗口标志（undecorated/topmost/pinned/noFocus）、`VmWm_Enumerate`、最小化与关闭请求、装饰按钮命中开始；然后是 `vm_shell.c`（任务栏特殊窗口）与 `vm_clipboard.c`。
+
+### 阶段 B 执行记录
+
+新增：`vm_shell.c/.h`（任务栏特殊窗口，Clay 布局列出窗口条目，点击切换焦点/恢复）、`vm_clipboard.c/.h`（guest 单例，4KB UTF-8 缓冲）。
+修改：`vm_wm.c/.h`（`VM_WIN_*` 标志、`VmWm_SetWindowFlags/WindowFlags/SetCloseHandler/Enumerate/Minimize/Restore/IsMinimized/FocusId/WindowBody`、标题栏 ×/— 按钮命中与绘制、顶层窗口两遍合成、press 改投给指针命中的窗口、`bodyStyleId`）、`vm_theme.c/.h`（`panelColor` + `p_panel`/`s_panel`）、`demo_wm.c`（资源改用 `VmTheme_AppendResources`、度量改用 `VmFont_Measure`、加载 `font.ttf`、建任务栏、两个窗口挂关闭回调）、`test_frame.c`（+38 项断言）。
+
+验证证据：
+
+- `test_frame.exe` → **89 项断言 0 失败**。新增覆盖：× 触发 closeHandler 且不自动关窗、— 最小化并清焦点、Restore 重新聚焦、NOFOCUS 抢不到焦点、TOPMOST 合成在普通窗口之后、UNDECORATED 无标题/边框且 body 等于整窗、Enumerate 按 z 升序、任务栏窗口标志/位置/body 宽度、任务栏用 `s_panel` 且合成在普通窗口之后、点条目可恢复并聚焦、剪贴板 round-trip/截断/清空。
+- 9000 实例 SSE：`w32512_body` = `[0,64,800,36,"s_panel"]`；任务栏条目文本 `[56,76.5,40,11,"Window A",0,12,...]`（tile 局部坐标，对应全局 x≈156、y≈576.5，即第 1 个条目内边距 8 处）。
+- 端到端：点 B 的 × 后 `w2_body` 与 `"Window B"` 计数归 0；点 A 的 — 后 `w1_body` 归 0 而任务栏条目仍在；点任务栏条目后 `w1_body` 恢复。
+
+期间修掉的偏差：`VmWm_WindowBody` 统一后，窗口正文原点从 `(x+bw, y+th+bw)` 改为 `(x+bw, y+th)`，与 body 矩形一致（旧代码正文比 body 低 2px）。test_frame 的 wheel 局部坐标期望值随之由 10 改为 12。
+
+已知行为：Clay 的 `PRESSED_THIS_FRAME` 需先有一帧 hover。浏览器总会先发 mousemove，所以真实交互无问题；用 `curl` 合成点击验证时必须先 POST 一次 `mousemove`，否则任务栏条目不会响应。
+
+恢复点：阶段 C 从 `jpx/jpx.h` 与 `jpx_app.c` 开始（吸收 demo_wm 的样板：Clay 上下文、tile 网格、四个 provider、dirty、frameId），用 `demo_jpx.c` 与 `demo_wm` 做等价对照。

@@ -8,7 +8,9 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "vm_clipboard.h"
 #include "vm_font.h"
+#include "vm_shell.h"
 
 static int g_failures;
 static int g_checks;
@@ -230,7 +232,8 @@ static void test_wm_input(void) {
     VmWm_HandleInput(wm, wheel, strlen(wheel));
     expect_int(g_probe.wheelCalls, 1, "wheel reaches window handler");
     expect_int(g_probe.lastWheelLocalX, 38, "wheel local x = canvas - body offset");
-    expect_int(g_probe.lastWheelLocalY, 10, "wheel local y = canvas - body offset");
+    /* body 原点 = (x+border, y+title)，与 BuildFrame 追加 Clay 内容的偏移一致。 */
+    expect_int(g_probe.lastWheelLocalY, 12, "wheel local y = canvas - body offset");
     expect_int(g_probe.lastWheelDelta, 120, "wheel deltaY passed through");
 
     int x0 = 0;
@@ -244,12 +247,164 @@ static void test_wm_input(void) {
     VmWm_Free(wm);
 }
 
+static int g_closeCalls;
+
+static void on_close(int windowId, void *userData) {
+    (void)windowId;
+    (void)userData;
+    g_closeCalls++;
+}
+
+static void feed(VmWm *wm, const char *json) {
+    VmWm_HandleInput(wm, json, strlen(json));
+}
+
+static void test_wm_flags(void) {
+    printf("-- wm: flags / close / minimize\n");
+    VmWm *wm = VmWm_Create(800, 600);
+    if (!wm) return;
+    VmWm_AddWindow(wm, 1, "A", 60, 60, 360, 260, dummy_layout, NULL);
+    VmWm_AddWindow(wm, 2, "B", 300, 200, 360, 260, dummy_layout, NULL);
+    VmWm_SetCloseHandler(wm, 1, on_close, NULL);
+    VmWm_Focus(wm, 1);
+
+    /* 关闭按钮：默认 chrome 下 16px 方块，右端内缩 6px。 */
+    feed(wm, "{\"kind\":\"mousedown\",\"x\":405,\"y\":72,\"button\":0,\"clientId\":\"A\"}");
+    expect_int(g_closeCalls, 1, "close button invokes close handler");
+    expect_int(wm->count, 2, "close handler does not remove the window");
+
+    feed(wm, "{\"kind\":\"mousedown\",\"x\":385,\"y\":72,\"button\":0,\"clientId\":\"A\"}");
+    expect_int(VmWm_IsMinimized(wm, 1), 1, "minimize button minimizes");
+    expect_int(VmWm_FocusId(wm), -1, "minimized window loses focus");
+
+    VmWm_Restore(wm, 1);
+    expect_int(VmWm_IsMinimized(wm, 1), 0, "restore clears minimized");
+    expect_int(VmWm_FocusId(wm), 1, "restore refocuses");
+
+    /* NOFOCUS：不允许被聚焦，也不夺走焦点。 */
+    VmWm_SetWindowFlags(wm, 2, VM_WIN_NOFOCUS);
+    VmWm_Focus(wm, 2);
+    expect_int(VmWm_FocusId(wm), 1, "NOFOCUS window cannot take focus");
+
+    /* TOPMOST：整层最后合成。 */
+    VmWm_SetWindowFlags(wm, 2, VM_WIN_TOPMOST);
+    VmDisplayList frame;
+    VmDisplay_Init(&frame);
+    VmWm_BuildFrame(wm, &frame, 1, NULL);
+    VmDrawCommand *b1 = VmDisplay_Find(&frame, "w1_body");
+    VmDrawCommand *b2 = VmDisplay_Find(&frame, "w2_body");
+    expect(b1 && b2 && b2 > b1, "topmost window composites after normal window");
+
+    /* UNDECORATED：没有标题与边框，body 即整个窗口。 */
+    VmWm_SetWindowFlags(wm, 2, VM_WIN_UNDECORATED | VM_WIN_TOPMOST);
+    VmWm_BuildFrame(wm, &frame, 2, NULL);
+    expect(VmDisplay_Find(&frame, "w2_title") == NULL, "undecorated window has no title");
+    expect(VmDisplay_Find(&frame, "w2_border") == NULL, "undecorated window has no border");
+    b2 = VmDisplay_Find(&frame, "w2_body");
+    if (b2) {
+        expect_int((int)b2->args.drawRect.rect.x, 300, "undecorated body x = window x");
+        expect_int((int)b2->args.drawRect.rect.y, 200, "undecorated body y = window y");
+        expect_int((int)b2->args.drawRect.rect.h, 260, "undecorated body h = window h");
+    }
+
+    int ids[VM_WM_MAX_WINDOWS];
+    expect_int(VmWm_Enumerate(wm, ids, VM_WM_MAX_WINDOWS), 2, "enumerate returns window count");
+    /* 聚焦即提升：win1 被 Focus 过，z 高于 win2，故升序为 [2,1]。 */
+    expect(ids[0] == 2 && ids[1] == 1, "enumerate ordered by z ascending");
+
+    VmWm_Free(wm);
+}
+
+static void test_shell(void) {
+    printf("-- shell: taskbar\n");
+    VmWm *wm = VmWm_Create(800, 600);
+    if (!wm) return;
+    VmWm_AddWindow(wm, 1, "A", 60, 60, 360, 260, dummy_layout, NULL);
+    VmWm_AddWindow(wm, 2, "B", 300, 200, 360, 260, dummy_layout, NULL);
+    VmWm_Focus(wm, 1);
+
+    VmShell *shell = VmShell_Create(wm, VmTheme_Default(), VM_SHELL_DEFAULT_HEIGHT);
+    expect(shell != NULL, "taskbar created");
+    if (!shell) { VmWm_Free(wm); return; }
+
+    expect_int(wm->count, 3, "taskbar is an extra window");
+    VmWindow *tb = VmWm_FindWindow(wm, VM_SHELL_WINDOW_ID);
+    expect(tb != NULL, "taskbar window exists");
+    if (tb) {
+        expect_int((int)(tb->flags & VM_WIN_TOPMOST) != 0, 1, "taskbar is topmost");
+        expect_int((int)(tb->flags & VM_WIN_NOFOCUS) != 0, 1, "taskbar does not take focus");
+        expect_int((int)(tb->flags & VM_WIN_PINNED) != 0, 1, "taskbar is pinned");
+        expect_int((int)(tb->flags & VM_WIN_UNDECORATED) != 0, 1, "taskbar is undecorated");
+        expect_int(tb->y, 600 - VM_SHELL_DEFAULT_HEIGHT, "taskbar sits at bottom");
+        VmRect body;
+        VmWm_WindowBody(wm, tb, &body);
+        expect_int((int)body.w, 800, "taskbar body spans full width");
+    }
+
+    VmDisplayList frame;
+    VmDisplay_Init(&frame);
+    VmWm_BuildFrame(wm, &frame, 1, NULL);
+    char tbBody[32];
+    snprintf(tbBody, sizeof(tbBody), "w%d_body", VM_SHELL_WINDOW_ID);
+    VmDrawCommand *taskBody = VmDisplay_Find(&frame, tbBody);
+    VmDrawCommand *aBody = VmDisplay_Find(&frame, "w1_body");
+    expect(taskBody != NULL, "taskbar body is composited");
+    expect(taskBody && aBody && taskBody > aBody, "taskbar composites above normal windows");
+    if (taskBody) {
+        expect(strcmp(taskBody->args.drawRect.paint, "s_panel") == 0, "taskbar uses panel style");
+    }
+
+    /* 点任务栏条目：最小化的窗口被恢复并获得焦点。
+       条目顺序 = z 升序，宽度 140、间距 4、内边距 4。 */
+    VmWm_Minimize(wm, 1);
+    expect_int(VmWm_FocusId(wm), -1, "no focus after minimize");
+    int ord[VM_WM_MAX_WINDOWS];
+    int cnt = VmWm_Enumerate(wm, ord, VM_WM_MAX_WINDOWS);
+    int idx = -1;
+    for (int i = 0; i < cnt; i++) if (ord[i] == 1) idx = i;
+    expect(idx >= 0, "minimized window still listed in taskbar");
+    if (idx >= 0) {
+        char payload[160];
+        int cx = 4 + idx * 144 + 70;
+        snprintf(payload, sizeof(payload),
+                 "{\"kind\":\"mousedown\",\"x\":%d,\"y\":580,\"button\":0,\"clientId\":\"A\"}",
+                 cx);
+        feed(wm, payload);
+        VmWm_BuildFrame(wm, &frame, 2, NULL);
+        expect_int(VmWm_IsMinimized(wm, 1), 0, "clicking taskbar item restores minimized window");
+        expect_int(VmWm_FocusId(wm), 1, "clicking taskbar item focuses that window");
+    }
+
+    VmShell_Destroy(shell);
+    expect_int(wm->count, 2, "destroying shell removes taskbar window");
+    VmWm_Free(wm);
+}
+
+static void test_clipboard(void) {
+    printf("-- clipboard\n");
+    VmClipboard_Clear();
+    expect_int(VmClipboard_HasText(), 0, "empty at start");
+    VmClipboard_SetText("hello 世界");
+    expect_int(VmClipboard_HasText(), 1, "has text after set");
+    char buf[64];
+    int n = VmClipboard_GetText(buf, (int)sizeof(buf));
+    expect(strcmp(buf, "hello 世界") == 0, "round-trips utf8");
+    expect_int(n, (int)strlen("hello 世界"), "returns byte length");
+    char small[4];
+    expect_int(VmClipboard_GetText(small, (int)sizeof(small)), 3, "truncates to cap-1");
+    VmClipboard_Clear();
+    expect_int(VmClipboard_GetText(buf, (int)sizeof(buf)), 0, "cleared returns 0");
+}
+
 int main(int argc, char **argv) {
     const char *fontPath = argc > 1 ? argv[1] : "../assets/font.ttf";
     printf("test_frame: font=%s\n", fontPath);
     test_font(fontPath);
     test_wm_chrome_and_clip();
     test_wm_input();
+    test_wm_flags();
+    test_shell();
+    test_clipboard();
     printf("\n%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

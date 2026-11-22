@@ -23,6 +23,8 @@ add_executable(demo_wm
     vm_server.c
     vm_font.c
     vm_theme.c
+    vm_shell.c
+    vm_clipboard.c
 )
 target_include_directories(demo_wm PRIVATE "${CLAY_DIR}" "${MSTB_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
 if(WIN32)
@@ -37,6 +39,8 @@ add_executable(test_frame
     vm_wm.c
     vm_font.c
     vm_theme.c
+    vm_shell.c
+    vm_clipboard.c
 )
 target_include_directories(test_frame PRIVATE "${CLAY_DIR}" "${MSTB_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
 

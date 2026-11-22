@@ -26,6 +26,7 @@ typedef struct {
     const char *desktopFrom;
     const char *desktopTo;
     const char *panelStyleId;
+    const char *panelColor;
     const char *bgColor;
     const char *fgColor;
     const char *borderColor;

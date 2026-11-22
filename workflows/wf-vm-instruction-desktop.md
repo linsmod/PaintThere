@@ -30,6 +30,8 @@
 | `vm-desktop/stb_font_wasm.c` | stb_truetype wasm 绑定，导出 `loadFont/measureText/rasterizeText` |
 | `vm-desktop/vm_font.c/.h` | native stb_truetype 度量，口径对齐前端 `rasterizeText`（float 累加、末端截断），含 `Wrap` |
 | `vm-desktop/vm_theme.c/.h` | `VmChrome` + 控件样式 token，resources 唯一生成者 |
+| `vm-desktop/vm_shell.c/.h` | 任务栏：无装饰/置顶/不可拖动/不抢焦点的特殊窗口，Clay 布局列出窗口条目 |
+| `vm-desktop/vm_clipboard.c/.h` | guest 内单例剪贴板（4KB UTF-8），协议不传 |
 | `vm-desktop/test_frame.c` | 帧断言测试：不开服务、不开浏览器，直接断言 `VmDisplayList` |
 | `vm-desktop/demo_wm.c` | 双窗口 demo，含 hover/click、多客户端指针、本地背景、自适应帧率 |
 | `ConsoleApp2/app.js` | 前端原语执行：图片/字体/样式/图样/绘制程序/图层 |
@@ -121,6 +123,8 @@ agent-browser --session vm close
 - native 文本度量的对齐目标是 `rasterizeText` 的 `outW/outH`，不是 `measureText`。后者逐 glyph 截断累加，`"Window A"@14` 得 45，而真正贴到画布上的位图是 48；布局若按 45 算会错位 3px。`vm_font` 按 raster 口径实现（float 累加、末端截断）。
 - 帧内容断言优先用 `test_frame.exe`：直接断言 `VmDisplayList`，1 秒内完成、不开服务不开浏览器，比像素比对快一个数量级。浏览器只用来确认最终像素与真实交互。
 - `VmWm_BuildFrame` 会给每个带 layout 的窗口发 `clipPush/clipPop`。tile 里两者计数必须相等，这是「内容裁剪已生效」的最快判据（49 个 setTile → 98/98）。
+- **合成输入做位置敏感验证时，必须先 `mousemove` 再 `mousedown`**。Clay 的 `PRESSED_THIS_FRAME` 需要先有一帧 hover；只发 `mousedown`，任务栏条目不响应。真实浏览器总会先发 mousemove，所以线上无感，但 curl 验证会误判成「点击失效」。
+- **有浏览器连着时不要用 curl 验证位置敏感交互**。浏览器自己的 `mousemove` 会覆盖 WM 的全局指针（`wm->pointerX/pointerY` 是单份的），合成的 `mousedown` 坐标会被下一次真实移动抹掉。做法：另起一个无浏览器连接的实例（换端口）做确定性验证，用户那份留着看画面。
 
 ## 退出条件
 

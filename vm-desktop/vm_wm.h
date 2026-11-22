@@ -23,6 +23,16 @@ typedef int (*VmWindowKeyHandler)(int windowId, const char *key, const char *cod
 /* Guest-internal wheel handler: x/y 为窗口局部坐标，deltaY>0 表示向下滚。 */
 typedef int (*VmWindowWheelHandler)(int windowId, int x, int y, int deltaY, void *userData);
 
+/* 窗口标志：桌面外壳、对话框这类特殊窗口用，应用层不直接操作。 */
+enum {
+    VM_WIN_UNDECORATED = 1,   /* 无标题栏与边框，不可拖动 */
+    VM_WIN_TOPMOST     = 2,   /* 恒在普通窗口之上 */
+    VM_WIN_PINNED      = 4,   /* 不可拖动 */
+    VM_WIN_NOFOCUS     = 8    /* 不抢焦点（任务栏、悬浮提示） */
+};
+/* 装饰上的 × 只发关闭请求，真正移除由持有者决定。 */
+typedef void (*VmWindowCloseHandler)(int windowId, void *userData);
+
 typedef struct {
     int id;
     const char *title;
@@ -30,6 +40,10 @@ typedef struct {
     int z;            /* higher is on top */
     int focused;
     int minimized;
+    unsigned flags;                     /* VM_WIN_* 位或 */
+    const char *bodyStyleId;            /* 正文背景样式 id；NULL 用 chrome->windowStyleId */
+    VmWindowCloseHandler closeHandler;
+    void *closeUserData;
     Clay_Context *clayCtx;
     VmWindowLayout layout;
     void *userData;
@@ -90,6 +104,18 @@ void VmWm_Raise(VmWm *wm, int id);
 void VmWm_Move(VmWm *wm, int id, int x, int y);
 void VmWm_SetKeyHandler(VmWm *wm, int id, VmWindowKeyHandler handler, void *userData);
 void VmWm_SetWheelHandler(VmWm *wm, int id, VmWindowWheelHandler handler, void *userData);
+
+void VmWm_SetWindowFlags(VmWm *wm, int id, unsigned flags);
+unsigned VmWm_WindowFlags(VmWm *wm, int id);
+void VmWm_SetCloseHandler(VmWm *wm, int id, VmWindowCloseHandler handler, void *userData);
+/* 按 z 升序写入窗口 id（含最小化与置顶窗口），返回总数（可能大于 cap）。 */
+int VmWm_Enumerate(VmWm *wm, int *ids, int cap);
+void VmWm_Minimize(VmWm *wm, int id);
+void VmWm_Restore(VmWm *wm, int id);
+int VmWm_IsMinimized(VmWm *wm, int id);
+int VmWm_FocusId(const VmWm *wm);
+/* 窗口正文矩形（去掉装饰）；无装饰窗口即整个窗口。 */
+void VmWm_WindowBody(const VmWm *wm, const VmWindow *win, VmRect *out);
 
 /* 窗口装饰参数（标题高度/边框宽度/样式 id/颜色/字体）。NULL 恢复默认主题。 */
 void VmWm_SetChrome(VmWm *wm, const VmChrome *chrome);

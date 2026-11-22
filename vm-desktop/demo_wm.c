@@ -9,6 +9,8 @@
 #include "vm_tiles.h"
 #include "vm_wm.h"
 #include "vm_server.h"
+#include "vm_font.h"
+#include "vm_shell.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,25 +30,9 @@ static void BuildResources(void) {
     VmDisplayList res;
     VmDisplay_Init(&res);
 
-    VmDrawCommand *p = VmDisplay_Append(&res, VM_CMD_DEFINE_PATTERN, "def_p_desktop");
-    VmDisplay_CopyStr(p->args.definePattern.patternId, sizeof(p->args.definePattern.patternId), "p_desktop");
-    p->args.definePattern.type = VM_PATTERN_GRADIENT;
-    VmDisplay_CopyStr(p->args.definePattern.from, sizeof(p->args.definePattern.from), "rgba(24,26,32,1)");
-    VmDisplay_CopyStr(p->args.definePattern.to, sizeof(p->args.definePattern.to), "rgba(48,54,66,1)");
-    VmDisplay_CopyStr(p->args.definePattern.direction, sizeof(p->args.definePattern.direction), "diagonal");
-
-    p = VmDisplay_Append(&res, VM_CMD_DEFINE_PATTERN, "def_p_window");
-    VmDisplay_CopyStr(p->args.definePattern.patternId, sizeof(p->args.definePattern.patternId), "p_window");
-    p->args.definePattern.type = VM_PATTERN_SOLID;
-    VmDisplay_CopyStr(p->args.definePattern.color, sizeof(p->args.definePattern.color), "rgba(250,250,252,1)");
-
-    p = VmDisplay_Append(&res, VM_CMD_DEFINE_STYLE, "def_s_desktop");
-    VmDisplay_CopyStr(p->args.defineStyle.styleId, sizeof(p->args.defineStyle.styleId), "s_desktop");
-    VmDisplay_CopyStr(p->args.defineStyle.bgPattern, sizeof(p->args.defineStyle.bgPattern), "p_desktop");
-
-    p = VmDisplay_Append(&res, VM_CMD_DEFINE_STYLE, "def_s_window");
-    VmDisplay_CopyStr(p->args.defineStyle.styleId, sizeof(p->args.defineStyle.styleId), "s_window");
-    VmDisplay_CopyStr(p->args.defineStyle.bgPattern, sizeof(p->args.defineStyle.bgPattern), "p_window");
+    /* 桌面与窗口样式统一由主题生成，WM 装饰与控件共用一份 token。 */
+    VmTheme_AppendResources(&res, VmTheme_Default());
+    VmDrawCommand *p;
 
     VmDisplay_Init(&g_desktopProgramCommands);
     VmDrawCommand *bg = VmDisplay_Append(&g_desktopProgramCommands, VM_CMD_DRAW_RECT, "desktop_bg");
@@ -86,6 +72,12 @@ static const char *ResolveFont(uint16_t fontId) {
 static Clay_Dimensions MeasureText(
     Clay_StringSlice text, Clay_TextElementConfig *config, void *userData) {
     (void)userData;
+    /* 与前端 stb_truetype 同源度量；字体未就绪时退回估算值，保证首帧不崩。 */
+    if (VmFont_IsLoaded(config->fontId)) {
+        VmFontMetrics m = VmFont_Measure(config->fontId, config->fontSize,
+                                         text.chars, text.length);
+        return (Clay_Dimensions){(float)m.width, (float)m.lineStep};
+    }
     return (Clay_Dimensions){
         .width = (float)text.length * (float)config->fontSize * 0.6f,
         .height = (float)config->fontSize,
@@ -249,6 +241,13 @@ static void InputHandler(const char *body, size_t length, void *userData) {
     fflush(stdout);
 }
 
+/* 装饰上的 × 只发请求：是否真正关窗由持有者决定。 */
+static void OnWindowClose(int windowId, void *userData) {
+    (void)userData;
+    VmWm_RemoveWindow(g_wm, windowId);
+    g_dirty = 1;
+}
+
 int main(int argc, char **argv) {
     unsigned short port = argc > 1 ? (unsigned short)atoi(argv[1]) : 9000;
     const char *webRoot = argc > 2 ? argv[2] : "../assets";
@@ -260,12 +259,25 @@ int main(int argc, char **argv) {
                     DEMO_TILE_W, DEMO_TILE_H, 800, 600);
     BuildResources();
 
+    char fontPath[512];
+    snprintf(fontPath, sizeof(fontPath), "%s/font.ttf", webRoot);
+    if (VmFont_LoadFile(fontPath, 0) != 0) {
+        fprintf(stderr, "[warn] 字体加载失败，度量退回估算值: %s\n", fontPath);
+    }
+
     VmWindow *a = VmWm_AddWindow(g_wm, 1, "Window A", 60, 60, 360, 260, LayoutA, &g_appA);
     VmWindow *b = VmWm_AddWindow(g_wm, 2, "Window B", 300, 200, 360, 260, LayoutB, NULL);
     a->clayCtx = CreateWindowContext(356, 230);
     b->clayCtx = CreateWindowContext(356, 230);
     VmWm_SetKeyHandler(g_wm, 1, OnWindowKey, &g_appA);
+    VmWm_SetCloseHandler(g_wm, 1, OnWindowClose, NULL);
+    VmWm_SetCloseHandler(g_wm, 2, OnWindowClose, NULL);
     VmWm_Focus(g_wm, 1);
+
+    /* 任务栏：无装饰/置顶/不抢焦点，点击条目切焦点或恢复最小化窗口。 */
+    if (!VmShell_Create(g_wm, VmTheme_Default(), VM_SHELL_DEFAULT_HEIGHT)) {
+        fprintf(stderr, "[warn] 任务栏创建失败（窗口数已达上限？）\n");
+    }
 
     VmServer *server = VmServer_Create(port, webRoot);
     if (!server) {

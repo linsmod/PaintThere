@@ -18,6 +18,7 @@ static const VmTheme kDefaultTheme = {
     .desktopFrom = "rgba(24,26,32,1)",
     .desktopTo = "rgba(48,54,66,1)",
     .panelStyleId = "s_panel",
+    .panelColor = "rgba(32,36,44,1)",
     .bgColor = "rgba(250,250,252,1)",
     .fgColor = "rgba(24,26,32,1)",
     .borderColor = "rgba(180,186,194,1)",
@@ -80,7 +81,13 @@ void VmTheme_AppendResources(VmDisplayList *out, const VmTheme *theme) {
                           t->bgColor);
     }
 
+    p = append_pattern(out, "def_p_panel", "p_panel", VM_PATTERN_SOLID);
+    if (p) {
+        VmDisplay_CopyStr(p->args.definePattern.color, sizeof(p->args.definePattern.color),
+                          t->panelColor);
+    }
+
     append_style(out, "def_s_desktop", "s_desktop", "p_desktop");
     append_style(out, "def_s_window", t->chrome.windowStyleId, "p_window");
-    append_style(out, "def_s_panel", t->panelStyleId, NULL);
+    append_style(out, "def_s_panel", t->panelStyleId, "p_panel");
 }

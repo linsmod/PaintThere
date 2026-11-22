@@ -64,8 +64,8 @@ emcc -O2 -s EXPORTED_FUNCTIONS='["_loadFont","_measureText","_rasterizeText","_a
 Copy-Item stb_font_wasm.mjs,stb_font_wasm.wasm ..\assets\
 
 # 一键启动（推荐）：先 python tools/build_vm.py，再运行本脚本停旧进程并开浏览器
-python tools/start_vm_desktop.py              # demo_wm
-python tools/start_vm_desktop.py demo_jpx     # JPX 应用外壳：开始菜单 / ProcMan / Files
+python tools/start_vm_desktop.py              # demo_wm，默认 9000
+python tools/start_vm_desktop.py demo_jpx     # JPX 应用外壳，默认 9050；两者可同时开
 # 调试：环境变量改端口 / 不开浏览器
 # $env:VM_DESKTOP_PORT="9001"; $env:VM_DESKTOP_NO_BROWSER="1"; python tools/start_vm_desktop.py demo_jpx
 

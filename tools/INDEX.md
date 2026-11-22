@@ -4,7 +4,7 @@
 - `vm-desktop/CMakeLists.txt` — 统一 CMake 工程：`demo_wm` 目标链接 Clay + ws2_32，`vm_renderer` 目标链接 canvas-cpp/ant；两者一次 `--build` 产出。
 - `start_vm_renderer.py` — 一键启动 C 版 VM 渲染器：`python tools/build_vm.py && python tools/start_vm_renderer.py`。同时拉起 SSE 服务端与 `vm_renderer.exe`，进程级禁用代理，Ctrl+C 一起停止。调试用环境变量：`VM_DESKTOP_PORT`、`VM_RENDERER_FRAMES`（>0 时跑满帧数自动退出）。
 - `assets/vm_renderer.js` — C 渲染器页面：复用 `app.js` 原语 + wasm 字体 + `EventSource`，无兼容 shim。将 `app.js` 所需但 SDK 缺失的标准 API（`ctx.canvas`、context 缓存）在页面入口对齐。
-- `start_vm_desktop.py` — 零参数启动浏览器版 VM 桌面：`python tools/start_vm_desktop.py` 启 `demo_wm`；`python tools/start_vm_desktop.py demo_jpx` 启 JPX 应用外壳（开始菜单 / ProcMan / Files）。自动定位 `assets/`、显式传 webRoot 绝对路径、检查 `build_vm.py` 产物、按端口停掉目标程序的旧实例后启动并打开浏览器。调试用环境变量：`VM_DESKTOP_PORT`、`VM_DESKTOP_NO_BROWSER=1`、`VM_DESKTOP_APP`（命令行参数优先）。
+- `start_vm_desktop.py` — 零参数启动浏览器版 VM 桌面：`python tools/start_vm_desktop.py` 启 `demo_wm`；`python tools/start_vm_desktop.py demo_jpx` 启 JPX 应用外壳（开始菜单 / ProcMan / Files）。自动定位 `assets/`、显式传 webRoot 绝对路径、检查 `build_vm.py` 产物、按端口停掉目标程序的旧实例后启动并打开浏览器。两者默认端口不同（`demo_wm` 9000 / `demo_jpx` 9050），可同时开着对比。调试用环境变量：`VM_DESKTOP_PORT`、`VM_DESKTOP_NO_BROWSER=1`、`VM_DESKTOP_APP`（命令行参数优先）。
 - `assets/` — 共享前端资源（`app.js`、`systemColors.js`、`font_wasm.js`、`stb_font_wasm.mjs/.wasm`、`font.ttf`），供 demo_wm/demo_server 与 ConsoleApp2/TestHarness 共用，消除多份副本。
 - `vm-desktop/clay_frame_adapter.c/.h` — Clay `RenderCommandArray` 到 VM 绘制帧 JSON 的 adapter。
 - `vm-desktop/demo_layout.c/.h` — 共享单窗口 Clay 布局，供 demo_frame/demo_server 复用。

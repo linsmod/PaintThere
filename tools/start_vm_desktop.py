@@ -11,7 +11,7 @@
 源码改动后先运行 python tools/build_vm.py。
 
 可选环境变量（仅调试用，日常无需设置）：
-    VM_DESKTOP_PORT        监听端口，默认 9000
+    VM_DESKTOP_PORT        监听端口，默认 demo_wm=9000 / demo_jpx=9050
     VM_DESKTOP_NO_BROWSER  设为 1 时不自动打开浏览器
     VM_DESKTOP_APP         默认启动的程序（demo_wm / demo_jpx），命令行参数优先
 """
@@ -97,7 +97,6 @@ def wait_ready(port, timeout=8.0):
 
 def main():
     global APP_NAME, EXE
-    port = int(os.environ.get("VM_DESKTOP_PORT", "9000"))
     arg = None
     if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
         arg = sys.argv[1]
@@ -108,6 +107,9 @@ def main():
         return 1
     APP_NAME = arg
     EXE = VM_DIR / "build" / f"{arg}.exe"
+    # 两个 demo 默认端口分开，可以同时开着对比。
+    default_port = 9000 if arg == "demo_wm" else 9050
+    port = int(os.environ.get("VM_DESKTOP_PORT", str(default_port)))
 
     try:
         ensure_assets()

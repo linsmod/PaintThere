@@ -6,6 +6,7 @@
 #include "clay_frame_adapter.h"
 #include "vm_display.h"
 #include "vm_serialize_json.h"
+#include "vm_tiles.h"
 #include "vm_wm.h"
 #include "vm_server.h"
 
@@ -18,7 +19,8 @@ static unsigned int g_frameId;
 static int g_dirty = 1;   /* adaptive frame rate: only publish on change */
 static int g_forceFull = 0; /* 下一次出帧必须是全量（新客户端/字体就绪） */
 static char *g_resourcesJson = NULL;
-static char *g_fullOpsJson = NULL;
+static char *g_tilesJson = NULL;
+static char *g_fullTilesJson = NULL;
 
 /* Static nested program: desktop background rectangle. */
 static VmDisplayList g_desktopProgramCommands;
@@ -62,6 +64,12 @@ static void BuildResources(void) {
     p = VmDisplay_Append(&res, VM_CMD_START_PROGRAM, "start_prog_desktop");
     VmDisplay_CopyStr(p->args.programControl.programId, sizeof(p->args.programControl.programId), "prog_desktop");
     VmDisplay_CopyStr(p->args.programControl.mode, sizeof(p->args.programControl.mode), "once");
+
+    /* 光标箭头只下发一次；每帧只发 drawImg 引用 imgId。 */
+    p = VmDisplay_Append(&res, VM_CMD_LOAD_IMG, "res_cursor");
+    VmDisplay_CopyStr(p->args.loadImg.imgId, sizeof(p->args.loadImg.imgId), "cursor");
+    VmDisplay_CopyStr(p->args.loadImg.dataUrl, sizeof(p->args.loadImg.dataUrl),
+                      VmWm_CursorDataUrl());
 
     g_resourcesJson = VmSerialize_CommandArrayJson(&res);
 }
@@ -193,179 +201,28 @@ static Clay_RenderCommandArray LayoutB(void *userData) {
     return Clay_EndLayout(0.016f);
 }
 
-/* ---------------- 分层合成 ---------------- */
+/* ---------------- Remote tiles ---------------- */
 
-#define DEMO_MAX_WINDOW_LAYERS VM_WM_MAX_WINDOWS
+#define DEMO_TILE_COLS 8
+#define DEMO_TILE_ROWS 6
+#define DEMO_TILE_W 100
+#define DEMO_TILE_H 100
 
-typedef struct {
-    int winId;
-    int x, y, w, h;
-    int z;
-    int created;
-    VmDisplayList cur;
-    VmDisplayList prev;
-} DemoWindowLayer;
+static VmDisplayList g_frame;
+static VmTileGrid g_tileGrid;
 
-static DemoWindowLayer g_layers[DEMO_MAX_WINDOW_LAYERS];
-static int g_layerCount;
-static VmDisplayList g_cursorCur;
-static VmDisplayList g_cursorPrev;
-static int g_cursorCreated;
-static char *g_opsJson = NULL;
-
-static int rect_ok(VmRect r) { return r.w > 0 && r.h > 0; }
-
-static void rect_union(VmRect *acc, int *has, VmRect r) {
-    if (!rect_ok(r)) return;
-    if (!*has) { *acc = r; *has = 1; return; }
-    float x1 = acc->x < r.x ? acc->x : r.x;
-    float y1 = acc->y < r.y ? acc->y : r.y;
-    float ax2 = acc->x + acc->w, rx2 = r.x + r.w;
-    float ay2 = acc->y + acc->h, ry2 = r.y + r.h;
-    float x2 = ax2 > rx2 ? ax2 : rx2;
-    float y2 = ay2 > ry2 ? ay2 : ry2;
-    acc->x = x1; acc->y = y1; acc->w = x2 - x1; acc->h = y2 - y1;
-}
-
-static int list_changed(const VmDisplayList *a, const VmDisplayList *b) {
-    if (a->count != b->count) return 1;
-    for (int i = 0; i < a->count; i++)
-        if (!VmDisplay_CommandEqual(&a->commands[i], &b->commands[i])) return 1;
-    return 0;
-}
-
-static void list_copy(VmDisplayList *dst, const VmDisplayList *src) {
-    dst->count = src->count;
-    dst->frameId = src->frameId;
-    if (src->count)
-        memcpy(dst->commands, src->commands, sizeof(VmDrawCommand) * (size_t)src->count);
-}
-
-static DemoWindowLayer *layer_for(int winId) {
-    for (int i = 0; i < g_layerCount; i++)
-        if (g_layers[i].winId == winId) return &g_layers[i];
-    if (g_layerCount >= DEMO_MAX_WINDOW_LAYERS) return NULL;
-    DemoWindowLayer *l = &g_layers[g_layerCount++];
-    memset(l, 0, sizeof(*l));
-    l->winId = winId;
-    return l;
-}
-
-static void layer_id_of(int winId, char *out, size_t cap) {
-    snprintf(out, cap, "w%d", winId);
-}
-
-/* 生成一帧的合成指令。full=1 时不依赖也不修改历史状态，用于新客户端。 */
-static char *BuildOps(int full) {
+/* 服务端先产出全局坐标完整帧，再由 tile 网格切成小指令列表。 */
+static char *BuildTiles(int full) {
     if (!g_wm) return NULL;
-    VmOps *ops = VmOps_Create();
-    if (!ops) return NULL;
-
-    VmRect dirty = {0, 0, 0, 0};
-    int hasDirty = 0;
-    char id[32];
-
-    if (full) rect_union(&dirty, &hasDirty,
-                         (VmRect){0, 0, (float)g_wm->width, (float)g_wm->height});
-
-    for (int wi = 0; wi < g_wm->count; wi++) {
-        VmWindow *win = &g_wm->windows[wi];
-        if (win->minimized) continue;
-        DemoWindowLayer *l = layer_for(win->id);
-        if (!l) continue;
-
-        VmWm_BuildWindowLayer(g_wm, win, &l->cur, ResolveFont);
-        int sizeChanged = (l->w != win->w || l->h != win->h);
-        int contentChanged = full || !l->created || sizeChanged || list_changed(&l->cur, &l->prev);
-        int zChanged = (l->created && l->z != win->z);
-
-        layer_id_of(win->id, id, sizeof(id));
-        if (contentChanged) {
-            VmOps_CreateLayer(ops, id, win->w, win->h);
-            VmOps_Bind(ops, id);
-            VmOps_ClearLayer(ops, (VmRect){0, 0, (float)win->w, (float)win->h});
-            VmOps_Draw(ops, l->cur.commands, l->cur.count);
-            rect_union(&dirty, &hasDirty,
-                       (VmRect){(float)win->x, (float)win->y, (float)win->w, (float)win->h});
-        }
-        if (l->created && (l->x != win->x || l->y != win->y)) {
-            /* 移动：旧位置和新位置都要重合成 */
-            rect_union(&dirty, &hasDirty,
-                       (VmRect){(float)l->x, (float)l->y, (float)l->w, (float)l->h});
-            rect_union(&dirty, &hasDirty,
-                       (VmRect){(float)win->x, (float)win->y, (float)win->w, (float)win->h});
-        }
-        if (zChanged) {
-            /* 层叠次序变了：所有窗口区域都可能换显示内容 */
-            for (int k = 0; k < g_wm->count; k++) {
-                VmWindow *w2 = &g_wm->windows[k];
-                rect_union(&dirty, &hasDirty,
-                           (VmRect){(float)w2->x, (float)w2->y, (float)w2->w, (float)w2->h});
-            }
-        }
-
-        if (!full) {
-            l->created = 1;
-            l->x = win->x; l->y = win->y;
-            l->w = win->w; l->h = win->h;
-            l->z = win->z;
-            list_copy(&l->prev, &l->cur);
-        }
-    }
-
-    /* 指针层：全屏坐标，只清新旧指针覆盖的区域 */
-    VmWm_BuildCursorLayer(g_wm, &g_cursorCur);
-    if (full || !g_cursorCreated || list_changed(&g_cursorCur, &g_cursorPrev)) {
-        VmRect c = {0, 0, 0, 0};
-        int hc = 0;
-        for (int i = 0; i < g_cursorPrev.count; i++)
-            rect_union(&c, &hc, g_cursorPrev.commands[i].rect);
-        for (int i = 0; i < g_cursorCur.count; i++)
-            rect_union(&c, &hc, g_cursorCur.commands[i].rect);
-        if (!hc) c = (VmRect){0, 0, (float)g_wm->width, (float)g_wm->height};
-
-        VmOps_CreateLayer(ops, "cursor", g_wm->width, g_wm->height);
-        VmOps_Bind(ops, "cursor");
-        VmOps_ClearLayer(ops, c);
-        VmOps_Draw(ops, g_cursorCur.commands, g_cursorCur.count);
-        rect_union(&dirty, &hasDirty, c);
-        if (!full) {
-            g_cursorCreated = 1;
-            list_copy(&g_cursorPrev, &g_cursorCur);
-        }
-    }
-
-    if (!hasDirty) {
-        VmOps_Destroy(ops);
+    VmWm_BuildFrame(g_wm, &g_frame, g_frameId, ResolveFont);
+    VmTiles *tiles = VmTiles_Create();
+    if (!tiles) return NULL;
+    VmTiles_SetFrameId(tiles, g_frameId);
+    if (!VmTileGrid_Build(&g_tileGrid, &g_frame, full, tiles)) {
+        VmTiles_Destroy(tiles);
         return NULL;
     }
-
-    /* 合成到主画布：清脏区 -> bg -> 窗口（按 z）-> cursor */
-    VmOps_ClearScreen(ops, dirty);
-    VmOps_Composite(ops, "bg", dirty, (int)dirty.x, (int)dirty.y);
-
-    for (int z = 1; z < g_wm->nextZ; z++) {
-        for (int wi = 0; wi < g_wm->count; wi++) {
-            VmWindow *win = &g_wm->windows[wi];
-            if (win->z != z || win->minimized) continue;
-            DemoWindowLayer *l = layer_for(win->id);
-            if (!l || (!l->created && !full)) continue;
-            float x1 = dirty.x > (float)win->x ? dirty.x : (float)win->x;
-            float y1 = dirty.y > (float)win->y ? dirty.y : (float)win->y;
-            float dx2 = dirty.x + dirty.w, wx2 = (float)(win->x + win->w);
-            float dy2 = dirty.y + dirty.h, wy2 = (float)(win->y + win->h);
-            float x2 = dx2 < wx2 ? dx2 : wx2;
-            float y2 = dy2 < wy2 ? dy2 : wy2;
-            if (x2 <= x1 || y2 <= y1) continue;
-            layer_id_of(win->id, id, sizeof(id));
-            VmRect src = {x1 - (float)win->x, y1 - (float)win->y, x2 - x1, y2 - y1};
-            VmOps_Composite(ops, id, src, (int)x1, (int)y1);
-        }
-    }
-    if (full || g_cursorCreated)
-        VmOps_Composite(ops, "cursor", dirty, (int)dirty.x, (int)dirty.y);
-
-    return VmOps_Finish(ops);
+    return VmTiles_Finish(tiles);
 }
 
 static const char *FrameProvider(void *userData, unsigned int *frameId) {
@@ -373,13 +230,13 @@ static const char *FrameProvider(void *userData, unsigned int *frameId) {
     if (!g_dirty) return NULL;  /* adaptive: no change, no frame */
     g_dirty = 0;
     *frameId = g_frameId++;
-    free(g_opsJson);
-    g_opsJson = BuildOps(g_forceFull);
+    free(g_tilesJson);
+    g_tilesJson = BuildTiles(g_forceFull);
     g_forceFull = 0;
-    return g_opsJson;
+    return g_tilesJson;
 }
 
-/* 客户端请求整屏重绘（字体就绪、层丢内容等情况）。 */
+/* 客户端请求整屏重绘（字体就绪、tile 内容丢失等情况）。 */
 static void RedrawHandler(void *userData) {
     (void)userData;
     g_forceFull = 1;
@@ -388,9 +245,9 @@ static void RedrawHandler(void *userData) {
 
 static const char *FullFrameProvider(void *userData) {
     (void)userData;
-    free(g_fullOpsJson);
-    g_fullOpsJson = BuildOps(1);
-    return g_fullOpsJson ? g_fullOpsJson : "";
+    free(g_fullTilesJson);
+    g_fullTilesJson = BuildTiles(1);
+    return g_fullTilesJson ? g_fullTilesJson : "";
 }
 
 static void InputHandler(const char *body, size_t length, void *userData) {
@@ -406,9 +263,10 @@ int main(int argc, char **argv) {
     const char *webRoot = argc > 2 ? argv[2] : "../assets";
 
     g_wm = VmWm_Create(800, 600);
-    VmDisplay_Init(&g_cursorCur);
-    VmDisplay_Init(&g_cursorPrev);
+    VmDisplay_Init(&g_frame);
     if (!g_wm) return 1;
+    VmTileGrid_Init(&g_tileGrid, DEMO_TILE_COLS, DEMO_TILE_ROWS,
+                    DEMO_TILE_W, DEMO_TILE_H, 800, 600);
     BuildResources();
 
     VmWindow *a = VmWm_AddWindow(g_wm, 1, "Window A", 60, 60, 360, 260, LayoutA, &g_appA);
@@ -433,8 +291,8 @@ int main(int argc, char **argv) {
     fflush(stdout);
     int result = VmServer_Run(server);
     VmServer_Free(server);
-    free(g_opsJson);
-    free(g_fullOpsJson);
+    free(g_tilesJson);
+    free(g_fullTilesJson);
     free(g_resourcesJson);
     VmWm_Free(g_wm);
     return result;

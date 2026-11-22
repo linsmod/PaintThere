@@ -18,26 +18,25 @@ char *VmSerialize_CommandArrayJson(const VmDisplayList *list);
    list 提供 commands 与 frameId，delta 提供重绘区域。 */
 char *VmSerialize_DeltaFrameJson(const VmDisplayList *list, const VmDisplayDelta *delta);
 
-/* ---- 分层合成指令流 ----
-   前端只按顺序执行这些 op，不再感知脏区、不存基线、不做 diff。 */
-typedef struct VmOps VmOps;
+/* ---- Remote tiles 指令流 ----
+   前端只管理远端小画布网格：config / setTile + showLoading / hideLoading。
+   窗口、图层、z 序与脏区都不进入协议。 */
+typedef struct VmTiles VmTiles;
 
-VmOps *VmOps_Create(void);
-void VmOps_Destroy(VmOps *ops);
-/* 创建离屏层；前端已有同 id 层时忽略。 */
-void VmOps_CreateLayer(VmOps *ops, const char *id, int w, int h);
-/* 后续绘制命令定向到该层。 */
-void VmOps_Bind(VmOps *ops, const char *id);
-/* 清除当前绑定层的矩形。 */
-void VmOps_ClearLayer(VmOps *ops, VmRect r);
-/* 追加绘制命令（命令本身复用 emit_command 的格式）。 */
-void VmOps_Draw(VmOps *ops, const VmDrawCommand *cmds, int count);
-/* 清除主画布矩形。 */
-void VmOps_ClearScreen(VmOps *ops, VmRect r);
-/* 把层的一段区域贴到主画布。 */
-void VmOps_Composite(VmOps *ops, const char *src, VmRect srcRect, int dx, int dy);
-/* 返回 {"type":"ops","ops":[...]}，调用方 free。 */
-char *VmOps_Finish(VmOps *ops);
+VmTiles *VmTiles_Create(void);
+void VmTiles_Destroy(VmTiles *tiles);
+void VmTiles_SetFrameId(VmTiles *tiles, uint32_t frameId);
+/* 网格定义，全量帧下发，前端幂等处理。 */
+void VmTiles_Config(VmTiles *tiles, int cols, int rows, int tileW, int tileH, int w, int h);
+/* 批次边界：showLoading 后暂停呈现，hideLoading 时一次性贴齐。 */
+void VmTiles_ShowLoading(VmTiles *tiles);
+void VmTiles_HideLoading(VmTiles *tiles);
+/* 更新一块 tile：index = row*cols+col，cmds 为 tile 局部坐标绘制原语。 */
+void VmTiles_SetTile(VmTiles *tiles, int index, const VmDrawCommand *cmds, int count);
+/* 直接使用已序列化的命令数组 JSON，避免二次序列化。 */
+void VmTiles_SetTileJson(VmTiles *tiles, int index, const char *cmdsJson);
+/* 返回 {"type":"tiles","frameId":N,"ops":[...]}，调用方 free。 */
+char *VmTiles_Finish(VmTiles *tiles);
 
 #ifdef __cplusplus
 }

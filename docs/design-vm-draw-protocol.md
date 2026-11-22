@@ -28,6 +28,8 @@ Clay RenderCommandArray
 
 下行帧（guest → 浏览器）：
 
+> VM 桌面通道已改用 `type:"tiles"`（见下方「Remote tiles 模型」）；下列 `type:"frame"` 保留给既有 WinForms / 增量帧通道。
+
 ```json
 {
   "type": "frame",
@@ -102,20 +104,27 @@ Clay RenderCommandArray
 - 已实测：同一份 stb_truetype C 代码在 native（`font_probe`）与 wasm 下对三段文本度量完全一致（91 / 70 / 247），无需 Canvas `measureText` 对比。
 - 阶段 2 剩余验证：浏览器像素级渲染一致性（中文/英文/换行）。
 
-## 图层模型
+## Remote tiles 模型（冻结）
 
-跨端画面分三层，自底向上合成：
+跨端交付的是**远端小画布网格的管理指令**，不是位图，也不是分层合成指令。窗口、图层、z 序、脏区、`composite` 全是 guest 内部事务。
 
-| layerId | 名称 | 绘制方 | 更新方式 |
-|---|---|---|---|
-| `bg` | 背景层 | 客户端本地 | 由 draw program 绑定，静态或循环，不随每帧指令流更新 |
-| `windows` | 窗口层 | guest 指令帧 | 每帧 `drawRect` / `drawText` / `drawImg` 等原语 |
-| `cursors` | 指针层 | guest 指令帧（帧尾） | 复用 `loadImg` + `drawImg` 画各客户端彩色箭头 |
+下行 envelope：
 
-- `defineDrawProgram(programId, commands[], layerId)` 把绘制程序绑定到具体图层。`startDrawProgram(..., 'loop')` 只在该图层内循环，不干扰窗口层。
-- `pauseDrawProgram` / `resumeDrawProgram` 的语义是暂停/恢复某层的自动重绘，不改变其他层。
-- 背景层与窗口背景都用 draw program 本地绘制：桌面背景绑 `bg` 层，窗口背景作为窗口层内的静态 program（窗口移动时由 guest 重定位，不重传颜色/图样）。
-- 图层顺序固定，跨端不暴露图层创建/销毁 API；layerId 只有上述三个取值。
+```json
+{"type":"tiles","frameId":42,"ops":[
+  {"op":"showLoading"},
+  {"op":"config","cols":8,"rows":6,"tileW":100,"tileH":100,"w":800,"h":600},
+  {"op":"setTile","index":12,"cmds":[{"id":"...","cmd":"drawRect","args":[...],"rect":[...]}]},
+  {"op":"hideLoading"}
+]}
+```
+
+- `config`：网格参数，全量帧下发，前端幂等处理；尺寸变化才重建远端小画布。
+- `setTile`：`index = row*cols+col`；前端清空该小画布后，在 tile 局部坐标执行 `cmds`（现有绘制原语）。tile 画布自身负责裁剪越界绘制。
+- `showLoading` / `hideLoading`：批次边界。`showLoading` 期间更新 tile 但不呈现，画面显示遮罩；`hideLoading` 时一次性贴齐所有 tile，保证指令完成后画面稳定。
+- guest 先用 `VmWm_BuildFrame` 产出按 z 序排好的全局坐标完整帧，再由 `vm_tiles.c` 切到各 tile：只纳入与 tile 相交的绘制命令，`clip`/`overlay` 成对保留，`loadImg` 走 resources。按命令签名做差异，只发变化的 tile。
+- 桌面背景仍由客户端本地 draw program 绘制在独立 `bg` canvas；tile 画布透明叠在上面，因此不随每帧重发背景。
+- 光标资源通过 `resources` 事件一次性下发 `loadImg('cursor', dataUrl)`；每帧只发 `drawImg` 引用 imgId。
 
 ## Clay 命令映射
 
@@ -159,8 +168,9 @@ Clay RenderCommandArray
 
 - 未来控件的视觉属性（背景、边框、字体、图样）统一走 `defineStyle` + `definePattern`，与窗口背景、桌面背景同源，不出现“背景一套机制、控件另一套机制”的分裂。
 - 控件的静态外观用 `defineDrawProgram` 缓存到客户端，hover/click 只改少量状态参数，不重发整段外观指令。
-- 图层固定三层（bg/windows/cursors），SDK 不跨端创建图层；若未来需要新层，作为协议版本升级处理，不在现有 SDK 里动态申请。
+- 远端资源是固定网格的小画布（tiles），SDK 不跨端申请窗口层或创建图层；网格参数由 `config` 定义，作为协议级配置，不做业务语义扩展。
 - `drawLoop` 类的命名不采用——静态背景用 `mode:once`，动画用 `mode:loop`，避免“Loop”语义限制控件复用。
+- 指令批次统一由 `showLoading` / `hideLoading` 包住：`hideLoading` 之后才是可观察的稳定画面，避免把中间态暴露给客户端。
 
 ## 与现有协议的关系
 

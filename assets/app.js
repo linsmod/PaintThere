@@ -149,7 +149,7 @@ function setDrawImgTarget(target) {
     drawImgCtx = target;
 }
 
-/* 切换后续绘制原语的目标上下文：由合成指令流的 bind 操作调用。 */
+/* 切换后续绘制原语的绘制目标：前端内部渲染机制（例如 tile 小画布），不是跨端协议概念。 */
 function setDrawTarget(target) {
     ctx = target;
 }
@@ -163,6 +163,7 @@ function loadImg(imgId, dataUrl) {
         entry.image = img;
         entry.ready = true;
         tintedCache.clear();
+        if (textNeedsReplay) textNeedsReplay();
     };
     img.onerror = () => { entry.failed = true; };
     img.src = dataUrl;

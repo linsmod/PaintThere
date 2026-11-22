@@ -18,6 +18,7 @@
 - `vm-desktop/vm_serialize_json.c/.h` — 唯一 JSON serializer：`VmDisplayList` → frame / command array JSON。
 - `vm-desktop/clay_frame_adapter.c/.h` — Clay 命令 → `VmDisplayList`（不再直接生成 JSON）。
 - `vm-desktop/demo_wm.c` — 双窗口 WM demo。构建：`gcc -std=c11 -I<clay-dir> -I. demo_wm.c clay_frame_adapter.c vm_display.c vm_serialize_json.c vm_wm.c vm_server.c -lws2_32 -o demo_wm.exe`；默认运行 `./demo_wm 9000`（webRoot 默认 `../assets`）。截图 `wm_two_windows.png` / `wm_after_drag.png` / `wm_click.png` / `wm_cursors.png` / `wm_local_bg.png` / `wm_internal_model.png` / `wm_incremental.png`。自适应帧率：无变化不出帧；有变化时结构体层 diff 只发变化命令。
+- `vm-desktop/vm_tiles.c/.h` — Remote tiles 切分：`VmWm_BuildFrame` 的全局坐标帧 → tile 局部命令，命令签名差异只发变化的块；`VmTileGrid_Init` 配置网格。构建 `demo_wm` 时必须链接 `vm_tiles.c`。
 - `vm-desktop/vm_server.c/.h` — C 跨平台 HTTP 服务：`GET /events` SSE 推帧、`POST /input` 收原始输入、白名单静态资源。
 - `vm-desktop/demo_server.c` — SSE 服务 demo。构建：`gcc -std=c11 -I<clay-dir> -I. demo_server.c demo_layout.c clay_frame_adapter.c vm_server.c -lws2_32 -o demo_server.exe`；运行：`./demo_server 9000`（webRoot 默认 `../assets`）。本机 clay 目录 `H:\github_repos\clay`；验证截图 `vm-desktop/demo_render.png`。
 

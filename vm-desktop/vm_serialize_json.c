@@ -246,86 +246,84 @@ char *VmSerialize_DeltaFrameJson(const VmDisplayList *list, const VmDisplayDelta
     return b.data;
 }
 
-/* ---------------- 分层合成指令流 ---------------- */
+/* ---------------- Remote tiles 指令流 ---------------- */
 
-struct VmOps {
+struct VmTiles {
     StrBuf b;
     int count;
+    uint32_t frameId;
 };
 
-VmOps *VmOps_Create(void) {
-    VmOps *o = (VmOps *)calloc(1, sizeof(VmOps));
-    if (!o) return NULL;
-    puts_(&o->b, "{\"type\":\"ops\",\"ops\":[");
-    return o;
+VmTiles *VmTiles_Create(void) {
+    VmTiles *t = (VmTiles *)calloc(1, sizeof(VmTiles));
+    return t;
 }
 
-void VmOps_Destroy(VmOps *ops) {
-    if (!ops) return;
-    free(ops->b.data);
-    free(ops);
+void VmTiles_Destroy(VmTiles *tiles) {
+    if (!tiles) return;
+    free(tiles->b.data);
+    free(tiles);
 }
 
-static void op_begin(VmOps *o) {
-    if (!o) return;
-    if (o->count++) puts_(&o->b, ",");
+void VmTiles_SetFrameId(VmTiles *tiles, uint32_t frameId) {
+    if (tiles) tiles->frameId = frameId;
 }
 
-void VmOps_CreateLayer(VmOps *o, const char *id, int w, int h) {
-    if (!o) return;
-    op_begin(o);
-    puts_(&o->b, "{\"op\":\"create\",\"id\":");
-    json_string(&o->b, id);
-    printf_(&o->b, ",\"w\":%d,\"h\":%d}", w, h);
+static void op_begin(VmTiles *t) {
+    if (!t) return;
+    if (t->count == 0)
+        printf_(&t->b, "{\"type\":\"tiles\",\"frameId\":%u,\"ops\":[", t->frameId);
+    else
+        puts_(&t->b, ",");
+    t->count++;
 }
 
-void VmOps_Bind(VmOps *o, const char *id) {
-    if (!o) return;
-    op_begin(o);
-    puts_(&o->b, "{\"op\":\"bind\",\"id\":");
-    json_string(&o->b, id);
-    puts_(&o->b, "}");
+void VmTiles_ShowLoading(VmTiles *tiles) {
+    if (!tiles) return;
+    op_begin(tiles);
+    puts_(&tiles->b, "{\"op\":\"showLoading\"}");
 }
 
-void VmOps_ClearLayer(VmOps *o, VmRect r) {
-    if (!o) return;
-    op_begin(o);
-    puts_(&o->b, "{\"op\":\"clear\",\"rect\":");
-    rect_json(&o->b, r);
-    puts_(&o->b, "}");
+void VmTiles_HideLoading(VmTiles *tiles) {
+    if (!tiles) return;
+    op_begin(tiles);
+    puts_(&tiles->b, "{\"op\":\"hideLoading\"}");
 }
 
-void VmOps_Draw(VmOps *o, const VmDrawCommand *cmds, int count) {
-    if (!o || !cmds) return;
+void VmTiles_Config(VmTiles *tiles, int cols, int rows, int tileW, int tileH, int w, int h) {
+    if (!tiles) return;
+    op_begin(tiles);
+    printf_(&tiles->b,
+           "{\"op\":\"config\",\"cols\":%d,\"rows\":%d,\"tileW\":%d,\"tileH\":%d,\"w\":%d,\"h\":%d}",
+           cols, rows, tileW, tileH, w, h);
+}
+
+void VmTiles_SetTile(VmTiles *tiles, int index, const VmDrawCommand *cmds, int count) {
+    if (!tiles) return;
+    op_begin(tiles);
+    printf_(&tiles->b, "{\"op\":\"setTile\",\"index\":%d,\"cmds\":[", index);
     for (int i = 0; i < count; i++) {
-        op_begin(o);
-        emit_command(&o->b, &cmds[i]);
+        if (i) puts_(&tiles->b, ",");
+        emit_command(&tiles->b, &cmds[i]);
     }
+    puts_(&tiles->b, "]}");
 }
 
-void VmOps_ClearScreen(VmOps *o, VmRect r) {
-    if (!o) return;
-    op_begin(o);
-    puts_(&o->b, "{\"op\":\"clearScreen\",\"rect\":");
-    rect_json(&o->b, r);
-    puts_(&o->b, "}");
+void VmTiles_SetTileJson(VmTiles *tiles, int index, const char *cmdsJson) {
+    if (!tiles) return;
+    op_begin(tiles);
+    printf_(&tiles->b, "{\"op\":\"setTile\",\"index\":%d,\"cmds\":", index);
+    puts_(&tiles->b, cmdsJson ? cmdsJson : "[]");
+    puts_(&tiles->b, "}");
 }
 
-void VmOps_Composite(VmOps *o, const char *src, VmRect srcRect, int dx, int dy) {
-    if (!o) return;
-    op_begin(o);
-    puts_(&o->b, "{\"op\":\"composite\",\"src\":");
-    json_string(&o->b, src);
-    puts_(&o->b, ",\"srcRect\":");
-    rect_json(&o->b, srcRect);
-    printf_(&o->b, ",\"dx\":%d,\"dy\":%d}", dx, dy);
-}
-
-char *VmOps_Finish(VmOps *o) {
-    if (!o) return NULL;
-    puts_(&o->b, "]}");
-    char *data = o->b.data;
-    o->b.data = NULL;
-    free(o);
+char *VmTiles_Finish(VmTiles *tiles) {
+    if (!tiles) return NULL;
+    if (tiles->count == 0)
+        printf_(&tiles->b, "{\"type\":\"tiles\",\"frameId\":%u,\"ops\":[", tiles->frameId);
+    puts_(&tiles->b, "]}");
+    char *data = tiles->b.data;
+    tiles->b.data = NULL;
+    VmTiles_Destroy(tiles);
     return data;
 }

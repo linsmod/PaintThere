@@ -193,3 +193,9 @@ created → mapped（可见）→ focused / unfocused
 - `test_render.exe` 会重置 ssh 连接，不依赖它。
 - Clay 无键盘焦点/拖放/IME，全部由 WM 或应用自行实现。
 - 当前未写任何代码；本文只有方案定义与计划。
+
+## 架构调整：Remote tiles 替换分层合成（2026-11-22）
+
+用户判定提交 `86ceb00` 的 `create/bind/clear/composite` + `w1/w2/cursor` 层协议把桌面业务逻辑泄漏到跨端，要求改为「WM 指令管理远端 tiles，小图，并加 showLoading/hideLoading 保证批次完成后画面稳定」。执行记录见 `docs/task-remote-tiles.md`。
+
+结果：协议收敛为 `config` / `setTile` / `showLoading` / `hideLoading`；`vm_tiles.c` 在 guest 侧把 z 序完整帧切成 tile 局部命令并按签名做差异；窗口/图层/z 序/脏区全部回到 guest 内部。浏览器验证通过：48 块 tile、焦点切换蓝灰互换、多客户端指针着色、console 无错误。

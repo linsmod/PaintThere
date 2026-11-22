@@ -8,6 +8,12 @@
 static const char VM_CURSOR_SVG_B64[] =
     "PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPScyNCcgaGVpZ2h0PScyNCcgdmlld0JveD0nMCAwIDI0IDI0Jz48cGF0aCBkPSdNNCwyIEw0LDIwIEw5LDE1IEwxMi41LDIyIEwxNS41LDIwLjUgTDEyLDEzLjUgTDIwLDEzIFonIGZpbGw9JyNmZmYnIHN0cm9rZT0nIzAwMCcgc3Ryb2tlLXdpZHRoPScxJy8+PC9zdmc+";
 
+const char *VmWm_CursorDataUrl(void) {
+    static char dataUrl[512];
+    snprintf(dataUrl, sizeof(dataUrl), "data:image/svg+xml;base64,%s", VM_CURSOR_SVG_B64);
+    return dataUrl;
+}
+
 VmWm *VmWm_Create(int width, int height) {
     VmWm *wm = (VmWm *)calloc(1, sizeof(VmWm));
     if (!wm) return NULL;
@@ -295,13 +301,6 @@ static void append_border_cmd(VmDisplayList *out, const char *id,
 
 static void append_cursor_commands(VmWm *wm, VmDisplayList *out) {
     if (wm->cursorCount <= 0) return;
-    VmDrawCommand *asset = VmDisplay_Append(out, VM_CMD_LOAD_IMG, "cursor_asset");
-    if (!asset) return;
-    static char dataUrl[512];
-    snprintf(dataUrl, sizeof(dataUrl), "data:image/svg+xml;base64,%s", VM_CURSOR_SVG_B64);
-    VmDisplay_CopyStr(asset->args.loadImg.imgId, sizeof(asset->args.loadImg.imgId), "cursor");
-    VmDisplay_CopyStr(asset->args.loadImg.dataUrl, sizeof(asset->args.loadImg.dataUrl), dataUrl);
-
     time_t now = time(NULL);
     for (int i = 0; i < wm->cursorCount; i++) {
         VmCursor *c = &wm->cursors[i];
@@ -371,40 +370,6 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
             }
         }
     }
-    append_cursor_commands(wm, out);
-}
-
-void VmWm_BuildWindowLayer(VmWm *wm, const VmWindow *win, VmDisplayList *out,
-                           const char *(*fontResolver)(uint16_t)) {
-    if (!wm || !win || !out) return;
-    VmDisplay_Clear(out);
-    char idbuf[64];
-
-    snprintf(idbuf, sizeof(idbuf), "w%d_body", win->id);
-    append_rect_cmd(out, idbuf, 0, 0, win->w, win->h, "s_window", 0);
-
-    snprintf(idbuf, sizeof(idbuf), "w%d_title", win->id);
-    append_rect_cmd(out, idbuf, 2, 2, win->w - 4, VM_WM_TITLE_HEIGHT - 2,
-                    win->focused ? "rgba(38,110,190,1)" : "rgba(120,126,134,1)", 0);
-
-    snprintf(idbuf, sizeof(idbuf), "w%d_ttext", win->id);
-    append_title_cmd(out, idbuf, 0, 0, win->title, "rgba(255,255,255,1)");
-
-    snprintf(idbuf, sizeof(idbuf), "w%d_border", win->id);
-    append_border_cmd(out, idbuf, 0, 0, win->w, win->h,
-                      win->focused ? "rgba(38,110,190,1)" : "rgba(90,96,104,1)");
-
-    if (win->layout && win->clayCtx) {
-        Clay_SetCurrentContext(win->clayCtx);
-        Clay_RenderCommandArray cmds = win->layout(win->userData);
-        ClayFrame_AppendCommands(out, cmds.internalArray, cmds.length,
-                                 2, VM_WM_TITLE_HEIGHT + 2, fontResolver, NULL);
-    }
-}
-
-void VmWm_BuildCursorLayer(VmWm *wm, VmDisplayList *out) {
-    if (!wm || !out) return;
-    VmDisplay_Clear(out);
     append_cursor_commands(wm, out);
 }
 

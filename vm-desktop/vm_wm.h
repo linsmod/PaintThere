@@ -89,13 +89,8 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
 /* 窗口两两重叠区域的并集：z 序变化时只有这块区域显示会变。返回 1 表示存在重叠。 */
 int VmWm_OverlapUnion(VmWm *wm, VmRect *out);
 
-/* 生成单个窗口的层命令：坐标是窗口局部坐标（原点在窗口左上角），
-   这样窗口移动只需要改合成位置，不必重绘层内容。 */
-void VmWm_BuildWindowLayer(VmWm *wm, const VmWindow *win, VmDisplayList *out,
-                           const char *(*fontResolver)(uint16_t));
-
-/* 生成指针层命令：坐标是画布全局坐标。 */
-void VmWm_BuildCursorLayer(VmWm *wm, VmDisplayList *out);
+/* 光标箭头 data URL：一次性放进 resources，不随帧重复下发。 */
+const char *VmWm_CursorDataUrl(void);
 
 #ifdef __cplusplus
 }

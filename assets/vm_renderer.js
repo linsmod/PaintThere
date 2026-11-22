@@ -16,7 +16,7 @@ const BASE = (typeof location !== 'undefined' && location.protocol !== 'file:')
 const EVENTS_URL = `${BASE}/events`;
 const INPUT_URL = `${BASE}/input`;
 
-window.__vmRenderer = { ready: false, frames: 0, resources: 0, error: '' };
+window.__vmRenderer = { ready: false, frames: 0, resources: 0, tiles: 0, loading: false, error: '' };
 
 // 文本光栅化是异步的：首帧可能还没位图，就绪后请服务端重发一次全量合成。
 function requestRedraw() {
@@ -70,47 +70,78 @@ async function boot() {
   await loadFont(1, btoa(bs));
 
   const cvCtx = cv.getContext('2d');
-  const layers = new Map();
-  const registerLayer = (id, canvas) => {
-    layers.set(id, canvas);
-    setLayerCanvas(id, canvas);
-  };
-  registerLayer('bg', bg);
 
-  /* 执行服务端下发的合成指令：create / bind / clear / clearScreen / composite + 绘制原语。
-     这里没有任何判断逻辑：画什么、画到哪一层、什么时候合成，全部由服务端决定。 */
+  /* Remote tiles：网格由 WM 指令下发，前端只管理远端小画布并按 index 贴齐。
+     窗口、图层、z 序与脏区都不在协议里。 */
+  const tileCanvases = [];
+  let grid = null;
+
+  const configTiles = (op) => {
+    const total = op.cols * op.rows;
+    if (grid && grid.cols === op.cols && grid.rows === op.rows &&
+        grid.tileW === op.tileW && grid.tileH === op.tileH && tileCanvases.length === total) return;
+    grid = { cols: op.cols, rows: op.rows, tileW: op.tileW, tileH: op.tileH, w: op.w, h: op.h };
+    tileCanvases.length = 0;
+    for (let i = 0; i < total; i++) {
+      const tile = document.createElement('canvas');
+      tile.width = op.tileW;
+      tile.height = op.tileH;
+      tileCanvases.push(tile);
+    }
+  };
+
+  const present = () => {
+    cvCtx.clearRect(0, 0, cv.width, cv.height);
+    if (!grid) return;
+    for (let i = 0; i < tileCanvases.length; i++) {
+      const col = i % grid.cols;
+      const row = Math.floor(i / grid.cols);
+      cvCtx.drawImage(tileCanvases[i], col * grid.tileW, row * grid.tileH);
+    }
+    window.__vmRenderer.tiles = tileCanvases.length;
+  };
+
+  const setTile = (op) => {
+    const tile = tileCanvases[op.index];
+    if (!tile) return;
+    const tctx = tile.getContext('2d');
+    tctx.clearRect(0, 0, tile.width, tile.height);
+    setDrawTarget(tctx);
+    for (const c of (op.cmds || [])) {
+      const fn = commandHandlers[c.cmd];
+      if (fn) { try { fn(...c.args); } catch (e) { console.error('cmd failed:', c.cmd, e); } }
+    }
+  };
+
+  const showLoading = () => {
+    cvCtx.save();
+    cvCtx.fillStyle = 'rgba(24,26,32,0.72)';
+    cvCtx.fillRect(0, 0, cv.width, cv.height);
+    cvCtx.restore();
+    window.__vmRenderer.loading = true;
+  };
+
+  const hideLoading = () => {
+    window.__vmRenderer.loading = false;
+    present();
+  };
+
   const execOps = (ops) => {
-    let cur = null;
+    let batched = false;
     for (const op of ops) {
       if (!op) continue;
-      if (op.op === 'create') {
-        let canvas = layers.get(op.id);
-        if (!canvas) {
-          canvas = document.createElement('canvas');
-          registerLayer(op.id, canvas);
+      switch (op.op) {
+        case 'config': configTiles(op); break;
+        case 'setTile': setTile(op); break;
+        case 'showLoading': showLoading(); batched = true; break;
+        case 'hideLoading': hideLoading(); batched = true; break;
+        default: {
+          const fn = commandHandlers[op.cmd];
+          if (fn) { try { fn(...op.args); } catch (e) { console.error('op failed:', op.op, e); } }
         }
-        if (canvas.width !== op.w || canvas.height !== op.h) {
-          canvas.width = op.w;
-          canvas.height = op.h;
-        }
-      } else if (op.op === 'bind') {
-        cur = layers.get(op.id) || null;
-        if (cur) setDrawTarget(cur.getContext('2d'));
-      } else if (op.op === 'clear') {
-        if (cur) cur.getContext('2d').clearRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
-      } else if (op.op === 'clearScreen') {
-        cvCtx.clearRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
-      } else if (op.op === 'composite') {
-        const src = layers.get(op.src);
-        if (src) {
-          const r = op.srcRect;
-          cvCtx.drawImage(src, r[0], r[1], r[2], r[3], op.dx, op.dy, r[2], r[3]);
-        }
-      } else {
-        const fn = commandHandlers[op.cmd];
-        if (fn) { try { fn(...op.args); } catch (e) { console.error('cmd failed:', op.cmd, e); } }
       }
     }
+    if (!batched) present();
   };
 
   const es = new EventSource(EVENTS_URL);

@@ -25,6 +25,7 @@
 |---|---|
 | `vm-desktop/vm_server.c/.h` | C 跨平台 HTTP 服务：SSE `/events`、`POST /input`、白名单静态资源、`VmResourceProvider` 一次性资源 |
 | `vm-desktop/vm_wm.c/.h` | guest 最小 WM：窗口树/z 序/焦点/拖动/指针表/焦点仲裁/多窗口帧合成 |
+| `vm-desktop/vm_tiles.c/.h` | 把全局坐标完整帧切成 tile 局部命令，按命令签名只发变化的 tile |
 | `vm-desktop/clay_frame_adapter.c/.h` | Clay `RenderCommandArray` → JSON 帧；分块构建与坐标偏移 |
 | `vm-desktop/stb_font_wasm.c` | stb_truetype wasm 绑定，导出 `loadFont/measureText/rasterizeText` |
 | `vm-desktop/demo_wm.c` | 双窗口 demo，含 hover/click、多客户端指针、本地背景、自适应帧率 |
@@ -37,7 +38,7 @@
 ```powershell
 # 构建 C demo（按需选一个）
 cd h:\github_repos\跨端图绘指令流\vm-desktop
-gcc -std=c11 -I"H:\github_repos\clay" -I. demo_wm.c clay_frame_adapter.c vm_display.c vm_serialize_json.c vm_wm.c vm_server.c -lws2_32 -o demo_wm.exe
+gcc -std=c11 -I"H:\github_repos\clay" -I. demo_wm.c clay_frame_adapter.c vm_display.c vm_serialize_json.c vm_tiles.c vm_wm.c vm_server.c -lws2_32 -o demo_wm.exe
 gcc -std=c11 -I"H:\github_repos\clay" -I. demo_frame.c demo_layout.c clay_frame_adapter.c vm_display.c vm_serialize_json.c -o demo_frame.exe
 gcc -std=c11 -I. test_display_diff.c vm_display.c -o test_display_diff.exe
 
@@ -81,9 +82,10 @@ agent-browser --session vm close
 
 1. **构建**：两个 `dotnet build` 通过；gcc 编译 `demo_frame` / `demo_wm` 通过；emcc 编译 wasm 通过。
 2. **字体一致性**：`font_probe.exe <ttf> <size> <text>` 与 `node test_wasm_font.mjs <ttf> <size> <text>` 的宽度一致（本机验证过 91/70/247）。
-3. **协议**：`curl -N /events` 能收到 `event: resources` + 首帧；帧中无 `wm_bg`，窗口背景为 `"s_window"`。
+3. **协议**：`curl -N /events` 收到 `event: resources` + `event: fullframe`；fullframe 为 `{"type":"tiles",...}`，ops 依次含 `showLoading` / `config` / 48 个 `setTile` / `hideLoading`；帧中无 `wm_bg`，窗口背景为 `"s_window"`。
+   - 增量验证：挂一个 SSE 连接后 `POST /input`，增量帧的 `setTile` 数量应远小于 48（指针移动通常 1–2 块），且始终带 loading 批次边界。
 4. **自适应帧率**：空闲 2 秒后再连接，frameId 不变；一次输入后 frameId +1。
-5. **渲染**：浏览器检查 `bg` canvas 全不透明、`c` canvas 标题栏颜色像素；console 无错误。
+5. **渲染**：浏览器检查 `__vmRenderer.ready === true`、`tiles === 48`、`loading === false`、`error === ''`；`bg` canvas 全不透明、`c` canvas 标题栏颜色像素；console 无错误。
 6. **交互**：hover 按钮由蓝变橙；单次 click 使 `Clicked: 0` → `Clicked: 1`。
 7. **多客户端**：两个客户端持续上报不同颜色指针，浏览器看到对应颜色箭头（约 150 像素/箭头）。
 8. **键盘**：焦点客户端点击窗口后发 `keydown`（key=`H`/`i`），帧中文本从空变 `Hi`；非焦点客户端发键被忽略（`changed=0`）。截图 `wm_keyboard.png`。

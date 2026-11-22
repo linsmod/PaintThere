@@ -14,6 +14,10 @@ extern "C" {
 
 typedef struct VmShell VmShell;
 
+/* 开始按钮点击回调：由宿主决定打开/关闭开始菜单，shell 不解释应用语义。 */
+typedef void (*VmShellStartHandler)(void *userData);
+void VmShell_SetStartHandler(VmShell *shell, VmShellStartHandler handler, void *userData);
+
 /* 任务是「特殊窗口」：无装饰、置顶、不可拖动、不抢焦点。
    这样 z 序、命中、Clay 指针、键盘路径全部复用 WM 现成实现。
    字体由 wm 使用的主题决定，度量走 vm_font，因此调用前需先 VmFont_LoadFile。 */

@@ -399,7 +399,9 @@ static void vm_serve_static(VmServer *s, vm_socket fd, const char *path) {
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    if (size < 0 || size > 4 * 1024 * 1024) {
+    /* 中文字体（如 SimHei 9.7MB）需要更大的静态资源上限；
+       这是本地演示服务，只提供白名单内的几个静态文件，提高上限无外部风险。 */
+    if (size < 0 || size > 16 * 1024 * 1024) {
         fclose(f);
         vm_send_response(fd, 413, "Payload Too Large", "text/plain", "too large", 9);
         return;

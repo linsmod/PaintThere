@@ -35,15 +35,38 @@ async function boot() {
   stage.appendChild(cv);
 
   // 样式全部由 JS 设置，HTML 只负责加载本模块。
-  // 覆盖 app.js 写入的 1/1.5 CSS 缩放：两端都按 1:1 物理像素显示，便于对比。
-  document.body.style.margin = '0px';
-  stage.style.width = WIDTH + 'px';
-  stage.style.height = HEIGHT + 'px';
-  stage.style.position = 'relative';
-  stage.style.margin = '0px';
+  // 物理画布保持 800×600（tile 网格与协议坐标不变）；CSS 等比缩放填满视口，
+  // 页面背景用桌面同色渐变，避免窗口变大后露出白边。
+  const applyPageStyle = () => {
+    document.documentElement.style.height = '100%';
+    document.body.style.height = '100%';
+    document.body.style.margin = '0px';
+    document.body.style.overflow = 'hidden';
+    document.body.style.background =
+      'radial-gradient(circle at 50% 30%, #1c2032 0%, #0d0f18 70%)';
+    document.body.style.display = 'flex';
+    document.body.style.alignItems = 'center';
+    document.body.style.justifyContent = 'center';
+  };
+  applyPageStyle();
+
+  const layoutStage = () => {
+    const scale = Math.min(window.innerWidth / WIDTH, window.innerHeight / HEIGHT, 1);
+    const cssW = Math.round(WIDTH * scale);
+    const cssH = Math.round(HEIGHT * scale);
+    stage.style.width = cssW + 'px';
+    stage.style.height = cssH + 'px';
+    stage.style.position = 'relative';
+    stage.style.flex = '0 0 auto';
+    stage.style.overflow = 'hidden';
+    stage.style.borderRadius = '10px';
+    stage.style.boxShadow = '0 24px 70px rgba(0,0,0,0.55), 0 0 0 1px rgba(124,122,255,0.18)';
+    for (const layer of [bg, cv]) {
+      layer.style.width = cssW + 'px';
+      layer.style.height = cssH + 'px';
+    }
+  };
   const setupLayer = (canvas) => {
-    canvas.style.width = WIDTH + 'px';
-    canvas.style.height = HEIGHT + 'px';
     canvas.style.position = 'absolute';
     canvas.style.left = '0px';
     canvas.style.top = '0px';
@@ -55,6 +78,8 @@ async function boot() {
   setupLayer(bg);
   setupLayer(cv);
   cv.width = WIDTH; cv.height = HEIGHT;
+  layoutStage();
+  window.addEventListener('resize', layoutStage);
   setLayerCanvas('bg', bg);
   replayBackgroundPrograms();
 

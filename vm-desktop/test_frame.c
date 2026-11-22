@@ -5,6 +5,7 @@
 #define CLAY_IMPLEMENTATION
 #include "vm_wm.h"
 
+#include <ctype.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -152,18 +153,26 @@ static void test_wm_chrome_and_clip(void) {
     VmDrawCommand *body = VmDisplay_Find(&frame, "w1_body");
     expect(body != NULL, "body command exists");
     if (body) {
-        expect_int((int)body->args.drawRect.rect.x, 62, "body x = win.x + border");
-        expect_int((int)body->args.drawRect.rect.y, 88, "body y = win.y + title");
-        expect_int((int)body->args.drawRect.rect.w, 356, "body w = win.w - 2*border");
-        expect_int((int)body->args.drawRect.rect.h, 230, "body h = win.h - title - border");
+        /* 默认主题：borderWidth=1, titleHeight=30（现代深色）。 */
+        expect_int((int)body->args.drawRect.rect.x, 61, "body x = win.x + border");
+        expect_int((int)body->args.drawRect.rect.y, 90, "body y = win.y + title");
+        expect_int((int)body->args.drawRect.rect.w, 358, "body w = win.w - 2*border");
+        expect_int((int)body->args.drawRect.rect.h, 229, "body h = win.h - title - border");
         expect(strcmp(body->args.drawRect.paint, "s_window") == 0, "body paint = theme window style");
+    }
+
+    VmDrawCommand *shadow = VmDisplay_Find(&frame, "w1_shadow");
+    expect(shadow != NULL, "window shadow command exists");
+    if (shadow) {
+        expect(shadow->args.drawRect.cornerRadius > 0, "shadow is rounded");
     }
 
     VmDrawCommand *title = VmDisplay_Find(&frame, "w1_title");
     expect(title != NULL, "title command exists");
     if (title) {
-        expect(strcmp(title->args.drawRect.paint, "rgba(120,126,134,1)") == 0,
+        expect(strcmp(title->args.drawRect.paint, "rgba(34,38,54,1)") == 0,
                "unfocused title uses theme idle color");
+        expect(title->args.drawRect.cornerRadius > 0, "title is rounded");
     }
 
     VmDrawCommand *ttext = VmDisplay_Find(&frame, "w1_ttext");
@@ -179,10 +188,10 @@ static void test_wm_chrome_and_clip(void) {
     expect(clip != NULL && clip->type == VM_CMD_CLIP_PUSH, "content clip push exists");
     expect(clipEnd != NULL && clipEnd->type == VM_CMD_CLIP_POP, "content clip pop exists");
     if (clip && clipEnd) {
-        expect_int((int)clip->args.clip.x, 62, "clip x = body x");
-        expect_int((int)clip->args.clip.y, 88, "clip y = body y");
-        expect_int((int)clip->args.clip.w, 356, "clip w = body w");
-        expect_int((int)clip->args.clip.h, 230, "clip h = body h");
+        expect_int((int)clip->args.clip.x, 61, "clip x = body x");
+        expect_int((int)clip->args.clip.y, 90, "clip y = body y");
+        expect_int((int)clip->args.clip.w, 358, "clip w = body w");
+        expect_int((int)clip->args.clip.h, 229, "clip h = body h");
         expect(clip < clipEnd, "clip push precedes clip pop");
     }
 
@@ -270,9 +279,9 @@ static void test_wm_input(void) {
                         "\"clientId\":\"A\"}";
     VmWm_HandleInput(wm, wheel, strlen(wheel));
     expect_int(g_probe.wheelCalls, 1, "wheel reaches window handler");
-    expect_int(g_probe.lastWheelLocalX, 38, "wheel local x = canvas - body offset");
+    expect_int(g_probe.lastWheelLocalX, 39, "wheel local x = canvas - body offset");
     /* body 原点 = (x+border, y+title)，与 BuildFrame 追加 Clay 内容的偏移一致。 */
-    expect_int(g_probe.lastWheelLocalY, 12, "wheel local y = canvas - body offset");
+    expect_int(g_probe.lastWheelLocalY, 10, "wheel local y = canvas - body offset");
     expect_int(g_probe.lastWheelDelta, 120, "wheel deltaY passed through");
 
     int x0 = 0;
@@ -397,7 +406,8 @@ static void test_shell(void) {
     }
 
     /* 点任务栏条目：最小化的窗口被恢复并获得焦点。
-       条目顺序 = 创建序，宽度 140、间距 4、内边距 4。 */
+       条目顺序 = 创建序；布局 = 左内边距 6 + 开始按钮 72 + 间距 6，
+       条目宽 110、间距 6，所以第 i 条中心 = 6 + 72 + 6 + i*116 + 55。 */
     VmWm_Minimize(wm, 1);
     expect_int(VmWm_FocusId(wm), -1, "no focus after minimize");
     int ord[VM_WM_MAX_WINDOWS];
@@ -407,7 +417,7 @@ static void test_shell(void) {
     expect(idx >= 0, "minimized window still listed in taskbar");
     if (idx >= 0) {
         char payload[160];
-        int cx = 4 + idx * 144 + 70;
+        int cx = 6 + 72 + 6 + idx * 116 + 55;
         snprintf(payload, sizeof(payload),
                  "{\"kind\":\"mousedown\",\"x\":%d,\"y\":580,\"button\":0,\"clientId\":\"A\"}",
                  cx);
@@ -417,6 +427,33 @@ static void test_shell(void) {
         expect_int(VmWm_FocusId(wm), 1, "clicking taskbar item focuses that window");
     }
 
+    /* 任务栏文字命令按内容识别（Clay 元素 id 是数字哈希，不便于按字符串找）。 */
+    int hasStart = 0, hasClock = 0;
+    for (int i = 0; i < frame.count; i++) {
+        VmDrawCommand *c = &frame.commands[i];
+        if (c->type != VM_CMD_DRAW_TEXT) continue;
+        if (strstr(c->args.drawText.text, "开始") != NULL) hasStart = 1;
+        const char *txt = c->args.drawText.text;
+        if (strlen(txt) == 5 && txt[2] == ':' && isdigit((unsigned char)txt[0]) &&
+            isdigit((unsigned char)txt[1]) && isdigit((unsigned char)txt[3]) &&
+            isdigit((unsigned char)txt[4])) hasClock = 1;
+    }
+    expect(hasStart, "taskbar renders start button label");
+    expect(hasClock, "taskbar renders HH:MM clock");
+
+    /* 无装饰窗口不生成任务栏条目：对比加入前后的任务栏文字命令数。 */
+    int textBefore = 0;
+    for (int i = 0; i < frame.count; i++)
+        if (frame.commands[i].type == VM_CMD_DRAW_TEXT) textBefore++;
+    VmWm_AddWindow(wm, 3, "desktop", 0, 0, 100, 100, dummy_layout, NULL);
+    VmWm_SetWindowFlags(wm, 3, VM_WIN_UNDECORATED | VM_WIN_NOFOCUS);
+    VmWm_BuildFrame(wm, &frame, 3, NULL);
+    int textAfter = 0;
+    for (int i = 0; i < frame.count; i++)
+        if (frame.commands[i].type == VM_CMD_DRAW_TEXT) textAfter++;
+    expect_int(textAfter, textBefore, "undecorated window adds no taskbar item");
+
+    VmWm_RemoveWindow(wm, 3);
     VmShell_Destroy(shell);
     expect_int(wm->count, 2, "destroying shell removes taskbar window");
     VmWm_Free(wm);

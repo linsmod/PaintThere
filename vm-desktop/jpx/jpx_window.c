@@ -172,6 +172,7 @@ JpxWindow *Jpx__WindowCreate(JpxApp *app, const JpxWindowDesc *desc) {
         return NULL;
     }
     vw->clayCtx = w->ctx;
+    if (desc->flags) VmWm_SetWindowFlags(app->wm, w->id, desc->flags);
     VmWm_SetCloseHandler(app->wm, w->id, window_close_cb, w);
     VmWm_SetKeyHandler(app->wm, w->id, window_key_cb, w);
     VmWm_SetWheelHandler(app->wm, w->id, window_wheel_cb, w);

@@ -646,9 +646,13 @@ static void build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
     int bodyX = (int)body.x, bodyY = (int)body.y;
     int bodyW = (int)body.w, bodyH = (int)body.h;
 
+    snprintf(idbuf, sizeof(idbuf), "w%d_shadow", win->id);
+    append_rect_cmd(out, idbuf, win->x - 6, win->y - 4,
+                    win->w + 12, win->h + 12, "rgba(0,0,0,0.42)", 10);
+
     snprintf(idbuf, sizeof(idbuf), "w%d_body", win->id);
     append_rect_cmd(out, idbuf, bodyX, bodyY, bodyW, bodyH,
-                    win->bodyStyleId ? win->bodyStyleId : ch->windowStyleId, 0);
+                    win->bodyStyleId ? win->bodyStyleId : ch->windowStyleId, 8);
 
     if (!(win->flags & VM_WIN_UNDECORATED)) {
         const int bw = ch->borderWidth;
@@ -657,16 +661,30 @@ static void build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
         snprintf(idbuf, sizeof(idbuf), "w%d_title", win->id);
         append_rect_cmd(out, idbuf, win->x + bw, win->y + bw,
                         win->w - 2 * bw, th - bw,
-                        win->focused ? ch->titleFocusColor : ch->titleIdleColor, 0);
+                        win->focused ? ch->titleFocusColor : ch->titleIdleColor, 7);
 
         snprintf(idbuf, sizeof(idbuf), "w%d_ttext", win->id);
         append_title_cmd(out, idbuf, win->x, win->y, win->w, ch, win->title,
-                         "rgba(255,255,255,1)");
+                         win->focused ? "rgba(255,255,255,1)" : "rgba(202,208,224,1)");
 
         VmRect closeRect, minRect;
         int size = 0;
         chrome_button_rects(wm, win, &closeRect, &minRect, &size);
         if (size > 0) {
+            int overMin = wm->pointerValid &&
+                          rect_contains(minRect, wm->pointerX, wm->pointerY);
+            int overClose = wm->pointerValid &&
+                            rect_contains(closeRect, wm->pointerX, wm->pointerY);
+            if (overMin) {
+                snprintf(idbuf, sizeof(idbuf), "w%d_min_hover", win->id);
+                append_rect_cmd(out, idbuf, (int)minRect.x, (int)minRect.y,
+                                size, size, "rgba(255,255,255,0.18)", 4);
+            }
+            if (overClose) {
+                snprintf(idbuf, sizeof(idbuf), "w%d_close_hover", win->id);
+                append_rect_cmd(out, idbuf, (int)closeRect.x, (int)closeRect.y,
+                                size, size, "rgba(232,92,110,0.92)", 4);
+            }
             int barW = size / 2, barH = 2;
             snprintf(idbuf, sizeof(idbuf), "w%d_min", win->id);
             append_rect_cmd(out, idbuf,

@@ -23,7 +23,7 @@ typedef struct {
 
 typedef struct {
     const char *bgColor, *fgColor, *borderColor, *accentColor, *accentTextColor;
-    const char *inputBgColor, *disabledColor;
+    const char *inputBgColor, *disabledColor, *selectedColor;
     const char *hoverColor;   /* NULL 时用 accent 提亮 20% 推导 */
     int fontId, fontSize, radius, padding, gap;
 } JpxTheme;
@@ -34,9 +34,18 @@ typedef void (*JpxCloseFn)(int winId, void *user);
 typedef int  (*JpxKeyFn)(int winId, const char *key, const char *code,
                          int isDown, int ctrl, int shift, int alt, void *user);
 
+/* 窗口标志：与 VM_WIN_* 同值，应用可给菜单、桌面层等特权窗口使用。 */
+enum {
+    JPX_WIN_UNDECORATED = 1,
+    JPX_WIN_TOPMOST     = 2,
+    JPX_WIN_PINNED      = 4,
+    JPX_WIN_NOFOCUS     = 8
+};
+
 typedef struct {
     const char *title;
     int x, y, w, h;
+    unsigned flags;       /* JPX_WIN_* 位或；普通窗口填 0 */
     JpxLayoutFn layout;
     void *user;
     JpxCloseFn onClose;   /* 被点 × 时调用；应用自行调 Jpx_WindowClose 才真正关闭 */
@@ -96,6 +105,12 @@ void Jpx_Invalidate(JpxApp *app);
 
 int  Jpx_TimerEvery(JpxApp *app, int ms, void (*fn)(void *), void *user);
 void Jpx_TimerCancel(JpxApp *app, int timerId);
+
+/* 只刷新任务栏窗口（时钟/开始按钮态），不重建其它窗口内容。 */
+void Jpx_ShellRefresh(JpxApp *app);
+/* 任务栏开始按钮回调：应用只给函数指针，不接触 VmShell。 */
+typedef void (*JpxStartHandler)(void *userData);
+void Jpx_SetStartHandler(JpxApp *app, JpxStartHandler handler, void *userData);
 
 void Jpx_ClipboardSet(const char *utf8);
 int  Jpx_ClipboardGet(char *out, int cap);

@@ -6,19 +6,20 @@
 #include <string.h>
 
 static const JpxTheme kDefaultTheme = {
-    .bgColor = "rgba(250,250,252,1)",
-    .fgColor = "rgba(30,30,30,1)",
-    .borderColor = "rgba(180,186,194,1)",
-    .accentColor = "rgba(52,140,220,1)",
+    .bgColor = "rgba(26,29,42,1)",
+    .fgColor = "rgba(226,231,240,1)",
+    .borderColor = "rgba(72,80,104,1)",
+    .accentColor = "rgba(124,122,255,1)",
     .accentTextColor = "rgba(255,255,255,1)",
-    .inputBgColor = "rgba(255,255,255,1)",
-    .disabledColor = "rgba(200,204,210,1)",
+    .inputBgColor = "rgba(18,21,32,1)",
+    .disabledColor = "rgba(74,80,98,1)",
+    .selectedColor = "rgba(124,122,255,0.30)",
     .hoverColor = NULL,
     .fontId = 0,
     .fontSize = 14,
-    .radius = 4,
+    .radius = 8,
     .padding = 12,
-    .gap = 8,
+    .gap = 10,
 };
 
 const JpxTheme *Jpx__DefaultTheme(void) {

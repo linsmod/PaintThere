@@ -169,17 +169,21 @@ int Jpx_Button(int win, const char *id, const char *text) {
     Clay_Color base = accent(app);
     Clay_Color hover = mix(base, (Clay_Color){255, 255, 255, 255}, 0.2f);
     if (app->theme.hoverColor) hover = Jpx__Color(app->theme.hoverColor, hover);
-    int hovered = 0;
+    int hovered = Clay_Hovered();
+    int pressed = hovered && app->wm && app->wm->pointerDown;
     Clay_TextElementConfig cfg = text_config(
         app, Jpx__Color(app->theme.accentTextColor, (Clay_Color){255, 255, 255, 255}), 1, 0);
     CLAY(Jpx__Id(win, id), {
         .layout = {
             .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0)},
-            .padding = {14, 14, 6, 6},
+            .padding = {16, 16, 7, 7},
             .childAlignment = {CLAY_ALIGN_X_CENTER, CLAY_ALIGN_Y_CENTER},
         },
-        .backgroundColor = Clay_Hovered() ? hover : base,
+        .backgroundColor = pressed ? mix(base, (Clay_Color){0, 0, 0, 255}, 0.28f)
+                                   : (hovered ? hover : base),
         .cornerRadius = CLAY_CORNER_RADIUS((float)app->theme.radius),
+        .border = {.color = mix(base, (Clay_Color){0, 0, 0, 255}, 0.35f),
+                   .width = CLAY_BORDER_ALL(1)},
     }) {
         hovered = Clay_Hovered();
         jpx_text(Jpx__Str(text), cfg);
@@ -204,13 +208,21 @@ int Jpx_Checkbox(int win, const char *id, const char *label, int *checked) {
     }) {
         hovered = Clay_Hovered();
         CLAY(Jpx__LocalId(app, "box"), {
-            .layout = {.sizing = {CLAY_SIZING_FIXED(16), CLAY_SIZING_FIXED(16)}},
+            .layout = {
+                .sizing = {CLAY_SIZING_FIXED(16), CLAY_SIZING_FIXED(16)},
+                .childAlignment = {CLAY_ALIGN_X_CENTER, CLAY_ALIGN_Y_CENTER},
+            },
             .backgroundColor = *checked ? accent(app)
                                         : Jpx__Color(app->theme.inputBgColor,
-                                                     (Clay_Color){255, 255, 255, 255}),
+                                                     (Clay_Color){18, 21, 32, 255}),
             .border = {.color = border(app), .width = CLAY_BORDER_ALL(1)},
-            .cornerRadius = CLAY_CORNER_RADIUS(2),
-        }) {}
+            .cornerRadius = CLAY_CORNER_RADIUS(3),
+        }) {
+            if (*checked) {
+                Clay_String mark = {.length = 3, .chars = "✓"};
+                jpx_text(mark, text_config(app, (Clay_Color){255, 255, 255, 255}, 1, 0));
+            }
+        }
         jpx_text(Jpx__Str(label), cfg);
     }
     if (pressed_this_frame(app, win, hovered)) {
@@ -242,10 +254,11 @@ int Jpx_TextInput(int win, const char *id, char *buf, size_t cap, size_t *len) {
     Jpx__FocusRegister(w, id, len, &slot->ed);
 
     int focused = strcmp(w->focusId, id) == 0;
-    int hovered = 0;
+    int hovered = Clay_Hovered();
     Clay_Color fgColor = fg(app);
     Clay_TextElementConfig cfg = text_config(app, fgColor, 0, 0);
-    Clay_Color edge = focused ? accent(app) : border(app);
+    Clay_Color edge = focused ? accent(app)
+                              : (hovered ? mix(border(app), accent(app), 0.35f) : border(app));
 
     CLAY(Jpx__Id(win, id), {
         .layout = {
@@ -257,15 +270,39 @@ int Jpx_TextInput(int win, const char *id, char *buf, size_t cap, size_t *len) {
             .padding = {8, 8, 6, 6},
             .childAlignment = {CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER},
         },
-        .backgroundColor = Jpx__Color(app->theme.inputBgColor, (Clay_Color){255, 255, 255, 255}),
-        .border = {.color = Clay_Hovered() ? accent(app) : edge, .width = CLAY_BORDER_ALL(1)},
+        .backgroundColor = Jpx__Color(app->theme.inputBgColor, (Clay_Color){18, 21, 32, 255}),
+        .border = {.color = edge, .width = CLAY_BORDER_ALL(focused ? 2 : 1)},
         .cornerRadius = CLAY_CORNER_RADIUS((float)app->theme.radius),
     }) {
         hovered = Clay_Hovered();
         size_t caret = slot->ed.caret;
         if (caret > slot->ed.len) caret = slot->ed.len;
 
-        if (focused && app->caretOn) {
+        size_t selStart = 0, selEnd = 0;
+        int hasSel = focused && Jpx__TextEditHasSelection(&slot->ed);
+        if (hasSel) Jpx__TextEditSelection(&slot->ed, &selStart, &selEnd);
+
+        if (hasSel) {
+            if (selStart > 0) {
+                Clay_String before = {.chars = buf, .length = (int32_t)selStart};
+                jpx_text(before, cfg);
+            }
+            Clay_String sel = {.chars = buf + selStart,
+                               .length = (int32_t)(selEnd - selStart)};
+            CLAY(Jpx__LocalId(app, "selection"), {
+                .layout = {.sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0)}},
+                .backgroundColor = Jpx__Color(app->theme.selectedColor,
+                                              (Clay_Color){124, 122, 255, 80}),
+                .cornerRadius = CLAY_CORNER_RADIUS(2),
+            }) {
+                jpx_text(sel, cfg);
+            }
+            if (slot->ed.len > selEnd) {
+                Clay_String after = {.chars = buf + selEnd,
+                                     .length = (int32_t)(slot->ed.len - selEnd)};
+                jpx_text(after, cfg);
+            }
+        } else if (focused && app->caretOn) {
             if (caret > 0) {
                 Clay_String before = {.chars = buf, .length = (int32_t)caret};
                 jpx_text(before, cfg);
@@ -431,6 +468,8 @@ int Jpx_ListRowEx(int win, const char *id, const char *const *cols, const int *w
 
     int hovered = 0;
     Clay_ElementId btnEid = {0};
+    Clay_Color zebra = (rowIdx & 1) ? (Clay_Color){255, 255, 255, 10}
+                                    : (Clay_Color){0, 0, 0, 0};
     CLAY(Jpx__Id(win, rowId), {
         .layout = {
             .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED((float)l->rowH)},
@@ -441,8 +480,8 @@ int Jpx_ListRowEx(int win, const char *id, const char *const *cols, const int *w
         },
         .backgroundColor = selected ? accent(app)
                                    : (Clay_Hovered()
-                                          ? mix(border(app), (Clay_Color){255, 255, 255, 255}, 0.5f)
-                                          : (Clay_Color){0, 0, 0, 0}),
+                                          ? mix(border(app), (Clay_Color){255, 255, 255, 255}, 0.28f)
+                                          : zebra),
     }) {
         hovered = Clay_Hovered();
         Clay_Color rowColor = selected
@@ -478,8 +517,8 @@ int Jpx_ListRowEx(int win, const char *id, const char *const *cols, const int *w
                     .childAlignment = {CLAY_ALIGN_X_CENTER, CLAY_ALIGN_Y_CENTER},
                 },
                 .backgroundColor = Clay_Hovered()
-                                       ? mix(border(app), (Clay_Color){255, 255, 255, 255}, 0.3f)
-                                       : (Clay_Color){0, 0, 0, 0},
+                                       ? mix(border(app), accent(app), 0.4f)
+                                       : (Clay_Color){40, 45, 62, 255},
                 .border = {.color = border(app), .width = CLAY_BORDER_ALL(1)},
                 .cornerRadius = CLAY_CORNER_RADIUS(2),
             }) {

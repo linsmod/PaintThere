@@ -338,6 +338,17 @@ void Jpx_TimerCancel(JpxApp *app, int timerId) {
     }
 }
 
+void Jpx_ShellRefresh(JpxApp *app) {
+    if (!app) return;
+    VmShell_Refresh(app->shell);
+    app->dirty = 1;
+}
+
+void Jpx_SetStartHandler(JpxApp *app, JpxStartHandler handler, void *userData) {
+    if (!app) return;
+    VmShell_SetStartHandler(app->shell, (VmShellStartHandler)handler, userData);
+}
+
 void Jpx_ClipboardSet(const char *utf8) {
     VmClipboard_SetText(utf8);
 }

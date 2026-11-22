@@ -104,32 +104,32 @@ static void on_files_close(int winId, void *user) {
 static void layout_a(int win, void *user) {
     WindowAState *state = (WindowAState *)user;
 
-    Jpx_Label(win, "Tab moves focus; click an input to focus it");
-    Jpx_Label(win, "Name");
+    Jpx_LabelEx(win, "表单 - Tab 切换焦点", &(JpxTextStyle){.wrap = 0, .align = 0});
+    Jpx_Spacer(win, 0, 4);
+    Jpx_Label(win, "姓名");
     Jpx_TextInput(win, "name", state->name, sizeof(state->name), &state->nameLen);
-    Jpx_Label(win, "Email");
+    Jpx_Label(win, "邮箱");
     Jpx_TextInput(win, "email", state->email, sizeof(state->email), &state->emailLen);
 
     Jpx_RowBegin(win);
-    int clicked = Jpx_Button(win, "btn", "Click me");
+    int clicked = Jpx_Button(win, "btn", "点击");
+    Jpx_Spacer(win, 8, 0);
+    Jpx_Label(win, state->label[0] ? state->label : "尚未点击");
     Jpx_RowEnd(win);
     if (clicked) {
         state->clicks++;
-        snprintf(state->label, sizeof(state->label), "Clicked: %d", state->clicks);
+        snprintf(state->label, sizeof(state->label), "已点击 %d 次", state->clicks);
     }
-
-    /* label 由按钮点击或 Enter 写入，布局里不能每帧覆盖，否则应用层的消息被冲掉。 */
-    Jpx_Label(win, state->label[0] ? state->label : "Clicked: 0");
 }
 
 static void layout_b(int win, void *user) {
     WindowBState *state = (WindowBState *)user;
-    Jpx_Label(win, "Window B");
+    Jpx_LabelEx(win, "主题面板", &(JpxTextStyle){.wrap = 0, .align = 0});
     Jpx_TextInput(win, "notes", state->notes, sizeof(state->notes), &state->notesLen);
     Jpx_PanelBegin(win);
-    Jpx_Label(win, "A panel drawn from theme tokens");
+    Jpx_Label(win, "颜色与圆角来自主题 token");
     Jpx_Separator(win);
-    Jpx_Label(win, "Second line");
+    Jpx_Label(win, "同一份 token 驱动窗口与控件");
     Jpx_PanelEnd(win);
 }
 
@@ -143,12 +143,18 @@ static void layout_c(int win, void *user) {
        layout 回调的栈变量那时已经失效。 */
     static char status[64];
 
-    Jpx_Label(win, "Scroll this list with the wheel");
+    Jpx_LabelEx(win, "可滚动列表 - 滚轮", &(JpxTextStyle){.wrap = 0, .align = 0});
+    static const char *headers[2] = {"项目", "奇偶"};
+    Jpx_RowBegin(win);
+    for (int i = 0; i < 2; i++) {
+        Jpx_LabelEx(win, headers[i], &(JpxTextStyle){.wrap = 0, .align = 0});
+    }
+    Jpx_RowEnd(win);
     if (Jpx_ListBegin(win, "list", 120, 20)) {
         for (int i = 0; i < 20; i++) {
-            snprintf(rowText[i], sizeof(rowText[i]), "row %02d", i);
+            snprintf(rowText[i], sizeof(rowText[i]), "行 %02d", i);
             cols[0] = rowText[i];
-            cols[1] = (i % 2) ? "odd" : "even";
+            cols[1] = (i % 2) ? "奇" : "偶";
             if (Jpx_ListRow(win, "list", cols, widths, 2, state->selected == i)) {
                 state->selected = i;
                 Jpx_Invalidate(g_app);
@@ -156,7 +162,7 @@ static void layout_c(int win, void *user) {
         }
         Jpx_ListEnd(win);
     }
-    snprintf(status, sizeof(status), "selected = %d (0 = none)", state->selected);
+    snprintf(status, sizeof(status), "已选 = %d", state->selected);
     Jpx_Label(win, status);
 }
 
@@ -344,6 +350,12 @@ static void launcher_tick(void *user) {
     int which = g_pendingLaunch;
     g_pendingLaunch = -1;
 
+    if (which == 2) {
+        g_menuWin = Jpx_WindowOpen(g_app, &g_menuDesc);
+        Jpx_Invalidate(g_app);
+        return;
+    }
+
     launcher_close_menu();
     if (which == 0) {
         /* 已经打开就关掉重开，新窗口自然在最上层，等价于切回该程序。 */
@@ -364,23 +376,26 @@ static void launcher_tick(void *user) {
     Jpx_Invalidate(g_app);
 }
 
-static void layout_start(int win, void *user) {
+/* 任务栏开始按钮：回调里只记意图，由 launcher_tick 统一开关窗口。 */
+static void on_start(void *user) {
     (void)user;
-    if (Jpx_Button(win, "start", "开始")) {
-        if (g_menuWin) launcher_close_menu();
-        else g_menuWin = Jpx_WindowOpen(g_app, &g_menuDesc);
-        Jpx_Invalidate(g_app);
+    if (!g_app) return;
+    if (g_menuWin) g_pendingCloseMenu = 1;
+    else {
+        g_pendingLaunch = 2;   /* 2 表示打开开始菜单（-1 为无意图） */
     }
+    Jpx_Invalidate(g_app);
 }
 
 static void layout_menu(int win, void *user) {
     (void)user;
-    Jpx_Label(win, "启动程序");
-    if (Jpx_Button(win, "m_proc", "ProcMan - 进程管理")) {
+    Jpx_LabelEx(win, "启动程序", &(JpxTextStyle){.wrap = 0, .align = 0});
+    Jpx_Separator(win);
+    if (Jpx_Button(win, "m_proc", "ProcMan · 进程管理")) {
         g_pendingLaunch = 0;
         Jpx_Invalidate(g_app);
     }
-    if (Jpx_Button(win, "m_files", "Files - 文件浏览")) {
+    if (Jpx_Button(win, "m_files", "Files · 文件浏览")) {
         g_pendingLaunch = 1;
         Jpx_Invalidate(g_app);
     }
@@ -389,6 +404,28 @@ static void layout_menu(int win, void *user) {
         g_pendingCloseMenu = 1;
         Jpx_Invalidate(g_app);
     }
+}
+
+/* 桌面图标层：无装饰、置底、不抢焦点的大按钮，缩短常用程序的启动路径。 */
+static void layout_desktop(int win, void *user) {
+    (void)user;
+    Jpx_Spacer(win, 0, 18);
+    Jpx_LabelEx(win, "快捷方式", &(JpxTextStyle){.wrap = 0, .align = 0});
+    if (Jpx_Button(win, "d_proc", "进程管理")) {
+        g_pendingLaunch = 0;
+        Jpx_Invalidate(g_app);
+    }
+    if (Jpx_Button(win, "d_files", "文件浏览")) {
+        g_pendingLaunch = 1;
+        Jpx_Invalidate(g_app);
+    }
+}
+
+/* 时钟每秒刷新：只作废任务栏窗口，其它窗口零帧。 */
+static void clock_tick(void *user) {
+    (void)user;
+    if (!g_app) return;
+    Jpx_ShellRefresh(g_app);
 }
 
 int main(int argc, char **argv) {
@@ -410,76 +447,76 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* 与 demo_wm 的按钮视觉对齐：hover 用橙色。 */
+    /* 现代深色：hover 用亮蓝紫，替换原橙色。 */
     JpxTheme theme = *Jpx_Theme(g_app);
-    theme.hoverColor = "rgba(240,140,40,1)";
+    theme.hoverColor = "rgba(156,152,255,1)";
     Jpx_SetTheme(g_app, &theme);
 
-    /* 基础窗口上三下二，底部留给开始按钮。ProcMan / Files 不在这里打开，
-       由开始菜单启动；菜单弹出时覆盖在下方窗口之上。 */
+    /* 桌面层先创建（z 最低），三个应用窗口置中上，底部留给任务栏。 */
+    JpxWindowDesc desktop = {0};
+    desktop.title = "desktop";
+    desktop.x = 20;
+    desktop.y = 272;
+    desktop.w = 150;
+    desktop.h = 200;
+    desktop.flags = JPX_WIN_UNDECORATED | JPX_WIN_PINNED | JPX_WIN_NOFOCUS;
+    desktop.layout = layout_desktop;
+
     JpxWindowDesc a = {0};
-    a.title = "Window A";
-    a.x = 30;
-    a.y = 30;
-    a.w = 245;
-    a.h = 190;
+    a.title = "表单演示";
+    a.x = 24;
+    a.y = 24;
+    a.w = 240;
+    a.h = 230;
     a.layout = layout_a;
     a.user = &g_a;
     a.onClose = on_close;
     a.onKey = on_key;
 
     JpxWindowDesc b = {0};
-    b.title = "Window B";
-    b.x = 285;
-    b.y = 30;
-    b.w = 245;
-    b.h = 190;
+    b.title = "主题面板";
+    b.x = 280;
+    b.y = 24;
+    b.w = 240;
+    b.h = 230;
     b.layout = layout_b;
     b.user = &g_b;
     b.onClose = on_close;
 
     JpxWindowDesc c = {0};
-    c.title = "List";
-    c.x = 540;
-    c.y = 30;
-    c.w = 230;
-    c.h = 190;
+    c.title = "列表";
+    c.x = 536;
+    c.y = 24;
+    c.w = 240;
+    c.h = 230;
     c.layout = layout_c;
     c.user = &g_c;
     c.onClose = on_close;
 
-    JpxWindowDesc start = {0};
-    start.title = "Start";
-    start.x = 30;
-    start.y = 510;
-    start.w = 140;
-    start.h = 80;
-    start.layout = layout_start;
-    start.onClose = on_close;
-
-    g_procDesc.title = "ProcMan";
-    g_procDesc.x = 30;
-    g_procDesc.y = 240;
-    g_procDesc.w = 370;
-    g_procDesc.h = 250;
+    g_procDesc.title = "ProcMan · 进程管理";
+    g_procDesc.x = 60;
+    g_procDesc.y = 160;
+    g_procDesc.w = 420;
+    g_procDesc.h = 320;
     g_procDesc.layout = layout_d;
     g_procDesc.user = &g_procs;
     g_procDesc.onClose = on_proc_close;
 
-    g_filesDesc.title = "Files";
-    g_filesDesc.x = 420;
-    g_filesDesc.y = 240;
-    g_filesDesc.w = 350;
-    g_filesDesc.h = 250;
+    g_filesDesc.title = "Files · 文件浏览";
+    g_filesDesc.x = 340;
+    g_filesDesc.y = 180;
+    g_filesDesc.w = 420;
+    g_filesDesc.h = 320;
     g_filesDesc.layout = layout_e;
     g_filesDesc.user = &g_files;
     g_filesDesc.onClose = on_files_close;
 
-    g_menuDesc.title = "Start Menu";
-    g_menuDesc.x = 30;
-    g_menuDesc.y = 290;
-    g_menuDesc.w = 220;
+    g_menuDesc.title = "开始菜单";
+    g_menuDesc.x = 6;
+    g_menuDesc.y = 330;
+    g_menuDesc.w = 210;
     g_menuDesc.h = 200;
+    g_menuDesc.flags = JPX_WIN_UNDECORATED | JPX_WIN_PINNED;
     g_menuDesc.layout = layout_menu;
 
     procs_sample(&g_procs);
@@ -487,14 +524,16 @@ int main(int argc, char **argv) {
         snprintf(g_files.path, sizeof(g_files.path), ".");
     files_refresh(&g_files);
 
-    if (Jpx_WindowOpen(g_app, &a) == 0 || Jpx_WindowOpen(g_app, &b) == 0 ||
-        Jpx_WindowOpen(g_app, &c) == 0 || Jpx_WindowOpen(g_app, &start) == 0) {
+    if (Jpx_WindowOpen(g_app, &desktop) == 0 || Jpx_WindowOpen(g_app, &a) == 0 ||
+        Jpx_WindowOpen(g_app, &b) == 0 || Jpx_WindowOpen(g_app, &c) == 0) {
         fprintf(stderr, "demo_jpx: window open failed\n");
         Jpx_Destroy(g_app);
         return 1;
     }
+    Jpx_SetStartHandler(g_app, on_start, NULL);
     Jpx_TimerEvery(g_app, 2000, procs_tick, &g_procs);
     Jpx_TimerEvery(g_app, 60, launcher_tick, NULL);
+    Jpx_TimerEvery(g_app, 1000, clock_tick, NULL);
 
     int rc = Jpx_Run(g_app);
     Jpx_Destroy(g_app);

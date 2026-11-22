@@ -109,6 +109,11 @@ function drawRaster(ctx, raster, x, y, color) {
     ctx.drawImage(tintedRaster(raster, color), x, y);
 }
 
+/* 按给定目标尺寸绘制：高分屏上字形按物理像素光栅，再用这个函数缩回逻辑尺寸。 */
+function drawRasterScaled(ctx, raster, x, y, w, h, color) {
+    ctx.drawImage(tintedRaster(raster, color), x, y, w, h);
+}
+
 function hasRaster(fontId, fontSize, text) {
     return rasterCache.has(`${fontId}|${fontSize}|${text}`);
 }
@@ -117,4 +122,4 @@ function getRaster(fontId, fontSize, text) {
     return rasterCache.get(`${fontId}|${fontSize}|${text}`) || null;
 }
 
-export { loadFont, rasterizeText, drawRaster, hasRaster, getRaster, ensureModule };
+export { loadFont, rasterizeText, drawRaster, drawRasterScaled, hasRaster, getRaster, ensureModule };

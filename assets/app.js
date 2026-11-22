@@ -1,13 +1,22 @@
 ﻿// app.js - Windows Forms 控件渲染库
 
 import { resolveColor } from './systemColors.js';
-import { loadFont as wasmLoadFont, rasterizeText, drawRaster, getRaster } from './font_wasm.js';
+import { loadFont as wasmLoadFont, rasterizeText, drawRaster, drawRasterScaled, getRaster } from './font_wasm.js';
 
 let textNeedsReplay = null;
 function setTextNeedsReplay(cb) { textNeedsReplay = cb; }
 // 全局 Canvas 上下文
 let ctx = null;
 let dpiScale = 1;
+/* 文字光栅化倍率：渲染层按「设备像素比 × 显示缩放」设置。
+   字形按 fontSize × 倍率光栅，绘制时缩回逻辑尺寸 —— 高分屏与放大显示下才清晰。 */
+let textScale = 1;
+function setTextScale(scale) {
+    if (scale > 0 && Math.abs(scale - textScale) > 0.001) {
+        textScale = scale;
+        if (textNeedsReplay) textNeedsReplay();
+    }
+}
 
 function initCanvas(canvas, color, designWidth, designHeight) {
     ctx = canvas.getContext('2d');
@@ -273,11 +282,13 @@ function loadFont(fontId, ttfBase64) {
 
 function drawText(x, y, w, h, text, fontId, fontSize, color, letterSpacing = 0, lineHeight = 0) {
     const s = String(text);
-    const raster = getRaster(fontId, fontSize, s);
+    /* 按物理像素光栅：放大显示/高分屏下，用逻辑字号的位图会被插值放大而发虚。 */
+    const px = Math.max(1, Math.round(fontSize * textScale));
+    const raster = getRaster(fontId, px, s);
     if (!raster) {
-        const key = `${fontId}|${fontSize}|${s}`;
+        const key = `${fontId}|${px}|${s}`;
         if (rasterFailed.has(key)) return;
-        rasterizeText(fontId, fontSize, s).then(() => {
+        rasterizeText(fontId, px, s).then(() => {
             if (textNeedsReplay) textNeedsReplay();
         }).catch((e) => {
             rasterFailed.add(key);
@@ -285,7 +296,12 @@ function drawText(x, y, w, h, text, fontId, fontSize, color, letterSpacing = 0, 
         });
         return;
     }
-    drawRaster(ctx, raster, x, y, resolveColor(color));
+    const ink = resolveColor(color);
+    if (textScale === 1) {
+        drawRaster(ctx, raster, x, y, ink);
+    } else {
+        drawRasterScaled(ctx, raster, x, y, raster.w / textScale, raster.h / textScale, ink);
+    }
     applyOverlay(x, y, w, h);
 }
 
@@ -710,6 +726,7 @@ const commandHandlers = {
 // ES模块导出
 export {
     initCanvas,
+    setTextScale,
     setBounds,
     drawBackground,
     drawLabel,

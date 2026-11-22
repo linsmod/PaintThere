@@ -2,7 +2,7 @@
 // 逻辑只有一份；两端差异仅通过标准 location / globalThis 配置吸收。
 import {
   initCanvas, commandHandlers, setLayerCanvas, replayBackgroundPrograms,
-  setDrawTarget, setTextNeedsReplay
+  setDrawTarget, setTextNeedsReplay, setTextScale
 } from './app.js';
 import { loadFont } from './font_wasm.js';
 
@@ -50,22 +50,6 @@ async function boot() {
   };
   applyPageStyle();
 
-  const layoutStage = () => {
-    const scale = Math.min(window.innerWidth / WIDTH, window.innerHeight / HEIGHT, 1);
-    const cssW = Math.round(WIDTH * scale);
-    const cssH = Math.round(HEIGHT * scale);
-    stage.style.width = cssW + 'px';
-    stage.style.height = cssH + 'px';
-    stage.style.position = 'relative';
-    stage.style.flex = '0 0 auto';
-    stage.style.overflow = 'hidden';
-    stage.style.borderRadius = '10px';
-    stage.style.boxShadow = '0 24px 70px rgba(0,0,0,0.55), 0 0 0 1px rgba(124,122,255,0.18)';
-    for (const layer of [bg, cv]) {
-      layer.style.width = cssW + 'px';
-      layer.style.height = cssH + 'px';
-    }
-  };
   const setupLayer = (canvas) => {
     canvas.style.position = 'absolute';
     canvas.style.left = '0px';
@@ -78,8 +62,6 @@ async function boot() {
   setupLayer(bg);
   setupLayer(cv);
   cv.width = WIDTH; cv.height = HEIGHT;
-  layoutStage();
-  window.addEventListener('resize', layoutStage);
   setLayerCanvas('bg', bg);
   replayBackgroundPrograms();
 
@@ -96,34 +78,50 @@ async function boot() {
   const cvCtx = cv.getContext('2d');
 
   /* Remote tiles：网格由 WM 指令下发，前端只管理远端小画布并按 index 贴齐。
-     窗口、图层、z 序与脏区都不在协议里。 */
+     窗口、图层、z 序与脏区都不在协议里。
+
+     分辨率：tile 的物理尺寸 = 逻辑尺寸 × renderScale（DPR × 显示缩放）。
+     绘制时用 transform 把逻辑坐标映射到物理像素，贴屏时 1:1 拷贝、不重采样。 */
   const tileCanvases = [];
   const tileCmds = [];
   let grid = null;
+  let renderScale = 1;
+  let cssZoom = 1;
   let lastFrameId = 0;   // 上行事件带上「客户端所见的最新帧号」
+  const MAX_RENDER_SCALE = 2.5;
 
-  const configTiles = (op) => {
-    const total = op.cols * op.rows;
-    if (grid && grid.cols === op.cols && grid.rows === op.rows &&
-        grid.tileW === op.tileW && grid.tileH === op.tileH && tileCanvases.length === total) return;
-    grid = { cols: op.cols, rows: op.rows, tileW: op.tileW, tileH: op.tileH, w: op.w, h: op.h };
+  const makeTileCanvases = () => {
     tileCanvases.length = 0;
-    tileCmds.length = 0;
+    if (!grid) return;
+    const total = grid.cols * grid.rows;
     for (let i = 0; i < total; i++) {
       const tile = document.createElement('canvas');
-      tile.width = op.tileW;
-      tile.height = op.tileH;
+      tile.width = Math.max(1, Math.round(grid.tileW * renderScale));
+      tile.height = Math.max(1, Math.round(grid.tileH * renderScale));
       tileCanvases.push(tile);
     }
   };
 
+  const configTiles = (op) => {
+    const same = grid && grid.cols === op.cols && grid.rows === op.rows &&
+                 grid.tileW === op.tileW && grid.tileH === op.tileH;
+    if (same) return;
+    grid = { cols: op.cols, rows: op.rows, tileW: op.tileW, tileH: op.tileH, w: op.w, h: op.h };
+    tileCmds.length = 0;
+    makeTileCanvases();
+  };
+
   const present = () => {
+    cvCtx.setTransform(1, 0, 0, 1, 0, 0);
     cvCtx.clearRect(0, 0, cv.width, cv.height);
     if (!grid) return;
     for (let i = 0; i < tileCanvases.length; i++) {
+      const tile = tileCanvases[i];
       const col = i % grid.cols;
       const row = Math.floor(i / grid.cols);
-      cvCtx.drawImage(tileCanvases[i], col * grid.tileW, row * grid.tileH);
+      cvCtx.drawImage(tile, Math.round(col * grid.tileW * renderScale),
+                            Math.round(row * grid.tileH * renderScale),
+                            tile.width, tile.height);
     }
     window.__vmRenderer.tiles = tileCanvases.length;
   };
@@ -132,7 +130,11 @@ async function boot() {
     const tile = tileCanvases[index];
     if (!tile) return;
     const tctx = tile.getContext('2d');
+    /* 清空必须在单位变换下做，否则只清到「逻辑尺寸」那么大。 */
+    tctx.setTransform(1, 0, 0, 1, 0, 0);
     tctx.clearRect(0, 0, tile.width, tile.height);
+    const s = tile.width / grid.tileW;   // 取整后的实际比例
+    tctx.setTransform(s, 0, 0, s, 0, 0);
     setDrawTarget(tctx);
     for (const c of cmds) {
       const fn = commandHandlers[c.cmd];
@@ -163,6 +165,57 @@ async function boot() {
     });
   };
   replaySink = scheduleReplay;
+
+  /* 显示缩放（CSS）与物理分辨率（DPR）分开算：
+     CSS 尺寸决定占多大地方，renderScale 决定画多少像素。
+     两者脱钩后，放大显示或高分屏都不会再拿 800×600 的位图去插值。 */
+  const resizeRenderTargets = () => {
+    cv.width = Math.max(1, Math.round(WIDTH * renderScale));
+    cv.height = Math.max(1, Math.round(HEIGHT * renderScale));
+    bg.width = cv.width;
+    bg.height = cv.height;
+    const bctx = bg.getContext('2d');
+    bctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+    replayBackgroundPrograms();
+    setTextScale(renderScale);
+    if (grid) {
+      makeTileCanvases();
+      replayTiles();
+    }
+    present();
+  };
+
+  const layoutStage = () => {
+    /* 原生 canvas 宿主没有 innerWidth/devicePixelRatio，兜底成 1 倍。 */
+    const vw = Number(window.innerWidth) || WIDTH;
+    const vh = Number(window.innerHeight) || HEIGHT;
+    /* 逻辑画布最大按 1:1 显示：再大就只是把同样的内容抻开，不如提高物理分辨率。 */
+    cssZoom = Math.min(vw / WIDTH, vh / HEIGHT, 1) || 1;
+    const cssW = Math.round(WIDTH * cssZoom);
+    const cssH = Math.round(HEIGHT * cssZoom);
+    stage.style.width = cssW + 'px';
+    stage.style.height = cssH + 'px';
+    stage.style.position = 'relative';
+    stage.style.flex = '0 0 auto';
+    stage.style.overflow = 'hidden';
+    stage.style.borderRadius = '10px';
+    stage.style.boxShadow = '0 24px 70px rgba(0,0,0,0.55), 0 0 0 1px rgba(124,122,255,0.18)';
+    for (const layer of [bg, cv]) {
+      layer.style.width = cssW + 'px';
+      layer.style.height = cssH + 'px';
+    }
+    const dpr = Number(window.devicePixelRatio) || 1;
+    const nextScale = Math.min(Math.max(cssZoom * dpr, 1), MAX_RENDER_SCALE);
+    if (Math.abs(nextScale - renderScale) > 0.001) {
+      renderScale = nextScale;
+      resizeRenderTargets();
+    } else {
+      present();
+    }
+  };
+
+  layoutStage();
+  window.addEventListener('resize', layoutStage);
   scheduleReplay();
 
   const showLoading = () => {
@@ -287,11 +340,13 @@ async function boot() {
   connectInput();
   const toCanvasPoint = (e) => {
     const r = cv.getBoundingClientRect();
-    const x = Math.round((e.clientX - r.left) / r.width * cv.width);
-    const y = Math.round((e.clientY - r.top) / r.height * cv.height);
+    /* 画布物理尺寸随 DPR 变化，但协议坐标永远是 800×600 逻辑坐标：
+       这里必须按 WIDTH/HEIGHT 换算，用 cv.width 会把坐标放大 renderScale 倍。 */
+    const x = Math.round((e.clientX - r.left) / r.width * WIDTH);
+    const y = Math.round((e.clientY - r.top) / r.height * HEIGHT);
     return {
-      x: Math.min(cv.width - 1, Math.max(0, x)),
-      y: Math.min(cv.height - 1, Math.max(0, y))
+      x: Math.min(WIDTH - 1, Math.max(0, x)),
+      y: Math.min(HEIGHT - 1, Math.max(0, y))
     };
   };
   const insideCanvas = (e) => {
@@ -382,9 +437,13 @@ async function boot() {
   window.__vmRenderer.ready = true;
   window.__vmRenderer.pixels = function () {
     const c = cv.getContext('2d');
-    const at = (x, y) => Array.from(c.getImageData(x, y, 1, 1).data).join(',');
+    const r = cv.width / WIDTH;   // 逻辑坐标 → 物理像素
+    const at = (x, y) => Array.from(
+      c.getImageData(Math.round(x * r), Math.round(y * r), 1, 1).data).join(',');
     return { titleA: at(100, 70), buttonA: at(100, 195), bg: at(5, 5) };
   };
+  /* 诊断：当前物理像素比，便于确认清晰度改动是否生效。 */
+  window.__vmRenderer.scale = () => ({ cssZoom, renderScale, dpr: Number(window.devicePixelRatio) || 1 });
   console.log('[VM_RENDER] ready base=' + BASE);
 }
 

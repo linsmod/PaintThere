@@ -36,15 +36,21 @@
 ## 常用命令
 
 ```powershell
-# 构建 C demo（按需选一个）
-cd h:\github_repos\跨端图绘指令流\vm-desktop
-gcc -std=c11 -I"H:\github_repos\clay" -I. demo_wm.c clay_frame_adapter.c vm_display.c vm_serialize_json.c vm_tiles.c vm_wm.c vm_server.c -lws2_32 -o demo_wm.exe
+# 构建桌面服务端 demo_wm.exe（推荐用脚本；会检查源/头文件时间戳）
+cd h:\github_repos\跨端图绘指令流
+python tools/build_vm_desktop.py
+# 等效手动命令（在 vm-desktop 目录）：
+# gcc -std=c11 -I"H:\github_repos\clay" -I. demo_wm.c clay_frame_adapter.c vm_display.c vm_serialize_json.c vm_tiles.c vm_wm.c vm_server.c -lws2_32 -o demo_wm.exe
+
+# 其它 C demo（按需）
+cd vm-desktop
 gcc -std=c11 -I"H:\github_repos\clay" -I. demo_frame.c demo_layout.c clay_frame_adapter.c vm_display.c vm_serialize_json.c -o demo_frame.exe
 gcc -std=c11 -I. test_display_diff.c vm_display.c -o test_display_diff.exe
+cd ..
 
 # 构建 C 版渲染器（自动同步 canvas-cpp 的 libcanvas.a / antjsb.dll 再编译）
 python tools/build_vm_renderer.py
-# 一键运行（同时起 SSE 服务 + 原生渲染窗口；脚本会禁用本地请求的代理）
+# 一键运行（同时起 SSE 服务 + 原生渲染窗口；服务端由 start_vm_desktop.py 自动构建）
 python tools/start_vm_renderer.py
 # 调试：$env:VM_RENDERER_FRAMES="90"; python tools/start_vm_renderer.py  # 跑满 90 帧自动退出
 
@@ -53,7 +59,7 @@ emcc -O2 -s EXPORTED_FUNCTIONS='["_loadFont","_measureText","_rasterizeText","_a
 Copy-Item stb_font_wasm.mjs,stb_font_wasm.wasm ..\assets\
 Copy-Item stb_font_wasm.mjs,stb_font_wasm.wasm ..\ConsoleApp2\
 
-# 一键启动（推荐）：零参数，自动定位 assets、停旧进程、开浏览器
+# 一键启动（推荐）：零参数，自动定位 assets、停旧进程、重建 demo_wm.exe、开浏览器
 python tools/start_vm_desktop.py
 # 调试：环境变量改端口 / 不开浏览器
 # $env:VM_DESKTOP_PORT="9001"; $env:VM_DESKTOP_NO_BROWSER="1"; python tools/start_vm_desktop.py

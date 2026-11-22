@@ -2,7 +2,10 @@
 """一键启动 C 版 VM 渲染器（canvas-cpp / ant 引擎）。
 
 一条命令同时拉起 SSE 服务端和原生窗口渲染器：
-    python tools/start_vm_renderer.py
+    python tools/build_vm_renderer.py && python tools/start_vm_renderer.py
+
+SSE 服务端由 start_vm_desktop.py 启动，它会先构建最新的 demo_wm.exe；
+vm_renderer.exe 仍需先用 build_vm_renderer.py 构建。
 
 进程级禁用代理，避免 SDK 的 HTTP 客户端把 127.0.0.1 请求发到系统代理。
 Ctrl+C 会同时停掉服务端和渲染器。

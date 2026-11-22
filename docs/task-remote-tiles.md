@@ -105,5 +105,6 @@ gcc -std=c11 -I"H:\github_repos\clay" -I. demo_wm.c clay_frame_adapter.c vm_disp
 ## 已知限制
 
 - 2026-11-22 追加：用户运行 `build_vm_renderer.py && start_vm_renderer.py` 后浏览器只剩背景。根因是 `demo_wm.exe`（9:36:44）早于协议改动，9000 仍发旧 `ops`，新前端只认 `tiles`。停掉旧进程并用当前源码重建 `demo_wm.exe` 后，9000 的 SSE 已确认 `type:"tiles"` + `config` + loading 边界；浏览器 48 tiles、无 console 错误。C 渲染器进程也正常启动并持续上报输入。
+- 根因修复：新增 `tools/build_vm_desktop.py`，并由 `start_vm_desktop.py` 在「停旧实例之后、启动之前」自动调用，避免再次运行到过期服务端。`start_vm_renderer.py` 经 `start_vm_desktop.py` 间接获得该保障；`vm_renderer.exe` 仍需 `build_vm_renderer.py` 单独构建。
 - C 渲染器宿主对 `data:image/svg+xml` 的 `loadImg` 失败（日志 `[IMAGE] load failed`），因此原生窗口里彩色箭头不可见。这是 canvas-cpp 宿主既有能力缺口，与 tiles 协议无关；若需要，可把光标资源从 SVG data URL 改为 PNG data URL。
 - 宿主 `[STATE]` 探针被用户未提交改动注释掉，C 渲染器内部像素未独立取样；原生窗口的画面由同服务端浏览器路径佐证。

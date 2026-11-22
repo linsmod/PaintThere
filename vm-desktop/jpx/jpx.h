@@ -6,6 +6,10 @@
 
 #include <stddef.h>
 
+/* VmTheme 是纯 POD token 表（不含 Clay/JSON/frameId），XAML 主题需要它来
+   统一设置 WM/shell/JPX 控件配色。 */
+#include "vm_theme.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -97,6 +101,11 @@ int     Jpx_Run(JpxApp *app);                  /* 阻塞；0 正常退出 */
 void    Jpx_Stop(JpxApp *app);
 void    Jpx_SetTheme(JpxApp *app, const JpxTheme *theme);
 const JpxTheme *Jpx_Theme(JpxApp *app);
+/* XAML 资源字典派生出的完整主题：同时置 WM 装饰、shell 任务栏与控件主题。
+   颜色指针借自调用方，需保证生命周期长于 app。 */
+void    Jpx_SetVmTheme(JpxApp *app, const VmTheme *theme);
+/* 向所有客户端广播资源命令 JSON（definePattern/defineStyle），用于主题热更新。 */
+void    Jpx_BroadcastResources(JpxApp *app, const char *json);
 
 int  Jpx_WindowOpen(JpxApp *app, const JpxWindowDesc *desc);   /* 返回 winId > 0 */
 void Jpx_WindowClose(JpxApp *app, int winId);

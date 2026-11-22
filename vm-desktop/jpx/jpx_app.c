@@ -70,7 +70,7 @@ static int json_int_flag(const char *body, size_t len, const char *key) {
 }
 
 static void build_resources(JpxApp *app) {
-    VmDisplayList res;
+    static VmDisplayList res;
     VmDisplay_Init(&res);
     VmTheme_AppendResources(&res, VmTheme_Default());
 
@@ -298,6 +298,42 @@ void Jpx_SetTheme(JpxApp *app, const JpxTheme *theme) {
     if (!app) return;
     app->theme = theme ? *theme : *Jpx__DefaultTheme();
     Jpx__ApplyChrome(app);
+    Jpx__Invalidate(app);
+}
+
+void Jpx_BroadcastResources(JpxApp *app, const char *json) {
+    if (!app || !app->server) return;
+    VmServer_BroadcastResources(app->server, json);
+}
+
+void Jpx_SetVmTheme(JpxApp *app, const VmTheme *theme) {
+    if (!app) return;
+    if (!theme) {
+        app->hasVmTheme = 0;
+        Jpx_SetTheme(app, NULL);
+        if (app->shell) VmShell_SetTheme(app->shell, VmTheme_Default());
+        return;
+    }
+    app->vmTheme = *theme;
+    app->hasVmTheme = 1;
+    /* 控件主题从 VmTheme 派生；颜色指针借自 theme，生命周期由调用方保证。 */
+    JpxTheme t = *Jpx__DefaultTheme();
+    t.bgColor = theme->bgColor;
+    t.fgColor = theme->fgColor;
+    t.borderColor = theme->borderColor;
+    t.accentColor = theme->accentColor;
+    t.accentTextColor = theme->accentTextColor;
+    t.inputBgColor = theme->inputBgColor;
+    t.disabledColor = theme->disabledColor;
+    t.selectedColor = theme->selectedColor;
+    t.fontId = theme->fontId;
+    t.fontSize = theme->fontSize;
+    t.radius = theme->radius;
+    t.padding = theme->padding;
+    t.gap = theme->gap;
+    app->theme = t;
+    if (app->wm) VmWm_SetChrome(app->wm, &theme->chrome);
+    if (app->shell) VmShell_SetTheme(app->shell, &app->vmTheme);
     Jpx__Invalidate(app);
 }
 

@@ -47,6 +47,11 @@ static void printf_(StrBuf *b, const char *fmt, ...) {
     free(big);
 }
 
+static void json_float(StrBuf *b, float v) {
+    if (v != v || v > 1.0e30f || v < -1.0e30f) { puts_(b, "0"); return; }
+    printf_(b, "%.4f", (double)v);
+}
+
 static void json_string(StrBuf *b, const char *s) {
     if (!s) { puts_(b, "\"\""); return; }
     puts_(b, "\"");
@@ -158,11 +163,24 @@ static void emit_resource(StrBuf *b, const VmResourceCommand *r) {
             json_string(b, a->patternId);
             puts_(b, ",{\"type\":\"");
             puts_(b, a->type == VM_PATTERN_SOLID ? "solid" :
-                      a->type == VM_PATTERN_GRADIENT ? "gradient" : "image");
+                      a->type == VM_PATTERN_GRADIENT ? "gradient" :
+                      a->type == VM_PATTERN_RADIAL ? "radial" : "image");
             puts_(b, "\"");
             if (a->color[0]) { puts_(b, ",\"color\":"); json_string(b, a->color); }
             if (a->from[0]) { puts_(b, ",\"from\":"); json_string(b, a->from); }
             if (a->to[0]) { puts_(b, ",\"to\":"); json_string(b, a->to); }
+            if (a->stopCount >= 2) {
+                puts_(b, ",\"stops\":[");
+                for (int i = 0; i < a->stopCount && i < VM_PATTERN_MAX_STOPS; i++) {
+                    if (i) puts_(b, ",");
+                    puts_(b, "{\"color\":");
+                    json_string(b, a->stops[i].color);
+                    puts_(b, ",\"offset\":");
+                    json_float(b, a->stops[i].offset);
+                    puts_(b, "}");
+                }
+                puts_(b, "]");
+            }
             if (a->direction[0]) { puts_(b, ",\"direction\":"); json_string(b, a->direction); }
             if (a->imgId[0]) { puts_(b, ",\"imgId\":"); json_string(b, a->imgId); }
             if (a->tiling[0]) { puts_(b, ",\"tiling\":"); json_string(b, a->tiling); }

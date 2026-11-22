@@ -74,8 +74,8 @@ function resolvePaint(value, fallback) {
 function patternToFill(desc, fallback) {
     if (!desc || typeof desc !== 'object') return fallback;
     if (desc.type === 'solid') return desc.color || fallback;
-    if (desc.type === 'gradient') {
-        // Return a CanvasGradient needs ctx; handled at draw time via applyPattern.
+    if (desc.type === 'gradient' || desc.type === 'radial') {
+        // CanvasGradient needs ctx; handled at draw time via gradientFill.
         return desc;
     }
     if (desc.type === 'image' && imageCache.has(desc.imgId)) {
@@ -235,14 +235,48 @@ function clear(x, y, w, h) {
     else ctx.clearRect(x, y, w, h);
 }
 
+/* 把 pattern descriptor 构造为 CanvasGradient。多 stop 优先；
+   direction 是 "x0,y0,x1,y1"（线性）或 "cx,cy,r"（径向）的比例，
+   解析失败退回对角线/中心径向。 */
+function gradientFill(paint, x, y, w, h, fallback) {
+    let g = null;
+    if (paint.type === 'radial') {
+        let cx = 0.5, cy = 0.5, r = 0.5;
+        if (paint.direction) {
+            const p = paint.direction.split(',').map(Number);
+            if (p.length >= 3 && p.every(Number.isFinite)) { cx = p[0]; cy = p[1]; r = p[2]; }
+        }
+        const maxR = Math.max(w, h) || 1;
+        g = ctx.createRadialGradient(x + w * cx, y + h * cy, 0,
+                                     x + w * cx, y + h * cy, maxR * r);
+    } else {
+        let x0 = x, y0 = y, x1 = x + w, y1 = y + h;
+        if (paint.direction) {
+            const p = paint.direction.split(',').map(Number);
+            if (p.length >= 4 && p.every(Number.isFinite)) {
+                x0 = x + w * p[0]; y0 = y + h * p[1];
+                x1 = x + w * p[2]; y1 = y + h * p[3];
+            }
+        }
+        g = ctx.createLinearGradient(x0, y0, x1, y1);
+    }
+    const stops = (paint.stops && paint.stops.length >= 2)
+        ? paint.stops
+        : [{ color: paint.from || '#FFFFFF', offset: 0 },
+           { color: paint.to || '#000000', offset: 1 }];
+    for (const s of stops) {
+        const off = Math.max(0, Math.min(1, Number(s.offset) || 0));
+        g.addColorStop(off, s.color || '#FFFFFF');
+    }
+    return g;
+}
+
 function drawRect(x, y, w, h, color, cornerRadius = 0) {
     ctx.save();
     const paint = resolvePaint(color, '#FFFFFF');
-    if (paint && typeof paint === 'object' && paint.type === 'gradient') {
-        const g = ctx.createLinearGradient(x, y, x + w, y + h);
-        g.addColorStop(0, paint.from || '#FFFFFF');
-        g.addColorStop(1, paint.to || '#000000');
-        ctx.fillStyle = g;
+    if (paint && typeof paint === 'object' &&
+        (paint.type === 'gradient' || paint.type === 'radial')) {
+        ctx.fillStyle = gradientFill(paint, x, y, w, h, '#FFFFFF');
     } else {
         ctx.fillStyle = resolveColor(paint);
     }

@@ -5,12 +5,29 @@
 
 #include "jpx.h"
 #include "jpx_xaml.h"
+#include "jpx_xaml_theme.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 static JpxApp *g_app;
+
+/* RetroBar 风格资源字典：暖橙主题，用于验证热切换。 */
+static const char *WARM_THEME =
+    "<ResourceDictionary>"
+      "<SolidColorBrush x:Key='AccentColor' Color='#FFFF8C42' />"
+      "<SolidColorBrush x:Key='TaskbarBackground' Color='#FF2A1F1A' />"
+      "<SolidColorBrush x:Key='TaskTextColor' Color='#FFFFF0E0' />"
+      "<SolidColorBrush x:Key='WindowBackground' Color='#FF3A2A20' />"
+      "<SolidColorBrush x:Key='TaskButtonBackground' Color='#FFFF8C42' />"
+      "<SolidColorBrush x:Key='accentTextColor' Color='#FF2A1F1A' />"
+      "<SolidColorBrush x:Key='DesktopFrom' Color='#FF2A1F1A' />"
+      "<SolidColorBrush x:Key='DesktopTo' Color='#FF4A3020' />"
+      "<system:Double x:Key='TaskbarHeight'>30</system:Double>"
+    "</ResourceDictionary>";
+
+static JpxXamlResourceTable g_theme;
 
 static const char *FORM_XAML =
     "<Window Title='jp_xaml 表单' Width='420' Height='430'>"
@@ -34,6 +51,7 @@ static const char *FORM_XAML =
         "<StackPanel Orientation='Horizontal'>"
           "<Button Name='submit' Content='提交' Click='OnSubmit' />"
           "<Button Name='clear' Content='清空' Click='OnClear' />"
+          "<Button Name='theme' Content='切换主题' Click='OnTheme' />"
         "</StackPanel>"
         "<TextBlock Text='{Binding status}' />"
       "</StackPanel>"
@@ -105,6 +123,17 @@ static void on_clear(JpxXamlView *view, int nodeIndex, void *userData) {
     Jpx_Invalidate(JpxXamlView_App(view));
 }
 
+static void on_theme(JpxXamlView *view, int nodeIndex, void *userData) {
+    (void)nodeIndex;
+    (void)userData;
+    FormState *state = (FormState *)JpxXamlView_Model(view);
+    if (JpxXamlTheme_Apply(JpxXamlView_App(view), &g_theme))
+        snprintf(state->status, sizeof(state->status), "主题已切换");
+    else
+        snprintf(state->status, sizeof(state->status), "主题切换失败");
+    Jpx_Invalidate(JpxXamlView_App(view));
+}
+
 static void on_close(int winId, void *user) {
     (void)user;
     Jpx_WindowClose(g_app, winId);
@@ -157,6 +186,12 @@ int main(int argc, char **argv) {
     JpxXamlView_On(view, "OnSelect", on_select, NULL);
     JpxXamlView_On(view, "OnSubmit", on_submit, NULL);
     JpxXamlView_On(view, "OnClear", on_clear, NULL);
+    JpxXamlView_On(view, "OnTheme", on_theme, NULL);
+
+    char themeErr[256];
+    if (!JpxXamlTheme_Parse(&g_theme, WARM_THEME, themeErr, sizeof(themeErr))) {
+        fprintf(stderr, "demo_xaml: theme parse failed: %s\n", themeErr);
+    }
 
     JpxWindowDesc desc = {0};
     desc.title = "jp_xaml 表单";

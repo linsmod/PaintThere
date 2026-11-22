@@ -24,6 +24,10 @@ void VmShell_SetStartHandler(VmShell *shell, VmShellStartHandler handler, void *
 VmShell *VmShell_Create(VmWm *wm, const VmTheme *theme, int height);
 void VmShell_Destroy(VmShell *shell);
 
+/* 运行时换肤：shell 只持有指针，调用方需保证 theme 生命周期长于 shell。
+   换色后需 VmShell_Refresh + 对应窗口置脏才会体现在下一帧。 */
+void VmShell_SetTheme(VmShell *shell, const VmTheme *theme);
+
 /* 窗口打开/关闭/标题变化后调用；布局每帧重读窗口列表，通常不需要。 */
 void VmShell_Refresh(VmShell *shell);
 

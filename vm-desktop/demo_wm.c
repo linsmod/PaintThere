@@ -27,7 +27,7 @@ static char *g_fullTilesJson = NULL;
 static VmDisplayList g_desktopProgramCommands;
 
 static void BuildResources(void) {
-    VmDisplayList res;
+    static VmDisplayList res;
     VmDisplay_Init(&res);
 
     /* 桌面与窗口样式统一由主题生成，WM 装饰与控件共用一份 token。 */

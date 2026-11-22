@@ -8,6 +8,7 @@
 | `test_sys` | `.\vm-desktop\build\test_sys.exe --probe` | 16 | 6 ms | 无（进程表、内存、CPU 差分、错误分类） |
 | `test_text_edit` | `.\vm-desktop\build\test_text_edit.exe --probe` | 66 | 11 ms | 无 |
 | `test_jpx_xaml` | `.\vm-desktop\build\test_jpx_xaml.exe --probe` | 47 | 28 ms | 无（纯解析/绑定/handler 逻辑） |
+| `test_jpx_xaml_theme` | `.\vm-desktop\build\test_jpx_xaml_theme.exe --probe` | 33 | 25 ms | 无（纯资源字典解析/查找/派生） |
 | `test_fs` | `.\vm-desktop\build\test_fs.exe --probe` | 19 | 6 ms | 无（cwd 路径、中文文件名、元数据、错误分类） |
 
 ## 说明

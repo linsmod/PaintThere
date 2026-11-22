@@ -9,6 +9,32 @@
 
 #include <time.h>
 
+/* shell 已在 Clay 层，直接解析 theme 的 rgba() 字符串；vm 层不依赖 Clay，
+   因此这里做本地解析而不是把 Jpx__Color 上提（会破坏层依赖）。 */
+static float theme_float(const char **s) {
+    char *end = NULL;
+    float v = strtof(*s, &end);
+    if (end == *s) return 0.0f;
+    *s = end;
+    return v;
+}
+
+static Clay_Color theme_color(const char *text, float alphaMul, Clay_Color fallback) {
+    if (!text || !*text) return fallback;
+    const char *paren = strchr(text, '(');
+    if (!paren) return fallback;
+    const char *p = paren + 1;
+    float r = theme_float(&p);
+    while (*p && (*p == ',' || *p == ' ')) p++;
+    float g = theme_float(&p);
+    while (*p && (*p == ',' || *p == ' ')) p++;
+    float b = theme_float(&p);
+    float a = 1.0f;
+    while (*p && (*p == ',' || *p == ' ')) p++;
+    if (*p && *p != ')') a = theme_float(&p);
+    return (Clay_Color){r, g, b, a * alphaMul};
+}
+
 /* 任务栏 = 一个无装饰/置顶/不可拖动/不抢焦点的特殊窗口。
    z 序、命中、Clay 指针、键盘全部复用 WM 现成路径，WM 不需要 panel 区概念。 */
 
@@ -113,16 +139,17 @@ static Clay_RenderCommandArray shell_layout(void *userData) {
                 .padding = {10, 6, 0, 0},
                 .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
             },
-            .backgroundColor = Clay_Hovered()
-                ? (Clay_Color){124, 122, 255, 230}
-                : (Clay_Color){124, 122, 255, 160},
+            .backgroundColor = theme_color(sh->theme->accentColor,
+                                           Clay_Hovered() ? 0.90f : 0.63f,
+                                           (Clay_Color){124, 122, 255, 200}),
             .cornerRadius = CLAY_CORNER_RADIUS(6),
         }) {
             Clay_OnHover(shell_item_press, (void *)(intptr_t)-1);
             Clay_String label = {.length = 6, .chars = "开始"};
             CLAY_TEXT(label, CLAY_TEXT_CONFIG({
                 .fontId = 0, .fontSize = 13,
-                .textColor = (Clay_Color){255, 255, 255, 255},
+                .textColor = theme_color(sh->theme->accentTextColor, 1.0f,
+                                         (Clay_Color){255, 255, 255, 255}),
             }));
         }
 
@@ -137,14 +164,20 @@ static Clay_RenderCommandArray shell_layout(void *userData) {
             Clay_Color bg;
             Clay_Color fg;
             if (win->focused) {
-                bg = (Clay_Color){124, 122, 255, 210};
-                fg = (Clay_Color){255, 255, 255, 255};
+                bg = theme_color(sh->theme->accentColor, 0.82f,
+                                 (Clay_Color){124, 122, 255, 210});
+                fg = theme_color(sh->theme->accentTextColor, 1.0f,
+                                 (Clay_Color){255, 255, 255, 255});
             } else if (win->minimized) {
-                bg = (Clay_Color){255, 255, 255, 12};
-                fg = (Clay_Color){255, 255, 255, 110};
+                bg = theme_color(sh->theme->fgColor, 0.05f,
+                                 (Clay_Color){255, 255, 255, 12});
+                fg = theme_color(sh->theme->fgColor, 0.43f,
+                                 (Clay_Color){255, 255, 255, 110});
             } else {
-                bg = (Clay_Color){255, 255, 255, 30};
-                fg = (Clay_Color){226, 231, 240, 220};
+                bg = theme_color(sh->theme->fgColor, 0.12f,
+                                 (Clay_Color){255, 255, 255, 30});
+                fg = theme_color(sh->theme->fgColor, 0.86f,
+                                 (Clay_Color){226, 231, 240, 220});
             }
             CLAY(CLAY_IDI("tb_item", (uint32_t)win->id), {
                 .layout = {
@@ -185,7 +218,8 @@ static Clay_RenderCommandArray shell_layout(void *userData) {
             Clay_String label = {.length = (int32_t)strlen(clock), .chars = clock};
             CLAY_TEXT(label, CLAY_TEXT_CONFIG({
                 .fontId = 0, .fontSize = 13,
-                .textColor = (Clay_Color){226, 231, 240, 235},
+                .textColor = theme_color(sh->theme->fgColor, 0.92f,
+                                         (Clay_Color){226, 231, 240, 235}),
             }));
         }
     }
@@ -237,6 +271,12 @@ void VmShell_Destroy(VmShell *shell) {
     if (g_shell == shell) g_shell = NULL;
     free(shell->arenaMem);
     free(shell);
+}
+
+void VmShell_SetTheme(VmShell *shell, const VmTheme *theme) {
+    if (!shell) return;
+    shell->theme = theme ? theme : VmTheme_Default();
+    VmShell_Refresh(shell);
 }
 
 void VmShell_Refresh(VmShell *shell) {

@@ -256,16 +256,24 @@ async function boot() {
     const source = new EventSource(EVENTS_URL);
     let rejected = false;
 
+    function applyResources(e) {
+      const list = JSON.parse(e.data);
+      for (const c of list) {
+        const fn = commandHandlers[c.cmd];
+        if (fn) fn(...c.args);
+      }
+      replayBackgroundPrograms();
+      window.__vmRenderer.resources += list.length;
+    }
     source.addEventListener('resources', (e) => {
-      try {
-        const list = JSON.parse(e.data);
-        for (const c of list) {
-          const fn = commandHandlers[c.cmd];
-          if (fn) fn(...c.args);
-        }
-        replayBackgroundPrograms();
-        window.__vmRenderer.resources += list.length;
-      } catch (err) { window.__vmRenderer.error = 'resource: ' + err; }
+      try { applyResources(e); }
+      catch (err) { window.__vmRenderer.error = 'resource: ' + err; }
+    });
+    /* 主题热切换：覆盖 pattern/style 缓存；随后服务端会因窗口置脏推新帧，
+       新帧按新颜色绘制。definePattern 等命令按 id 覆盖，无需重连。 */
+    source.addEventListener('resources-update', (e) => {
+      try { applyResources(e); }
+      catch (err) { window.__vmRenderer.error = 'resources-update: ' + err; }
     });
     source.addEventListener('fullframe', (e) => {
       try {

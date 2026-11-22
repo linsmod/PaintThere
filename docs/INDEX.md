@@ -15,3 +15,5 @@
 - `task-jpx-ui-modern-dark.md` — demo_jpx 现代深色界面升级：画布适配、主题与窗口装饰、控件精修、桌面功能（开始按钮/时钟/快捷图标）的执行记录与验证证据。
 - `design-jp-xaml.md` — jp_xaml 声明式 UI 层设计（冻结于 2026-11-23）：XAML 子集、元素树、绑定/handler 模型、帧回放、v1 非目标（不做动画/Style-Template）。
 - `task-jp-xaml.md` — jp_xaml 执行文档：解析器、视图、表单 demo 与端到端验证的分阶段计划、恢复点与执行记录。
+- `design-jp-xaml-theme.md` — ResourceDictionary 主题设计（2026-11-23 冻结）：多 stop 渐变协议扩展、资源热更新、VM 主题派生、尺寸实测修正。
+- `task-jp-xaml-theme.md` — ResourceDictionary 主题执行文档：协议/前端渐变、资源字典解析、WM/shell 接入、热更新的分阶段计划与恢复点。

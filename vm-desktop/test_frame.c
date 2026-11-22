@@ -146,7 +146,7 @@ static void test_wm_chrome_and_clip(void) {
                                    dummy_layout, NULL);
     expect(win != NULL, "add window");
 
-    VmDisplayList frame;
+    static VmDisplayList frame;
     VmDisplay_Init(&frame);
     VmWm_BuildFrame(wm, &frame, 1, NULL);
 
@@ -373,7 +373,7 @@ static void test_wm_flags(void) {
 
     /* TOPMOST：整层最后合成。 */
     VmWm_SetWindowFlags(wm, 2, VM_WIN_TOPMOST);
-    VmDisplayList frame;
+    static VmDisplayList frame;
     VmDisplay_Init(&frame);
     VmWm_BuildFrame(wm, &frame, 1, NULL);
     VmDrawCommand *b1 = VmDisplay_Find(&frame, "w1_body");
@@ -429,7 +429,7 @@ static void test_shell(void) {
         expect_int((int)body.w, 800, "taskbar body spans full width");
     }
 
-    VmDisplayList frame;
+    static VmDisplayList frame;
     VmDisplay_Init(&frame);
     VmWm_BuildFrame(wm, &frame, 1, NULL);
     char tbBody[32];

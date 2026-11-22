@@ -11,10 +11,14 @@ extern "C" {
 /* 一帧的命令上限：单窗口配额 1024 × 最多 8 窗口，合成需要留足空间，
    否则 appending 到一半失败会把排在最后的置顶窗口（任务栏）整层丢掉。 */
 #define VM_DISPLAY_MAX_COMMANDS 2048
-#define VM_DISPLAY_MAX_RESOURCES 16
+#define VM_DISPLAY_MAX_RESOURCES 256
 #define VM_DISPLAY_MAX_ID 64
 #define VM_DISPLAY_MAX_TEXT 256
 #define VM_DISPLAY_MAX_STR 128
+/* CSS 颜色最长形如 rgba(255,255,255,0.999) = 24 字符；32 足够，
+   不能给渐变 stop 用 VM_DISPLAY_MAX_STR(128)，否则 8 个 stop 会让
+   VmDisplayList 在 256 资源下膨胀到 >1.8MB，爆栈上实例的默认栈。 */
+#define VM_DISPLAY_MAX_COLOR 32
 #define VM_DISPLAY_MAX_DIRTY 8
 
 typedef enum {
@@ -74,13 +78,22 @@ typedef struct {
     char dataUrl[512];
 } VmLoadImgArgs;
 
-/* Declarative pattern descriptor; serialized as a small object by JSON serializer. */
-typedef enum { VM_PATTERN_SOLID, VM_PATTERN_GRADIENT, VM_PATTERN_IMAGE } VmPatternType;
+/* Declarative pattern descriptor; serialized as a small object by JSON serializer.
+   from/to 保留给老的两 stop 渐变；stopCount>=2 时前端优先用 stops[]。 */
+typedef enum { VM_PATTERN_SOLID, VM_PATTERN_GRADIENT, VM_PATTERN_IMAGE, VM_PATTERN_RADIAL } VmPatternType;
+#define VM_PATTERN_MAX_STOPS 8
+typedef struct {
+    char color[VM_DISPLAY_MAX_COLOR];
+    float offset;               /* 0..1 */
+} VmGradientStop;
 typedef struct {
     char patternId[VM_DISPLAY_MAX_STR];
     VmPatternType type;
     char color[VM_DISPLAY_MAX_STR];
     char from[VM_DISPLAY_MAX_STR], to[VM_DISPLAY_MAX_STR];
+    VmGradientStop stops[VM_PATTERN_MAX_STOPS];
+    int stopCount;
+    /* 线性："x0,y0,x1,y1" 比例；径向："cx,cy,r" 比例。缺省时退回对角。 */
     char direction[VM_DISPLAY_MAX_STR];
     char imgId[VM_DISPLAY_MAX_STR];
     char tiling[VM_DISPLAY_MAX_STR];

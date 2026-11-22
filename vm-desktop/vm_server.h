@@ -31,6 +31,10 @@ void VmServer_SetInputHandler(VmServer *server, VmInputHandler handler, void *us
 void VmServer_SetResourceProvider(VmServer *server, VmResourceProvider provider, void *userData);
 void VmServer_SetFullFrameProvider(VmServer *server, VmFullFrameProvider provider, void *userData);
 void VmServer_SetTickHandler(VmServer *server, int intervalMs, VmTickHandler handler, void *userData);
+/* 向所有已连接客户端广播一次 resources-update 事件（覆盖 defineStyle/Pattern 缓存）。
+   调用方持有 json 字符串；本函数会立即复制，返回后即可释放。
+   可从任意线程调用，广播在 server 主循环中完成。 */
+void VmServer_BroadcastResources(VmServer *server, const char *json);
 /* 请求退出 VmServer_Run（在 tick 或输入回调里调用即可）。 */
 void VmServer_Stop(VmServer *server);
 int VmServer_Run(VmServer *server); /* blocks until error; returns non-zero on failure */

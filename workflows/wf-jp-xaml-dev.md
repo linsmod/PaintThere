@@ -59,6 +59,15 @@ Stop-Process -Id $p.Id
 - **`test_jpx_xaml` 故意不链接 JPX**：纯逻辑测试只链接 parser + state；view 回放器调用 `Jpx_*`，要测它必须链接完整 JPX 依赖（用 `demo_xaml` 做端到端）。
 - **`--probe` 模式**：`test_jpx_xaml` 支持，只输出失败与汇总。
 
+## 主题（ResourceDictionary）扩展要点
+
+- **尺寸先行**：改 `VmDisplayList`/`VmDefinePatternArgs` 前先用 `gcc -B C:\msys64\mingw64\bin -c` + `objdump -t` 读符号大小（链接探针在本机 collect2 报错，用编译期符号法）。当前 `VmDisplayList` 约 1.02 MB，扩容资源或 stop 颜色用 128 字节会爆栈；stop 颜色固定用 `VM_DISPLAY_MAX_COLOR 32`，栈上 list 改 static。
+- **测试 TU 隔离**：`jpx_xaml_theme.c`（纯解析）与 `jpx_xaml_theme_apply.c`（需 JPX/server 依赖）分开，纯测试只链接前者，避免为了一个 Apply 函数拖入整条 JPX 依赖链。
+- **主题色生命周期**：`VmTheme`/`JpxTheme` 的颜色是 `const char *`，DeriveTheme 只搬指针、不拷贝。资源表必须比 JpxApp 活得久（demo 用 static）。
+- **shell 不上提 Jpx__Color**：vm 层不能依赖 Clay，shell 直接本地解析 rgba 字符串（`theme_color()`）。
+- **热更新验证**：点主题按钮后抓 SSE 流，确认 `event: resources-update` 且 descriptor 含新颜色；只断言画面文本不够，要直接看事件 payload。
+- **DeriveTheme 要映射完整**：v1 只映射 8 个 key（accent/panel/fg/bg/title/desktop），其余 token 保持默认；新增主题 key 时记得补映射，否则广播里会出现「新颜色 + 旧颜色」混合。
+
 ## 退出条件
 
 五个测试套件（`test_jpx_xaml` / `test_frame` / `test_text_edit` / `test_sys` / `test_fs`）全通过、`demo_xaml` 端到端验证四类交互（输入/勾选/列表/按钮）、文档与索引更新后，停止本任务启动的 demo 进程。

@@ -18,7 +18,7 @@ int main(void) {
     DemoLayout_Init();
     Clay_RenderCommandArray commands = DemoLayout_Build();
 
-    VmDisplayList frame;
+    static VmDisplayList frame;
     VmDisplay_Init(&frame);
     frame.frameId = 1;
     ClayFrame_AppendCommands(&frame, commands.internalArray, commands.length, 0, 0,

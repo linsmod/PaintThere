@@ -67,6 +67,8 @@ add_executable(demo_xaml
     jpx_xaml/jpx_xaml_parser.c
     jpx_xaml/jpx_xaml_state.c
     jpx_xaml/jpx_xaml_view.c
+    jpx_xaml/jpx_xaml_theme.c
+    jpx_xaml/jpx_xaml_theme_apply.c
     jpx/jpx_clay_impl.c
     jpx/jpx_app.c
     jpx/jpx_window.c
@@ -137,6 +139,18 @@ target_include_directories(test_jpx_xaml PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml"
     "${CMAKE_CURRENT_SOURCE_DIR}/jpx")
 
+# jp_xaml 主题断言：ResourceDictionary 解析/查找/渐变/派生（不链接 Clay/WM/网络）。
+add_executable(test_jpx_xaml_theme
+    test_jpx_xaml_theme.c
+    jpx_xaml/jpx_xaml_parser.c
+    jpx_xaml/jpx_xaml_theme.c
+    vm_display.c
+    vm_theme.c
+)
+target_include_directories(test_jpx_xaml_theme PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/jpx")
+
 # 文件抽象层断言：路径 UTF-8 往返、元数据、错误分类。与 test_sys 同理，两个实现互斥。
 add_executable(test_fs
     test_fs.c
@@ -149,7 +163,7 @@ target_include_directories(test_fs PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 add_executable(vm_renderer renderer/main.c)
 target_link_libraries(vm_renderer PRIVATE canvas)
 
-set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_sys test_fs PROPERTIES
+set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"

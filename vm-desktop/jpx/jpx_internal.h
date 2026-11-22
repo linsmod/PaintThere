@@ -84,6 +84,10 @@ typedef struct {
 struct JpxApp {
     JpxOptions opt;
     JpxTheme theme;
+    /* XAML 主题派生出的完整 VmTheme；hasVmTheme 时 shell/WM 用它而非默认值。
+       颜色指针借自调用方（ResourceTable），生命周期由调用方保证。 */
+    VmTheme vmTheme;
+    int hasVmTheme;
 
     VmWm *wm;
     VmServer *server;

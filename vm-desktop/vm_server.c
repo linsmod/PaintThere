@@ -59,6 +59,8 @@ struct VmServer {
     void *tickUserData;
     int tickIntervalMs;
     unsigned long long lastTickMs;
+    /* 资源热更新：调用方拷入 JSON，主循环消费后广播 resources-update。 */
+    char *pendingResources;
     int stop;
     unsigned int currentFrameId;
     char currentFrame[VM_FRAME_BUFFER];
@@ -627,6 +629,7 @@ void VmServer_Free(VmServer *s) {
     }
     if (s->listenFd != VM_INVALID) VM_CLOSE(s->listenFd);
     free(s->sseEvent);
+    free(s->pendingResources);
     free(s);
 #ifdef _WIN32
     WSACleanup();
@@ -663,6 +666,13 @@ void VmServer_SetTickHandler(VmServer *s, int intervalMs, VmTickHandler handler,
     s->tickUserData = userData;
     s->tickIntervalMs = intervalMs;
     s->lastTickMs = 0;
+}
+
+void VmServer_BroadcastResources(VmServer *s, const char *json) {
+    if (!s || !json || !*json) return;
+    free(s->pendingResources);
+    s->pendingResources = (char *)malloc(strlen(json) + 1);
+    if (s->pendingResources) strcpy(s->pendingResources, json);
 }
 
 void VmServer_Stop(VmServer *s) {
@@ -716,6 +726,24 @@ int VmServer_Run(VmServer *s) {
         vm_server_tick(s);
         vm_poll_frames(s);
         vm_push_frames(s);
+        /* 资源热更新：一次性向所有已连接客户端广播，然后清空待发送缓冲。 */
+        if (s->pendingResources) {
+            size_t need = strlen(s->pendingResources) + 64;
+            char *event = (char *)malloc(need);
+            if (event) {
+                int n = snprintf(event, need, "event: resources-update\ndata: %s\n\n",
+                                 s->pendingResources);
+                if (n > 0) {
+                    for (int i = 0; i < VM_MAX_CLIENTS; i++) {
+                        if (s->clients[i].fd != VM_INVALID && s->clients[i].isSse)
+                            vm_send_all(s->clients[i].fd, event, (size_t)n);
+                    }
+                }
+                free(event);
+            }
+            free(s->pendingResources);
+            s->pendingResources = NULL;
+        }
 
         fd_set readfds;
         FD_ZERO(&readfds);

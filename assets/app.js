@@ -149,6 +149,11 @@ function setDrawImgTarget(target) {
     drawImgCtx = target;
 }
 
+/* 切换后续绘制原语的目标上下文：由合成指令流的 bind 操作调用。 */
+function setDrawTarget(target) {
+    ctx = target;
+}
+
 function loadImg(imgId, dataUrl) {
     if (imageCache.has(imgId)) return;
     const entry = { image: null, ready: false, failed: false };
@@ -669,46 +674,6 @@ function wrapText(text, maxWidth, font) {
     return lines;
 }
 
-// ---- 帧执行：重绘区域由服务端给出，前端只做 clip / clear / 重放 ----
-function executeRegion(commands, canvas, region) {
-    const targetCtx = canvas.getContext('2d');
-    const prevCtx = ctx;
-    ctx = targetCtx;
-    try {
-        drainPrimitiveState();
-        ctx.save();
-        ctx.beginPath();
-        ctx.rect(region[0], region[1], region[2], region[3]);
-        ctx.clip();
-        ctx.clearRect(region[0], region[1], region[2], region[3]);
-        for (const c of commands) {
-            const fn = commandHandlers[c.cmd];
-            if (fn) { try { fn(...c.args); } catch (e) { console.error('cmd failed:', c.cmd, e); } }
-        }
-        ctx.restore();
-    } finally {
-        ctx = prevCtx;
-    }
-    return true;
-}
-
-/* 整屏执行一条完整命令列表（连接时下发的 fullframe）。 */
-function applyFrameDiff(frame, targetCanvas) {
-    if (!Array.isArray(frame) || !frame.length) return false;
-    const canvas = targetCanvas || ctx.canvas;
-    return executeRegion(frame, canvas, [0, 0, canvas.width, canvas.height]);
-}
-
-/* 增量帧：commands 是服务端给的完整命令列表，dirty 是服务端算好的唯一重绘矩形。
-   dirty 为空表示这一帧不需要重绘，前端不做任何判断。 */
-function applyIncrementalFrame(frame, targetCanvas) {
-    if (!frame || !Array.isArray(frame.commands) || !frame.commands.length) return false;
-    const r = frame.dirty;
-    if (!Array.isArray(r) || r.length < 4) return false;
-    const canvas = targetCanvas || ctx.canvas;
-    return executeRegion(frame.commands, canvas, r);
-}
-
 // 结构化指令分发表：避免 eval 解析字符串
 const commandHandlers = {
     setBounds,
@@ -756,6 +721,7 @@ export {
     drawImg,
     loadFont,
     setDrawImgTarget,
+    setDrawTarget,
     setTextNeedsReplay,
     setLayerCanvas,
     definePattern,
@@ -765,8 +731,6 @@ export {
     pauseDrawProgram,
     resumeDrawProgram,
     replayBackgroundPrograms,
-    applyFrameDiff,
-    applyIncrementalFrame,
     registerFont,
     drainPrimitiveState,
     clear,

@@ -374,6 +374,40 @@ void VmWm_BuildFrame(VmWm *wm, VmDisplayList *out, uint32_t frameId,
     append_cursor_commands(wm, out);
 }
 
+void VmWm_BuildWindowLayer(VmWm *wm, const VmWindow *win, VmDisplayList *out,
+                           const char *(*fontResolver)(uint16_t)) {
+    if (!wm || !win || !out) return;
+    VmDisplay_Clear(out);
+    char idbuf[64];
+
+    snprintf(idbuf, sizeof(idbuf), "w%d_body", win->id);
+    append_rect_cmd(out, idbuf, 0, 0, win->w, win->h, "s_window", 0);
+
+    snprintf(idbuf, sizeof(idbuf), "w%d_title", win->id);
+    append_rect_cmd(out, idbuf, 2, 2, win->w - 4, VM_WM_TITLE_HEIGHT - 2,
+                    win->focused ? "rgba(38,110,190,1)" : "rgba(120,126,134,1)", 0);
+
+    snprintf(idbuf, sizeof(idbuf), "w%d_ttext", win->id);
+    append_title_cmd(out, idbuf, 0, 0, win->title, "rgba(255,255,255,1)");
+
+    snprintf(idbuf, sizeof(idbuf), "w%d_border", win->id);
+    append_border_cmd(out, idbuf, 0, 0, win->w, win->h,
+                      win->focused ? "rgba(38,110,190,1)" : "rgba(90,96,104,1)");
+
+    if (win->layout && win->clayCtx) {
+        Clay_SetCurrentContext(win->clayCtx);
+        Clay_RenderCommandArray cmds = win->layout(win->userData);
+        ClayFrame_AppendCommands(out, cmds.internalArray, cmds.length,
+                                 2, VM_WM_TITLE_HEIGHT + 2, fontResolver, NULL);
+    }
+}
+
+void VmWm_BuildCursorLayer(VmWm *wm, VmDisplayList *out) {
+    if (!wm || !out) return;
+    VmDisplay_Clear(out);
+    append_cursor_commands(wm, out);
+}
+
 /* z 序变化只改变重叠区域的显示：把窗口两两重叠的矩形（外扩 2px 覆盖边框）
    并成一个区域交给服务端做脏区，前端不做任何计算。 */
 int VmWm_OverlapUnion(VmWm *wm, VmRect *out) {

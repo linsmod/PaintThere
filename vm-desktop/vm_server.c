@@ -53,6 +53,8 @@ struct VmServer {
     void *resourceUserData;
     VmFullFrameProvider fullFrameProvider;
     void *fullFrameUserData;
+    VmRedrawHandler redrawHandler;
+    void *redrawUserData;
     unsigned int currentFrameId;
     char currentFrame[VM_FRAME_BUFFER];
     int hasFrame;
@@ -492,6 +494,14 @@ static void vm_handle_request(VmServer *s, VmClient *client) {
         return;
     }
 
+    if (strcmp(method, "POST") == 0 && strcmp(path, "/redraw") == 0) {
+        if (s->redrawHandler) s->redrawHandler(s->redrawUserData);
+        vm_send_response(client->fd, 200, "OK", "application/json", "{\"ok\":true}", 11);
+        VM_CLOSE(client->fd);
+        client->fd = VM_INVALID;
+        return;
+    }
+
     if (strcmp(method, "POST") == 0 && strcmp(path, "/input") == 0) {
         char *body = headerEnd + 4;
         size_t bodyLen = client->recvLen - (size_t)(body - req);
@@ -608,6 +618,12 @@ void VmServer_SetFullFrameProvider(VmServer *s, VmFullFrameProvider provider, vo
     if (!s) return;
     s->fullFrameProvider = provider;
     s->fullFrameUserData = userData;
+}
+
+void VmServer_SetRedrawHandler(VmServer *s, VmRedrawHandler handler, void *userData) {
+    if (!s) return;
+    s->redrawHandler = handler;
+    s->redrawUserData = userData;
 }
 
 static void vm_poll_frames(VmServer *s) {

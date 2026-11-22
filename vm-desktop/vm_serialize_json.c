@@ -245,3 +245,87 @@ char *VmSerialize_DeltaFrameJson(const VmDisplayList *list, const VmDisplayDelta
     puts_(&b, "}");
     return b.data;
 }
+
+/* ---------------- 分层合成指令流 ---------------- */
+
+struct VmOps {
+    StrBuf b;
+    int count;
+};
+
+VmOps *VmOps_Create(void) {
+    VmOps *o = (VmOps *)calloc(1, sizeof(VmOps));
+    if (!o) return NULL;
+    puts_(&o->b, "{\"type\":\"ops\",\"ops\":[");
+    return o;
+}
+
+void VmOps_Destroy(VmOps *ops) {
+    if (!ops) return;
+    free(ops->b.data);
+    free(ops);
+}
+
+static void op_begin(VmOps *o) {
+    if (!o) return;
+    if (o->count++) puts_(&o->b, ",");
+}
+
+void VmOps_CreateLayer(VmOps *o, const char *id, int w, int h) {
+    if (!o) return;
+    op_begin(o);
+    puts_(&o->b, "{\"op\":\"create\",\"id\":");
+    json_string(&o->b, id);
+    printf_(&o->b, ",\"w\":%d,\"h\":%d}", w, h);
+}
+
+void VmOps_Bind(VmOps *o, const char *id) {
+    if (!o) return;
+    op_begin(o);
+    puts_(&o->b, "{\"op\":\"bind\",\"id\":");
+    json_string(&o->b, id);
+    puts_(&o->b, "}");
+}
+
+void VmOps_ClearLayer(VmOps *o, VmRect r) {
+    if (!o) return;
+    op_begin(o);
+    puts_(&o->b, "{\"op\":\"clear\",\"rect\":");
+    rect_json(&o->b, r);
+    puts_(&o->b, "}");
+}
+
+void VmOps_Draw(VmOps *o, const VmDrawCommand *cmds, int count) {
+    if (!o || !cmds) return;
+    for (int i = 0; i < count; i++) {
+        op_begin(o);
+        emit_command(&o->b, &cmds[i]);
+    }
+}
+
+void VmOps_ClearScreen(VmOps *o, VmRect r) {
+    if (!o) return;
+    op_begin(o);
+    puts_(&o->b, "{\"op\":\"clearScreen\",\"rect\":");
+    rect_json(&o->b, r);
+    puts_(&o->b, "}");
+}
+
+void VmOps_Composite(VmOps *o, const char *src, VmRect srcRect, int dx, int dy) {
+    if (!o) return;
+    op_begin(o);
+    puts_(&o->b, "{\"op\":\"composite\",\"src\":");
+    json_string(&o->b, src);
+    puts_(&o->b, ",\"srcRect\":");
+    rect_json(&o->b, srcRect);
+    printf_(&o->b, ",\"dx\":%d,\"dy\":%d}", dx, dy);
+}
+
+char *VmOps_Finish(VmOps *o) {
+    if (!o) return NULL;
+    puts_(&o->b, "]}");
+    char *data = o->b.data;
+    o->b.data = NULL;
+    free(o);
+    return data;
+}

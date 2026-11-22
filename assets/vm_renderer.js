@@ -2,7 +2,7 @@
 // 逻辑只有一份；两端差异仅通过标准 location / globalThis 配置吸收。
 import {
   initCanvas, commandHandlers, setLayerCanvas, replayBackgroundPrograms,
-  applyFrameDiff, applyIncrementalFrame, setTextNeedsReplay
+  setDrawTarget, setTextNeedsReplay
 } from './app.js';
 import { loadFont } from './font_wasm.js';
 
@@ -18,23 +18,11 @@ const INPUT_URL = `${BASE}/input`;
 
 window.__vmRenderer = { ready: false, frames: 0, resources: 0, error: '' };
 
-// drawText 异步光栅化：首帧文本未就绪，需在字体就绪后重放最近一帧。
-let lastFrame = null;
-let lastCanvas = null;
-function replayLastFrame() {
-  if (!lastFrame || !lastCanvas) return;
-  const ctx = lastCanvas.getContext('2d');
-  ctx.clearRect(0, 0, lastCanvas.width, lastCanvas.height);
-  for (const c of lastFrame) {
-    const fn = commandHandlers[c.cmd];
-    if (fn) {
-      try { fn(...c.args); }
-      catch (e) { window.__vmRenderer.error = 'replay ' + c.cmd + ': ' + e; }
-    }
-  }
-  replayBackgroundPrograms();
+// 文本光栅化是异步的：首帧可能还没位图，就绪后请服务端重发一次全量合成。
+function requestRedraw() {
+  fetch('/redraw', { method: 'POST' }).catch(() => {});
 }
-setTextNeedsReplay(replayLastFrame);
+setTextNeedsReplay(requestRedraw);
 
 async function boot() {
   const stage = document.createElement('div');
@@ -81,6 +69,50 @@ async function boot() {
   await loadFont(0, btoa(bs));
   await loadFont(1, btoa(bs));
 
+  const cvCtx = cv.getContext('2d');
+  const layers = new Map();
+  const registerLayer = (id, canvas) => {
+    layers.set(id, canvas);
+    setLayerCanvas(id, canvas);
+  };
+  registerLayer('bg', bg);
+
+  /* 执行服务端下发的合成指令：create / bind / clear / clearScreen / composite + 绘制原语。
+     这里没有任何判断逻辑：画什么、画到哪一层、什么时候合成，全部由服务端决定。 */
+  const execOps = (ops) => {
+    let cur = null;
+    for (const op of ops) {
+      if (!op) continue;
+      if (op.op === 'create') {
+        let canvas = layers.get(op.id);
+        if (!canvas) {
+          canvas = document.createElement('canvas');
+          registerLayer(op.id, canvas);
+        }
+        if (canvas.width !== op.w || canvas.height !== op.h) {
+          canvas.width = op.w;
+          canvas.height = op.h;
+        }
+      } else if (op.op === 'bind') {
+        cur = layers.get(op.id) || null;
+        if (cur) setDrawTarget(cur.getContext('2d'));
+      } else if (op.op === 'clear') {
+        if (cur) cur.getContext('2d').clearRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
+      } else if (op.op === 'clearScreen') {
+        cvCtx.clearRect(op.rect[0], op.rect[1], op.rect[2], op.rect[3]);
+      } else if (op.op === 'composite') {
+        const src = layers.get(op.src);
+        if (src) {
+          const r = op.srcRect;
+          cvCtx.drawImage(src, r[0], r[1], r[2], r[3], op.dx, op.dy, r[2], r[3]);
+        }
+      } else {
+        const fn = commandHandlers[op.cmd];
+        if (fn) { try { fn(...op.args); } catch (e) { console.error('cmd failed:', op.cmd, e); } }
+      }
+    }
+  };
+
   const es = new EventSource(EVENTS_URL);
   es.addEventListener('resources', (e) => {
     try {
@@ -96,24 +128,17 @@ async function boot() {
   es.addEventListener('fullframe', (e) => {
     try {
       const f = JSON.parse(e.data);
-      applyFrameDiff(f.commands, cv);
-      lastFrame = f.commands; lastCanvas = cv;
+      if (Array.isArray(f.ops)) execOps(f.ops);
       window.__vmRenderer.frames++;
     } catch (err) { window.__vmRenderer.error = 'fullframe: ' + err; }
   });
   es.onmessage = (e) => {
     try {
       const f = JSON.parse(e.data);
-      if (f.incremental) {
-        applyIncrementalFrame(f, cv);
-        // 增量帧带的是完整命令列表，保留下来供字体就绪时整屏重放
-        if (Array.isArray(f.commands) && f.commands.length) lastFrame = f.commands;
-      } else {
-        applyFrameDiff(f.commands, cv);
-        lastFrame = f.commands;
+      if (Array.isArray(f.ops)) {
+        execOps(f.ops);
+        window.__vmRenderer.frames++;
       }
-      lastCanvas = cv;
-      window.__vmRenderer.frames++;
     } catch (err) { window.__vmRenderer.error = 'frame: ' + err; }
   };
   es.onerror = () => { window.__vmRenderer.error = 'SSE disconnected'; };

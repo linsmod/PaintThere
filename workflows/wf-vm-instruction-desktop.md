@@ -125,6 +125,11 @@ agent-browser --session vm close
 - `VmWm_BuildFrame` 会给每个带 layout 的窗口发 `clipPush/clipPop`。tile 里两者计数必须相等，这是「内容裁剪已生效」的最快判据（49 个 setTile → 98/98）。
 - **合成输入做位置敏感验证时，必须先 `mousemove` 再 `mousedown`**。Clay 的 `PRESSED_THIS_FRAME` 需要先有一帧 hover；只发 `mousedown`，任务栏条目不响应。真实浏览器总会先发 mousemove，所以线上无感，但 curl 验证会误判成「点击失效」。
 - **有浏览器连着时不要用 curl 验证位置敏感交互**。浏览器自己的 `mousemove` 会覆盖 WM 的全局指针（`wm->pointerX/pointerY` 是单份的），合成的 `mousedown` 坐标会被下一次真实移动抹掉。做法：另起一个无浏览器连接的实例（换端口）做确定性验证，用户那份留着看画面。
+- **同一窗口内 Clay 元素 id 不能重复**。给控件内部装饰元素（标签容器、分隔线、勾选框方框）用固定字符串 id，同窗口出现两个就撞号，Clay 会按「同一元素」复用 hash 项，布局与交互都可能错乱。无应用语义的元素用「父元素 id + 帧内序号」生成 id（`Clay__HashStringWithOffset(name, serial++, Clay_GetOpenElementId())`，等价 `CLAY_SIDI_LOCAL`），帧内唯一且声明顺序不变时跨帧稳定。有交互的控件仍必须用应用给的稳定 id。
+- **`CLAY_TEXT(text, &cfg)` 是错的写法**。`Clay__OpenTextElement` 按值收 `Clay_TextElementConfig`，`CLAY_TEXT` 的第二个参数会被当成初始化器：传指针等于把地址塞进结构体首字段，`fontId/fontSize` 变 0（编译器只给隐式转换警告）。症状是**窗口体、边框、按钮矩形都在，所有文本消失**——文本 boundingBox 变成 0×0。正确写法：`CLAY_TEXT(text, CLAY_TEXT_CONFIG({...}))`，或直接调 `Clay__OpenTextElement(text, config)`。
+- **判断「Clay 命令进帧了但 tile 里没有」**，先打印每条渲染命令的 `commandType` 与 `boundingBox`：tile 切分按面积相交，0×0 的命令会被静默丢弃。这一步能直接把范围从「序列化/切分」缩到「度量/配置」。
+- **`Clay_OnHover` 在多 `Clay_Context`（每窗一份）下可能不触发**：同一位置 `Clay_Hovered()` 为真、`Clay_SetPointerState` 已收到 `PRESSED_THIS_FRAME`，回调仍不调用（`vm_shell` 的上下文里同样写法正常，根因未定位）。控件交互改用 `Clay_Hovered()` + 自己从 WM 指针维护的按下沿（每窗 `pressEdge`），只依赖已验证可靠的部分。
+- **颜色/枚举这类纯函数要单独验**。默认主题色与解析函数的 fallback 恰好相同时，解析恒失败也不会显形；给 `Jpx__Color` 换个非默认色（如橙色 hover）才暴露「`rgb()` 分支永远走不到」的 bug。
 
 ## 退出条件
 

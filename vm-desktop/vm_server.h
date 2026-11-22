@@ -31,6 +31,8 @@ void VmServer_SetInputHandler(VmServer *server, VmInputHandler handler, void *us
 void VmServer_SetResourceProvider(VmServer *server, VmResourceProvider provider, void *userData);
 void VmServer_SetFullFrameProvider(VmServer *server, VmFullFrameProvider provider, void *userData);
 void VmServer_SetTickHandler(VmServer *server, int intervalMs, VmTickHandler handler, void *userData);
+/* 请求退出 VmServer_Run（在 tick 或输入回调里调用即可）。 */
+void VmServer_Stop(VmServer *server);
 int VmServer_Run(VmServer *server); /* blocks until error; returns non-zero on failure */
 
 #ifdef __cplusplus

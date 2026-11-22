@@ -31,6 +31,31 @@ if(WIN32)
     target_link_libraries(demo_wm PRIVATE ws2_32)
 endif()
 
+# JPX 宿主示例：应用代码只 include jpx.h，Clay 实现单独放一个 TU。
+add_executable(demo_jpx
+    demo_jpx.c
+    jpx/jpx_clay_impl.c
+    jpx/jpx_app.c
+    jpx/jpx_window.c
+    jpx/jpx_theme.c
+    jpx/jpx_widget.c
+    clay_frame_adapter.c
+    vm_display.c
+    vm_serialize_json.c
+    vm_tiles.c
+    vm_wm.c
+    vm_server.c
+    vm_font.c
+    vm_theme.c
+    vm_shell.c
+    vm_clipboard.c
+)
+target_include_directories(demo_jpx PRIVATE "${CLAY_DIR}" "${MSTB_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx")
+if(WIN32)
+    target_link_libraries(demo_jpx PRIVATE ws2_32)
+endif()
+
 # 帧断言测试：不开服务、不开浏览器，直接断言度量/装饰/裁剪/脏标记/输入路由。
 add_executable(test_frame
     test_frame.c
@@ -48,7 +73,7 @@ target_include_directories(test_frame PRIVATE "${CLAY_DIR}" "${MSTB_DIR}" "${CMA
 add_executable(vm_renderer renderer/main.c)
 target_link_libraries(vm_renderer PRIVATE canvas)
 
-set_target_properties(demo_wm vm_renderer test_frame PROPERTIES
+set_target_properties(demo_wm demo_jpx vm_renderer test_frame PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"

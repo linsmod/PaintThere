@@ -414,7 +414,7 @@ agent-browser --session jpx close
 
 - [x] 阶段 A：共享基础 + 前置修复（2026-11-22 完成）
 - [x] 阶段 B：WM 接口补齐 + 桌面外壳（2026-11-22 完成）
-- [ ] 阶段 C：JPX 宿主
+- [x] 阶段 C：JPX 宿主（2026-11-22 完成）
 - [ ] 阶段 D：控件、文本编辑、剪贴板接入
 - [ ] 阶段 E：首个真实程序 + guest 部署
 
@@ -451,3 +451,30 @@ agent-browser --session jpx close
 已知行为：Clay 的 `PRESSED_THIS_FRAME` 需先有一帧 hover。浏览器总会先发 mousemove，所以真实交互无问题；用 `curl` 合成点击验证时必须先 POST 一次 `mousemove`，否则任务栏条目不会响应。
 
 恢复点：阶段 C 从 `jpx/jpx.h` 与 `jpx_app.c` 开始（吸收 demo_wm 的样板：Clay 上下文、tile 网格、四个 provider、dirty、frameId），用 `demo_jpx.c` 与 `demo_wm` 做等价对照。
+
+### 阶段 C 执行记录
+
+新增：`jpx/jpx.h`（唯一公开头，按 §5 接口）、`jpx/jpx_internal.h`（`JpxApp`/`JpxWindow` 与 `Jpx__*` 内部接口）、`jpx/jpx_app.c`（create/destroy/run/stop、resources/frame/fullframe/input/tick 接线、tile 网格、dirty、frameId、timer、剪贴板、日志）、`jpx/jpx_window.c`（窗口注册、每窗 Clay 上下文、layout trampoline、按下沿推导）、`jpx/jpx_theme.c`（默认主题、颜色解析 `Jpx__Color`、id 生成 `Jpx__Id`/`Jpx__LocalId`）、`jpx/jpx_widget.c`（Row/Column/Panel/Scroll/Spacer/Separator + Label/Button/Checkbox/TextInput/ListBox）、`jpx/jpx_clay_impl.c`（Clay 实现单独 TU，应用源码保持只 include `jpx.h`）、`demo_jpx.c`（等价双窗口示例）。
+修改：`vm_server.c/.h`（`VmServer_Stop`）、`CMakeLists.txt`（`demo_jpx` 目标 + `jpx` include 目录）。
+
+验证证据（`demo_jpx.exe 9019 ..\assets` + curl 合成输入）：
+
+- 瓦片 48：`maxIndex=47`；单帧 `configs=1` 时 48 块全量，点击后的增量帧只发 1 块（该连接累计 `setTiles=49`）。
+- 按钮 hover：mousemove 到按钮后 `67x26` 矩形颜色为 `rgba(240,140,40,1)`（`theme.hoverColor`）；mousedown+mouseup 后 `Clicked: 0` 全部变 `Clicked: 1`。
+- 焦点：点 B 独占区后 `w1_title=rgba(180,186,194)`、`w2_title=rgba(52,140,220)` 互换。
+- 拖动：A 由 (60,60) 拖到 (110,80)，`w1_body` 落在 tile(1,1) 局部 `[12,8]`，与鼠标位移 +50/+20 一致。
+- 空闲：相隔 2.5s 两次连 `/events`，`event: tiles` 均为 0 次、`frameId=2` 不变。
+- 应用源码 `grep -c "clay\|vm_display\|vm_tiles\|json" demo_jpx.c` = 0。
+- `python tools/build_vm.py` 通过；`test_frame.exe` 89 项断言 0 失败。
+
+期间修掉的三处缺陷：
+
+- 控件内部装饰元素用了固定字符串 id（`"label"`/`"sep"`/`"spacer"`/`"box"`），同窗口多个即撞号。改为「父元素 id + 帧内序号」，即 `Jpx__LocalId`（等价 `CLAY_SIDI_LOCAL`），帧内唯一、跨帧稳定。
+- `CLAY_TEXT(text, &cfg)` 用法错误：`Clay__OpenTextElement` 按值收 `Clay_TextElementConfig`，宏把实参当初始化器，指针被塞进结构体首字段，`fontSize` 变成 0，所有文本元素 boundingBox 为 0×0 并被 tile 切分丢弃。改为直接调用底层 API 的薄封装 `jpx_text(text, config)`。
+- `Jpx__Color` 先跳字母再找 `(`，`rgb()/rgba()` 分支永远走不到、恒返回 fallback（默认主题值恰好与 fallback 相同，掩盖了问题）。改为先定位左括号再解析。
+
+已知限制：`Clay_OnHover` 注册的回调在窗口上下文里不触发——同一位置 `Clay_Hovered()` 为真、`Clay_SetPointerState` 已收到 `PRESSED_THIS_FRAME`，回调仍不调用；任务栏（`vm_shell` 的上下文）同样写法正常，根因未定位。控件交互改为「`Clay_Hovered()` + WM 指针按下沿（`JpxWindow::pressEdge`）」，不依赖该回调。阶段 D 若需 Clay 的 hover 回调，先复现并登记该问题。
+
+已知限制：`Jpx_TextInput` 目前只渲染文本与边框，编辑（caret/选区/剪贴板）属阶段 D；`Jpx_ScrollBegin` 是静态裁剪容器，wheel 偏移待阶段 D 接入。
+
+恢复点：阶段 D 从 `jpx/jpx_widget.c` 的文本编辑模型（caret 闪烁、选区、Ctrl+C/V/X）与 `Jpx_ScrollBegin` 的 wheel 偏移接入开始。

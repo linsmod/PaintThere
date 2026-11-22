@@ -57,6 +57,7 @@ struct VmServer {
     void *tickUserData;
     int tickIntervalMs;
     unsigned long long lastTickMs;
+    int stop;
     unsigned int currentFrameId;
     char currentFrame[VM_FRAME_BUFFER];
     int hasFrame;
@@ -660,6 +661,10 @@ void VmServer_SetTickHandler(VmServer *s, int intervalMs, VmTickHandler handler,
     s->lastTickMs = 0;
 }
 
+void VmServer_Stop(VmServer *s) {
+    if (s) s->stop = 1;
+}
+
 static void vm_poll_frames(VmServer *s) {
     if (!s->frameProvider) return;
     unsigned int id = 0;
@@ -703,6 +708,7 @@ static void vm_push_frames(VmServer *s) {
 int VmServer_Run(VmServer *s) {
     if (!s) return 1;
     for (;;) {
+        if (s->stop) return 0;
         vm_server_tick(s);
         vm_poll_frames(s);
         vm_push_frames(s);

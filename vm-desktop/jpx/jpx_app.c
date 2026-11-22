@@ -1,0 +1,332 @@
+#include "jpx_internal.h"
+
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+#include "vm_clipboard.h"
+
+static JpxApp *g_jpx;
+
+JpxApp *Jpx__App(void) { return g_jpx; }
+
+JpxWindow *Jpx__Window(JpxApp *app, int winId) {
+    if (!app) return NULL;
+    for (int i = 0; i < VM_WM_MAX_WINDOWS; i++) {
+        if (app->windows[i].used && app->windows[i].id == winId) return &app->windows[i];
+    }
+    return NULL;
+}
+
+void Jpx__Invalidate(JpxApp *app) {
+    if (app) {
+        app->dirty = 1;
+        VmWm_Invalidate(app->wm);
+    }
+}
+
+static unsigned long long jpx_now_ms(void) {
+#ifdef _WIN32
+    return (unsigned long long)GetTickCount64();
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long long)ts.tv_sec * 1000ULL + (unsigned long long)ts.tv_nsec / 1000000ULL;
+#endif
+}
+
+/* 从原始输入体里读一个整数字段；WM 不解析修饰键，JPX 自己取。 */
+static int json_int_flag(const char *body, size_t len, const char *key) {
+    size_t klen = strlen(key);
+    for (size_t i = 0; i + klen < len; i++) {
+        if (memcmp(body + i, key, klen) != 0) continue;
+        size_t j = i + klen;
+        while (j < len && (body[j] == ' ' || body[j] == ':' || body[j] == '"')) j++;
+        if (j < len && body[j] >= '0' && body[j] <= '9') return body[j] - '0';
+        return 1;   /* "true" 也算按下 */
+    }
+    return 0;
+}
+
+static void build_resources(JpxApp *app) {
+    VmDisplayList res;
+    VmDisplay_Init(&res);
+    VmTheme_AppendResources(&res, VmTheme_Default());
+
+    VmDisplay_Init(&app->desktopProgram);
+    VmDrawCommand *bg = VmDisplay_Append(&app->desktopProgram, VM_CMD_DRAW_RECT, "desktop_bg");
+    if (bg) {
+        VmRect r = {0, 0, (float)app->opt.width, (float)app->opt.height};
+        bg->rect = r;
+        bg->args.drawRect.rect = r;
+        VmDisplay_CopyStr(bg->args.drawRect.paint, sizeof(bg->args.drawRect.paint), "s_desktop");
+    }
+
+    VmDrawCommand *p = VmDisplay_Append(&res, VM_CMD_DEFINE_DRAW_PROGRAM, "def_prog_desktop");
+    if (p) {
+        VmDisplay_CopyStr(p->args.defineProgram.programId,
+                          sizeof(p->args.defineProgram.programId), "prog_desktop");
+        p->args.defineProgram.commands = &app->desktopProgram;
+        VmDisplay_CopyStr(p->args.defineProgram.layerId,
+                          sizeof(p->args.defineProgram.layerId), "bg");
+    }
+    p = VmDisplay_Append(&res, VM_CMD_START_PROGRAM, "start_prog_desktop");
+    if (p) {
+        VmDisplay_CopyStr(p->args.programControl.programId,
+                          sizeof(p->args.programControl.programId), "prog_desktop");
+        VmDisplay_CopyStr(p->args.programControl.mode,
+                          sizeof(p->args.programControl.mode), "once");
+    }
+
+    /* 光标只下发一次，每帧只引用 imgId。 */
+    p = VmDisplay_Append(&res, VM_CMD_LOAD_IMG, "res_cursor");
+    if (p) {
+        VmDisplay_CopyStr(p->args.loadImg.imgId, sizeof(p->args.loadImg.imgId), "cursor");
+        VmDisplay_CopyStr(p->args.loadImg.dataUrl, sizeof(p->args.loadImg.dataUrl),
+                          VmWm_CursorDataUrl());
+    }
+
+    free(app->resJson);
+    app->resJson = VmSerialize_CommandArrayJson(&res);
+}
+
+static const char *resource_provider(void *userData) {
+    JpxApp *app = (JpxApp *)userData;
+    return app->resJson ? app->resJson : "[]";
+}
+
+static const char *resolve_font(uint16_t fontId) {
+    (void)fontId;
+    return "sans-serif";
+}
+
+static char *build_tiles(JpxApp *app, int full) {
+    VmWm_BuildFrame(app->wm, &app->frame, app->frameId, resolve_font);
+    VmTiles *tiles = VmTiles_Create();
+    if (!tiles) return NULL;
+    VmTiles_SetFrameId(tiles, app->frameId);
+    if (!VmTileGrid_Build(&app->grid, &app->frame, full, tiles)) {
+        VmTiles_Destroy(tiles);
+        return NULL;
+    }
+    return VmTiles_Finish(tiles);
+}
+
+static const char *frame_provider(void *userData, unsigned int *frameId) {
+    JpxApp *app = (JpxApp *)userData;
+    int wmDirty = VmWm_ConsumeDirty(app->wm);
+    if (!app->dirty && !wmDirty) return NULL;
+    app->dirty = 0;
+    *frameId = app->frameId++;
+    free(app->tilesJson);
+    app->tilesJson = build_tiles(app, 0);
+    return app->tilesJson;
+}
+
+static const char *full_frame_provider(void *userData) {
+    JpxApp *app = (JpxApp *)userData;
+    free(app->fullJson);
+    app->fullJson = build_tiles(app, 1);
+    return app->fullJson ? app->fullJson : "";
+}
+
+static void input_handler(const char *body, size_t length, void *userData) {
+    JpxApp *app = (JpxApp *)userData;
+    app->ctrl = json_int_flag(body, length, "\"ctrl\"");
+    app->shift = json_int_flag(body, length, "\"shift\"");
+    app->alt = json_int_flag(body, length, "\"alt\"");
+    int changed = VmWm_HandleInput(app->wm, body, length);
+    app->dirty = 1;
+    if (app->opt.logLevel >= 2) {
+        printf("[jpx] changed=%d focus=%d %.*s\n", changed, app->wm->focusId,
+               (int)(length > 160 ? 160 : length), body);
+        fflush(stdout);
+    }
+}
+
+static void tick_handler(void *userData) {
+    JpxApp *app = (JpxApp *)userData;
+    unsigned long long now = jpx_now_ms();
+    int fired = 0;
+    for (int i = 0; i < JPX_MAX_TIMERS; i++) {
+        JpxTimer *t = &app->timers[i];
+        if (!t->used) continue;
+        if (t->last != 0 && now - t->last < (unsigned long long)t->ms) continue;
+        t->last = now;
+        if (t->fn) t->fn(t->user);
+        fired = 1;
+    }
+    if (fired) app->dirty = 1;
+}
+
+JpxApp *Jpx_Create(const JpxOptions *opt) {
+    if (g_jpx) return NULL;   /* 单进程单实例：Clay 的度量函数是进程级状态 */
+    JpxApp *app = (JpxApp *)calloc(1, sizeof(JpxApp));
+    if (!app) return NULL;
+    if (opt) app->opt = *opt;
+    if (app->opt.width <= 0) app->opt.width = 800;
+    if (app->opt.height <= 0) app->opt.height = 600;
+    if (app->opt.tileW <= 0) app->opt.tileW = 100;
+    if (app->opt.tileH <= 0) app->opt.tileH = 100;
+    if (app->opt.port == 0) app->opt.port = 9000;
+    app->theme = *Jpx__DefaultTheme();
+    app->nextWinId = 1;
+    app->nextTimerId = 1;
+
+    if (app->opt.fontPath) {
+        if (VmFont_LoadFile(app->opt.fontPath, app->theme.fontId) != 0 && app->opt.logLevel >= 1) {
+            fprintf(stderr, "[jpx] 字体加载失败: %s（度量退回估算值）\n", app->opt.fontPath);
+        }
+    }
+
+    app->wm = VmWm_Create(app->opt.width, app->opt.height);
+    if (!app->wm) { free(app); return NULL; }
+    Jpx__ApplyChrome(app);
+
+    int cols = (app->opt.width + app->opt.tileW - 1) / app->opt.tileW;
+    int rows = (app->opt.height + app->opt.tileH - 1) / app->opt.tileH;
+    if (cols * rows > VM_TILE_MAX) {
+        if (app->opt.logLevel >= 1) fprintf(stderr, "[jpx] 瓦片数超过上限: %d\n", cols * rows);
+        VmWm_Free(app->wm);
+        free(app);
+        return NULL;
+    }
+    VmTileGrid_Init(&app->grid, cols, rows, app->opt.tileW, app->opt.tileH,
+                    app->opt.width, app->opt.height);
+    VmDisplay_Init(&app->frame);
+
+    build_resources(app);
+
+    app->shell = VmShell_Create(app->wm, VmTheme_Default(), VM_SHELL_DEFAULT_HEIGHT);
+    if (!app->shell && app->opt.logLevel >= 1) {
+        fprintf(stderr, "[jpx] 任务栏创建失败（窗口数已达上限？）\n");
+    }
+
+    app->server = VmServer_Create(app->opt.port, app->opt.webRoot);
+    if (!app->server) {
+        VmWm_Free(app->wm);
+        free(app->resJson);
+        free(app);
+        return NULL;
+    }
+    VmServer_SetResourceProvider(app->server, resource_provider, app);
+    VmServer_SetFrameProvider(app->server, frame_provider, app);
+    VmServer_SetFullFrameProvider(app->server, full_frame_provider, app);
+    VmServer_SetInputHandler(app->server, input_handler, app);
+    VmServer_SetTickHandler(app->server, 16, tick_handler, app);
+
+    g_jpx = app;
+    app->dirty = 1;
+    return app;
+}
+
+void Jpx_Destroy(JpxApp *app) {
+    if (!app) return;
+    if (g_jpx == app) g_jpx = NULL;
+    if (app->shell) VmShell_Destroy(app->shell);
+    if (app->server) VmServer_Free(app->server);
+    if (app->wm) VmWm_Free(app->wm);
+    for (int i = 0; i < VM_WM_MAX_WINDOWS; i++) free(app->windows[i].arenaMem);
+    free(app->resJson);
+    free(app->tilesJson);
+    free(app->fullJson);
+    free(app);
+}
+
+int Jpx_Run(JpxApp *app) {
+    if (!app || !app->server) return 1;
+    app->running = 1;
+    int rc = VmServer_Run(app->server);
+    app->running = 0;
+    return rc;
+}
+
+void Jpx_Stop(JpxApp *app) {
+    if (!app || !app->server) return;
+    app->running = 0;
+    VmServer_Stop(app->server);
+}
+
+void Jpx_SetTheme(JpxApp *app, const JpxTheme *theme) {
+    if (!app) return;
+    app->theme = theme ? *theme : *Jpx__DefaultTheme();
+    Jpx__ApplyChrome(app);
+    Jpx__Invalidate(app);
+}
+
+const JpxTheme *Jpx_Theme(JpxApp *app) {
+    return app ? &app->theme : Jpx__DefaultTheme();
+}
+
+int Jpx_WindowOpen(JpxApp *app, const JpxWindowDesc *desc) {
+    JpxWindow *w = Jpx__WindowCreate(app, desc);
+    return w ? w->id : 0;
+}
+
+void Jpx_WindowClose(JpxApp *app, int winId) {
+    Jpx__WindowDestroy(app, winId);
+}
+
+void Jpx_WindowSetTitle(JpxApp *app, int winId, const char *title) {
+    JpxWindow *w = Jpx__Window(app, winId);
+    if (!w) return;
+    snprintf(w->title, sizeof(w->title), "%s", title ? title : "");
+    VmWindow *vw = VmWm_FindWindow(app->wm, winId);
+    if (vw) vw->title = w->title;
+    Jpx__Invalidate(app);
+}
+
+void Jpx_Invalidate(JpxApp *app) {
+    Jpx__Invalidate(app);
+}
+
+int Jpx_TimerEvery(JpxApp *app, int ms, void (*fn)(void *), void *user) {
+    if (!app || !fn || ms <= 0) return 0;
+    for (int i = 0; i < JPX_MAX_TIMERS; i++) {
+        JpxTimer *t = &app->timers[i];
+        if (t->used) continue;
+        t->used = 1;
+        t->id = app->nextTimerId++;
+        t->ms = ms;
+        t->last = 0;
+        t->fn = fn;
+        t->user = user;
+        return t->id;
+    }
+    return 0;
+}
+
+void Jpx_TimerCancel(JpxApp *app, int timerId) {
+    if (!app) return;
+    for (int i = 0; i < JPX_MAX_TIMERS; i++) {
+        if (app->timers[i].used && app->timers[i].id == timerId) {
+            memset(&app->timers[i], 0, sizeof(JpxTimer));
+            return;
+        }
+    }
+}
+
+void Jpx_ClipboardSet(const char *utf8) {
+    VmClipboard_SetText(utf8);
+}
+
+int Jpx_ClipboardGet(char *out, int cap) {
+    return VmClipboard_GetText(out, cap);
+}
+
+void Jpx_Log(JpxApp *app, int level, const char *fmt, ...) {
+    int minLevel = app ? app->opt.logLevel : 1;
+    if (level > minLevel) return;
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+    fputc('\n', stderr);
+    fflush(stderr);
+}

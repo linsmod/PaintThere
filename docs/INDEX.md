@@ -13,3 +13,5 @@
 - `design-vm-sys.md` — 平台能力抽象层（冻结于 2026-11-22）：系统事实与桌面语义的分界、CPU 差分的有状态接口、错误三分类、512 容量依据。
 - `design-vm-fs.md` — 文件能力抽象层（冻结于 2026-11-22）：UTF-8 路径硬约束、W 系列 API、定长 POD、错误分类、时间口径、与 IPC 的关系。
 - `task-jpx-ui-modern-dark.md` — demo_jpx 现代深色界面升级：画布适配、主题与窗口装饰、控件精修、桌面功能（开始按钮/时钟/快捷图标）的执行记录与验证证据。
+- `design-jp-xaml.md` — jp_xaml 声明式 UI 层设计（冻结于 2026-11-23）：XAML 子集、元素树、绑定/handler 模型、帧回放、v1 非目标（不做动画/Style-Template）。
+- `task-jp-xaml.md` — jp_xaml 执行文档：解析器、视图、表单 demo 与端到端验证的分阶段计划、恢复点与执行记录。

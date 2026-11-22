@@ -1,0 +1,64 @@
+# 工作流：jp_xaml 声明式 UI 层开发
+
+## 适用场景
+
+在 guest 侧新增或扩展 XAML 风格声明式 UI 层（jp_xaml），或调试「XAML 声明的控件没进帧 / 输入没生效 / handler 没触发」时。适用于修改 `vm-desktop/jpx_xaml/*`、`vm-desktop/demo_xaml.c`、相关 CMake 目标时。
+
+## 前置条件
+
+- 设计冻结于 `docs/design-jp-xaml.md`；进度见 `docs/task-jp-xaml.md`。
+- 边界：XAML 是外层编写模型，Clay 仍是内部布局引擎；协议/WM/前端零改动；v1 不做动画。
+- 环境与 VM 桌面相同：Clay `H:\github_repos\clay`、mystbfont `H:\github_repos\mystbfont_c`、MSYS2 gcc、构建 `python tools/build_vm.py`。
+
+## 相关文件
+
+| 路径 | 作用 |
+|---|---|
+| `vm-desktop/jpx_xaml/jpx_xaml.h` | 公开 API：Create/Bind/On/Render/Node 查询 |
+| `vm-desktop/jpx_xaml/jpx_xaml_parser.c` | XAML 子集 → 定长元素树（索引表达父子/兄弟，哨兵 -1） |
+| `vm-desktop/jpx_xaml/jpx_xaml_state.c` | 视图/绑定表/handler 表，纯逻辑，不调 JPX，可独立测试 |
+| `vm-desktop/jpx_xaml/jpx_xaml_view.c` | 唯一调用 `Jpx_*` 的 TU：每帧把树回放为控件调用 |
+| `vm-desktop/demo_xaml.c` | 表单 demo：XAML 内嵌，应用只写 state + handler |
+| `vm-desktop/test_jpx_xaml.c` | 解析/绑定/handler 断言，支持 `--probe` |
+| `tools/drive_vm_desktop.py` | HTTP `/input` 合成输入，同连接累积 SSE 帧流 |
+| `tools/inspect_vm_frame.py` | 回放 SSE 流，按 tile 还原绝对坐标列出文本 |
+
+## 常用命令
+
+```powershell
+cd h:\github_repos\跨端图绘指令流
+python tools/build_vm.py
+.\vm-desktop\build\test_jpx_xaml.exe --probe
+
+# 启动（不带浏览器，端口独立）
+$env:JPX_TRACE='1'
+$p = Start-Process -FilePath '.\vm-desktop\build\demo_xaml.exe' `
+  -ArgumentList '9060','..\assets' -PassThru -WindowStyle Hidden `
+  -RedirectStandardOutput 'vm-desktop\build\xaml_stdout.log' `
+  -RedirectStandardError 'vm-desktop\build\xaml_stderr.log'
+
+# 合成输入 + 抓帧
+$env:VM_DRIVE_OUT='vm-desktop/build'
+python tools/drive_vm_desktop.py 9060 move X Y down X Y up X Y key A snap name
+python tools/inspect_vm_frame.py vm-desktop/build/name.txt --text '关键词'
+Get-Content vm-desktop\build\xaml_stdout.log -Tail 50
+
+# 收尾
+Stop-Process -Id $p.Id
+```
+
+## 调试经验（针对本场景）
+
+- **诊断打印走 stdout**：`Start-Process -RedirectStandardError` 在 PowerShell 下拿不到实时 `fprintf(stderr,...)`；`VmWm_Dump` 与临时探针都用 `printf` 到 stdout。排查「代码没生效」前先确认观测通道通。
+- **guest 侧观测优先于抓帧反推**：`JPX_TRACE=1` 的 `[wm]` dump 给出窗口集合、z、焦点、每窗 `cmds / dirty(原因) / built`。控件没进帧先看这里，比解 SSE JSON 快。
+- **面板上的坐标要按实际帧反查**：合成点击前用 `inspect_vm_frame.py` 列出控件文本的 `abs(x,y)`，不要按 XAML 声明顺序估算。窗口 body 会裁掉超出高度的控件——按钮、状态行「看不见」先查窗口高度和 `body` 矩形。
+- **合成点击必须先 move 再 down**：`drive_vm_desktop.py` 的 `down` 动作内部已先发一次 `mousemove`；手写 curl 时若只发 `mousedown`，`Clay_Hovered()` 为假，点击被吞。
+- **文本框输入链路有三个独立环节**：焦点（`Jpx__FocusKey` 命中）、编辑状态（`Jpx__TextEditKey` 写 buf）、视图同步（回放器把 buf 写回 model）。任何一环断了都表现为「输入没进帧」。逐环加 stdout 探针，不要连续猜。
+- **`Jpx_TextInput` 的 len 必须传 buf 的实际长度**：传缓存旧 len 会让 `ed.len != *len` 成立，触发 `Jpx__TextEditInit` 重建并抹掉刚输入的字符。症状是按键瞬间 buf 有值、下一帧又空。
+- **回放器不能无条件置脏**：`JpxXaml_Render` 结尾调 `Jpx_Invalidate` 会破坏空闲零帧；由 handler 在状态真变化时显式置脏。
+- **`test_jpx_xaml` 故意不链接 JPX**：纯逻辑测试只链接 parser + state；view 回放器调用 `Jpx_*`，要测它必须链接完整 JPX 依赖（用 `demo_xaml` 做端到端）。
+- **`--probe` 模式**：`test_jpx_xaml` 支持，只输出失败与汇总。
+
+## 退出条件
+
+五个测试套件（`test_jpx_xaml` / `test_frame` / `test_text_edit` / `test_sys` / `test_fs`）全通过、`demo_xaml` 端到端验证四类交互（输入/勾选/列表/按钮）、文档与索引更新后，停止本任务启动的 demo 进程。

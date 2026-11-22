@@ -4,6 +4,7 @@
 日常用法：
     python tools/start_vm_desktop.py             # demo_wm，原样
     python tools/start_vm_desktop.py demo_jpx    # JPX 应用外壳：开始菜单 / ProcMan / Files
+    python tools/start_vm_desktop.py demo_xaml   # jp_xaml 声明式表单
 
 脚本自行定位仓库根、共享资源和 exe，显式传入 webRoot 绝对路径，
 因此从任何目录调用都不依赖工作目录或 exe 的默认参数。
@@ -14,9 +15,9 @@
 需要终端继续干活就另开一个窗口，不要再靠关终端来结束 demo。
 
 可选环境变量（仅调试用，日常无需设置）：
-    VM_DESKTOP_PORT        监听端口，默认 demo_wm=9000 / demo_jpx=9050
+    VM_DESKTOP_PORT        监听端口，默认 demo_wm=9000 / demo_jpx=9050 / demo_xaml=9060
     VM_DESKTOP_NO_BROWSER  设为 1 时不自动打开浏览器
-    VM_DESKTOP_APP         默认启动的程序（demo_wm / demo_jpx），命令行参数优先
+    VM_DESKTOP_APP         默认启动的程序（demo_wm / demo_jpx / demo_xaml），命令行参数优先
 """
 
 import os
@@ -105,13 +106,13 @@ def main():
         arg = sys.argv[1]
     if arg is None:
         arg = os.environ.get("VM_DESKTOP_APP", "demo_wm")
-    if arg not in ("demo_wm", "demo_jpx"):
-        print(f"[start] 未知程序: {arg}（可用 demo_wm / demo_jpx）", file=sys.stderr)
+    if arg not in ("demo_wm", "demo_jpx", "demo_xaml"):
+        print(f"[start] 未知程序: {arg}（可用 demo_wm / demo_jpx / demo_xaml）", file=sys.stderr)
         return 1
     APP_NAME = arg
     EXE = VM_DIR / "build" / f"{arg}.exe"
-    # 两个 demo 默认端口分开，可以同时开着对比。
-    default_port = 9000 if arg == "demo_wm" else 9050
+    # demo 默认端口分开，可以同时开着对比。
+    default_port = {"demo_wm": 9000, "demo_jpx": 9050, "demo_xaml": 9060}[arg]
     port = int(os.environ.get("VM_DESKTOP_PORT", str(default_port)))
 
     try:

@@ -61,6 +61,40 @@ if(WIN32)
     target_link_libraries(demo_jpx PRIVATE ws2_32 psapi)
 endif()
 
+# jp_xaml 表单示例：应用源码只 include jpx.h 与 jpx_xaml.h。
+add_executable(demo_xaml
+    demo_xaml.c
+    jpx_xaml/jpx_xaml_parser.c
+    jpx_xaml/jpx_xaml_state.c
+    jpx_xaml/jpx_xaml_view.c
+    jpx/jpx_clay_impl.c
+    jpx/jpx_app.c
+    jpx/jpx_window.c
+    jpx/jpx_theme.c
+    jpx/jpx_widget.c
+    jpx/jpx_text_edit.c
+    clay_frame_adapter.c
+    vm_display.c
+    vm_serialize_json.c
+    vm_tiles.c
+    vm_wm.c
+    vm_server.c
+    vm_font.c
+    vm_theme.c
+    vm_shell.c
+    vm_clipboard.c
+    vm_sys_win32.c
+    vm_sys_stub.c
+    vm_fs_win32.c
+    vm_fs_stub.c
+)
+target_include_directories(demo_xaml PRIVATE "${CLAY_DIR}" "${MSTB_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml")
+if(WIN32)
+    target_link_libraries(demo_xaml PRIVATE ws2_32 psapi)
+endif()
+
 # 帧断言测试：不开服务、不开浏览器，直接断言度量/装饰/裁剪/脏标记/输入路由。
 add_executable(test_frame
     test_frame.c
@@ -93,6 +127,16 @@ if(WIN32)
 endif()
 target_include_directories(test_text_edit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
+# jp_xaml 断言：XAML 子集解析、绑定与 handler 表（不链接 Clay / WM / 网络）。
+add_executable(test_jpx_xaml
+    test_jpx_xaml.c
+    jpx_xaml/jpx_xaml_parser.c
+    jpx_xaml/jpx_xaml_state.c
+)
+target_include_directories(test_jpx_xaml PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/jpx")
+
 # 文件抽象层断言：路径 UTF-8 往返、元数据、错误分类。与 test_sys 同理，两个实现互斥。
 add_executable(test_fs
     test_fs.c
@@ -105,7 +149,7 @@ target_include_directories(test_fs PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 add_executable(vm_renderer renderer/main.c)
 target_link_libraries(vm_renderer PRIVATE canvas)
 
-set_target_properties(demo_wm demo_jpx vm_renderer test_frame test_text_edit test_sys test_fs PROPERTIES
+set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_sys test_fs PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"

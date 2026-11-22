@@ -10,6 +10,9 @@
 构建由 tools/build_vm.py 统一完成；本脚本只检查产物并按端口停掉旧实例，
 源码改动后先运行 python tools/build_vm.py。
 
+脚本在前台保持运行（exe 由 Popen 拉起），按 Ctrl+C 会同时停止它；
+需要终端继续干活就另开一个窗口，不要再靠关终端来结束 demo。
+
 可选环境变量（仅调试用，日常无需设置）：
     VM_DESKTOP_PORT        监听端口，默认 demo_wm=9000 / demo_jpx=9050
     VM_DESKTOP_NO_BROWSER  设为 1 时不自动打开浏览器
@@ -126,16 +129,28 @@ def main():
         return 1
     try:
         wait_ready(port)
+        url = f"http://127.0.0.1:{port}/"
+        print(f"[start] {APP_NAME}.exe 已启动 PID={proc.pid}")
+        print(f"[start] {url}")
+        print("[start] 保持运行，按 Ctrl+C 停止")
+        if os.environ.get("VM_DESKTOP_NO_BROWSER") != "1":
+            webbrowser.open(url)
+        proc.wait()
+    except KeyboardInterrupt:
+        print(f"\n[start] Ctrl+C，停止 {APP_NAME}.exe")
     except Exception as exc:
         print(f"[start] 失败: {exc}", file=sys.stderr)
-        proc.terminate()
         return 1
-
-    url = f"http://127.0.0.1:{port}/"
-    print(f"[start] {APP_NAME}.exe 已启动 PID={proc.pid}")
-    print(f"[start] {url}")
-    if os.environ.get("VM_DESKTOP_NO_BROWSER") != "1":
-        webbrowser.open(url)
+    finally:
+        # Ctrl+C 之外，脚本被终止或 wait 抛错时也要收掉子进程，
+        # 否则 demo 会变成没人管的后台进程。
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
     return 0
 
 

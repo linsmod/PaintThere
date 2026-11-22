@@ -63,10 +63,11 @@ python tools/start_vm_renderer.py
 emcc -O2 -s EXPORTED_FUNCTIONS='["_loadFont","_measureText","_rasterizeText","_alloc","_freeMem"]' -s EXPORTED_RUNTIME_METHODS='["HEAPU8","HEAPU32"]' -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_ES6=1 -s EXPORT_NAME=StbFontWasm -s ENVIRONMENT=web,node -I"H:\github_repos\mystbfont_c" stb_font_wasm.c -o stb_font_wasm.mjs
 Copy-Item stb_font_wasm.mjs,stb_font_wasm.wasm ..\assets\
 
-# 一键启动（推荐）：零参数，先 python tools/build_vm.py，再运行本脚本停旧进程并开浏览器
-python tools/start_vm_desktop.py
+# 一键启动（推荐）：先 python tools/build_vm.py，再运行本脚本停旧进程并开浏览器
+python tools/start_vm_desktop.py              # demo_wm
+python tools/start_vm_desktop.py demo_jpx     # JPX 应用外壳：开始菜单 / ProcMan / Files
 # 调试：环境变量改端口 / 不开浏览器
-# $env:VM_DESKTOP_PORT="9001"; $env:VM_DESKTOP_NO_BROWSER="1"; python tools/start_vm_desktop.py
+# $env:VM_DESKTOP_PORT="9001"; $env:VM_DESKTOP_NO_BROWSER="1"; python tools/start_vm_desktop.py demo_jpx
 
 # 或手动启动（webRoot 默认 ../assets）
 $p = Start-Process -FilePath ".\demo_wm.exe" -ArgumentList "9000" -PassThru -RedirectStandardOutput wm.log -RedirectStandardError wm.err

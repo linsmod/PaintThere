@@ -35,6 +35,7 @@
 - **瓦片贴屏要 1:1**：`present()` 用 `setTransform(1,0,0,1,0,0)` 后按整数坐标 `drawImage`，任何缩放都会重新引入插值。清空瓦片也要在单位变换下做，否则只清到逻辑尺寸那么大。
 - **瓦片定位必须按实际宽度累加，不能 `round(k × tileW × scale)`**：renderScale 带小数时（窗口尺寸不是 800 整数倍 → cssZoom 小数），逐块 round 的瓦片宽度与累计 round 的位置每块最多差 1px，瓦片间留下透明缝，透出页面底色——表现为「任务栏条目/桌面上有随窗口尺寸移动的竖线」。修法：`px += tileCanvases[i-1].width` 累加定位，相邻瓦片像素级贴合。透明缝只在与瓦片边界相交的元素上可见，玻璃/浅色主题下最明显。
 - 诊断：页面里 `__vmRenderer.scale()` 返回 `{cssZoom, renderScale, dpr}`，用来确认当前实际渲染倍率。
+- **断线覆盖层**：SSE 断开持续超过 1.5s（`vm_renderer.js` 的 `DISCONNECT_DELAY_MS`）才在 tile 层之上画遮罩 + 「连接已断开」（文字走 wasm 光栅化），期间收到任何服务端事件即撤销。防抖是为了短暂抖动不闪屏。页面诊断位：`__vmRenderer.disconnected`。验证方法：`start_vm_desktop.py` 起服务端 → agent-browser 截图基线 → 杀掉 demo_wm 进程 → 2.5s 后截图应出现覆盖层且最后一帧冻结 → 重启进程后覆盖层应随 fullframe 自动消失。
 
 ### VM 桌面（guest 侧）
 

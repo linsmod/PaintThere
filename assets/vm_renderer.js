@@ -4,7 +4,7 @@ import {
   initCanvas, commandHandlers, setLayerCanvas, replayBackgroundPrograms,
   setDrawTarget, setTextNeedsReplay, setTextScale, setResPackApplied
 } from './app.js';
-import { loadFont } from './font_wasm.js';
+import { loadFont, rasterizeText, drawRasterScaled } from './font_wasm.js';
 
 const PORT = globalThis.VM_RENDERER_PORT || 9000;
 const WIDTH = 800;
@@ -16,7 +16,7 @@ const BASE = (typeof location !== 'undefined' && location.protocol !== 'file:')
 const EVENTS_URL = `${BASE}/events`;
 const INPUT_URL = `${BASE}/input`;
 
-window.__vmRenderer = { ready: false, frames: 0, resources: 0, tiles: 0, loading: false, error: '' };
+window.__vmRenderer = { ready: false, frames: 0, resources: 0, tiles: 0, loading: false, disconnected: false, error: '' };
 
 // 字体位图与图片解码是异步的：就绪后由本地重放受影响的 tile，不惊动服务端。
 // boot() 建立 tile 状态后接入真正的重放函数；此前的就绪通知由首次重放兜底。
@@ -115,7 +115,10 @@ async function boot() {
   const present = () => {
     cvCtx.setTransform(1, 0, 0, 1, 0, 0);
     cvCtx.clearRect(0, 0, cv.width, cv.height);
-    if (!grid) return;
+    if (!grid) {
+      if (showDisconnectOverlay) drawDisconnectOverlay();
+      return;
+    }
     /* 瓦片定位必须用「前一块的实际物理宽度累加」：renderScale 带小数时
        （窗口尺寸不是 800 的整数倍 → cssZoom 小数），round(k * tileW * scale)
        与逐块 round 出来的瓦片宽度会差出 1px，瓦片之间留下未覆盖的透明缝，
@@ -136,6 +139,7 @@ async function boot() {
       cvCtx.drawImage(tile, px, py);
     }
     window.__vmRenderer.tiles = tileCanvases.length;
+    if (showDisconnectOverlay) drawDisconnectOverlay();
   };
 
   const drawTile = (index, cmds) => {
@@ -229,6 +233,45 @@ async function boot() {
     }
   };
 
+  /* 断线覆盖层：SSE 短暂抖动不闪屏，断开持续超过阈值才显示。
+     覆盖层画在 tile 合成层之上，bg/tiles 保持最后一帧冻结；
+     恢复后服务端先发 fullframe，覆盖层随下一次 present() 自动消失。 */
+  const DISCONNECT_DELAY_MS = 1500;
+  let disconnectTimer = 0;
+  let showDisconnectOverlay = false;
+  let disconnectTextPending = false;
+
+  const drawDisconnectOverlay = () => {
+    cvCtx.setTransform(1, 0, 0, 1, 0, 0);
+    cvCtx.fillStyle = 'rgba(24,26,32,0.78)';
+    cvCtx.fillRect(0, 0, cv.width, cv.height);
+    /* 文字异步光栅化：就绪后若覆盖层仍在，按物理像素 1:1 画在正中。 */
+    if (disconnectTextPending) return;
+    disconnectTextPending = true;
+    const px = Math.max(1, Math.round(15 * renderScale));
+    rasterizeText(0, px, '连接已断开').then((r) => {
+      disconnectTextPending = false;
+      if (!showDisconnectOverlay) return;
+      drawRasterScaled(cvCtx, r, Math.round((cv.width - r.w) / 2),
+                       Math.round((cv.height - r.h) / 2), r.w, r.h, '#E8E8E8');
+    }).catch((err) => {
+      disconnectTextPending = false;
+      console.error('disconnect text rasterize failed:', err);
+    });
+  };
+
+  const markConnected = () => {
+    if (disconnectTimer) {
+      clearTimeout(disconnectTimer);
+      disconnectTimer = 0;
+    }
+    if (showDisconnectOverlay) {
+      showDisconnectOverlay = false;
+      window.__vmRenderer.disconnected = false;
+      present();
+    }
+  };
+
   layoutStage();
   window.addEventListener('resize', layoutStage);
   scheduleReplay();
@@ -281,6 +324,7 @@ async function boot() {
       window.__vmRenderer.resources += list.length;
     }
     source.addEventListener('resources', (e) => {
+      markConnected();
       try { applyResources(e); }
       catch (err) { window.__vmRenderer.error = 'resource: ' + err; }
     });
@@ -291,6 +335,7 @@ async function boot() {
       catch (err) { window.__vmRenderer.error = 'resources-update: ' + err; }
     });
     source.addEventListener('fullframe', (e) => {
+      markConnected();
       try {
         const f = JSON.parse(e.data);
         if (typeof f.frameId === 'number') lastFrameId = f.frameId;
@@ -309,6 +354,7 @@ async function boot() {
       } catch (err) { /* 控制事件解析失败时交给 EventSource 自身重连 */ }
     });
     source.onmessage = (e) => {
+      markConnected();
       try {
         const f = JSON.parse(e.data);
         if (typeof f.frameId === 'number') lastFrameId = f.frameId;
@@ -319,7 +365,15 @@ async function boot() {
       } catch (err) { window.__vmRenderer.error = 'frame: ' + err; }
     };
     source.onerror = () => {
-      if (!rejected) window.__vmRenderer.error = 'SSE disconnected';
+      if (rejected) return;
+      window.__vmRenderer.error = 'SSE disconnected';
+      if (disconnectTimer || showDisconnectOverlay) return;
+      disconnectTimer = setTimeout(() => {
+        disconnectTimer = 0;
+        showDisconnectOverlay = true;
+        window.__vmRenderer.disconnected = true;
+        present();
+      }, DISCONNECT_DELAY_MS);
     };
   };
   connectEvents();

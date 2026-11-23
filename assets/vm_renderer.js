@@ -116,13 +116,24 @@ async function boot() {
     cvCtx.setTransform(1, 0, 0, 1, 0, 0);
     cvCtx.clearRect(0, 0, cv.width, cv.height);
     if (!grid) return;
+    /* 瓦片定位必须用「前一块的实际物理宽度累加」：renderScale 带小数时
+       （窗口尺寸不是 800 的整数倍 → cssZoom 小数），round(k * tileW * scale)
+       与逐块 round 出来的瓦片宽度会差出 1px，瓦片之间留下未覆盖的透明缝，
+       透出页面底色，表现为任务栏/桌面上随窗口尺寸移动的竖线。
+       累加定位保证相邻瓦片像素级贴合：无缝隙、无重叠。 */
+    let px = 0;
+    let py = 0;
     for (let i = 0; i < tileCanvases.length; i++) {
       const tile = tileCanvases[i];
-      const col = i % grid.cols;
-      const row = Math.floor(i / grid.cols);
-      cvCtx.drawImage(tile, Math.round(col * grid.tileW * renderScale),
-                            Math.round(row * grid.tileH * renderScale),
-                            tile.width, tile.height);
+      if (i > 0) {
+        if (i % grid.cols === 0) {
+          px = 0;
+          py += tileCanvases[i - grid.cols].height;
+        } else {
+          px += tileCanvases[i - 1].width;
+        }
+      }
+      cvCtx.drawImage(tile, px, py);
     }
     window.__vmRenderer.tiles = tileCanvases.length;
   };

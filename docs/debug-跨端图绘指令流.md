@@ -33,6 +33,7 @@
 - **文字要按物理像素光栅**：字形是 wasm 预光栅位图，用逻辑字号光栅再被 canvas 放大就会糊。`drawText` 现在按 `fontSize × renderScale` 光栅，绘制时再缩回逻辑尺寸（`drawRasterScaled`）。
 - **协议坐标永远是 800×600 逻辑坐标**：输入换算必须用 `WIDTH/HEIGHT`，不能用 `cv.width`。改完物理尺寸后忘了这一步，表现为"点击位置按 renderScale 偏移"，而且越靠右下偏得越远。
 - **瓦片贴屏要 1:1**：`present()` 用 `setTransform(1,0,0,1,0,0)` 后按整数坐标 `drawImage`，任何缩放都会重新引入插值。清空瓦片也要在单位变换下做，否则只清到逻辑尺寸那么大。
+- **瓦片定位必须按实际宽度累加，不能 `round(k × tileW × scale)`**：renderScale 带小数时（窗口尺寸不是 800 整数倍 → cssZoom 小数），逐块 round 的瓦片宽度与累计 round 的位置每块最多差 1px，瓦片间留下透明缝，透出页面底色——表现为「任务栏条目/桌面上有随窗口尺寸移动的竖线」。修法：`px += tileCanvases[i-1].width` 累加定位，相邻瓦片像素级贴合。透明缝只在与瓦片边界相交的元素上可见，玻璃/浅色主题下最明显。
 - 诊断：页面里 `__vmRenderer.scale()` 返回 `{cssZoom, renderScale, dpr}`，用来确认当前实际渲染倍率。
 
 ### VM 桌面（guest 侧）

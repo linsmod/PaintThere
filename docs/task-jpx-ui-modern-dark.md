@@ -92,7 +92,7 @@
 ## 4. 验证命令
 
 ```powershell
-cd h:\github_repos\跨端图绘指令流
+
 python tools/build_vm.py
 .\vm-desktop\build\test_frame.exe --probe
 .\vm-desktop\build\test_text_edit.exe --probe

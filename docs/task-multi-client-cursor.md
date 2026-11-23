@@ -1,5 +1,7 @@
 # 任务：多客户端彩色指针与资源命令
 
+> 历史说明：本文验证的是已移除的 .NET/WinForms WebSocket 多客户端指针通道，相关 `ConsoleApp2` / `TestHarness` 描述均已过期。当前多客户端指针由 `vm-desktop/vm_wm.c` 在 guest 内合成，见 `docs/arch-vmdesk.md`。
+
 ## 目标
 
 1. 前端新增资源命令 `loadImg` / `drawImg`：图片加载完成后，带 `imgId` 的 `drawImg` 才能绘制；未加载完时静默跳过，不影响既有控件指令流。
@@ -51,7 +53,7 @@
 - [x] 增加发送锁，避免 welcome 与光标快照在同一 socket 并发发送
 - [x] `dotnet build` 两个项目通过
 - [x] 浏览器验证：双客户端互见、既有点击回传
-- [x] 更新 `docs/INDEX.md`、`docs/arch-跨端图绘指令流.md`，结案
+- [x] 更新 `docs/INDEX.md`、`docs/arch-vmdesk.md`，结案
 
 ## 验证结果（2026-11-21）
 
@@ -68,7 +70,7 @@
 - 构建：`dotnet build ConsoleApp2/RemoteForm.csproj`、`dotnet build TestHarness/TestHarness.csproj`。
 - 运行 `TestHarness.exe`，浏览器打开 `http://localhost:8080/index.html`。
 - 用 `agent-browser` 打开两个页面，分别派发 `mousemove`（`clientX/clientY` 为设计坐标 / 1.5），检查两个页面的 `cursorCanvas` 是否都出现两种颜色的箭头。
-- 检查控制台无 `drawImg` 未加载异常；控件点击回传仍正常（沿用 `docs/debug-跨端图绘指令流.md` 的点击验证法）。
+- 检查控制台无 `drawImg` 未加载异常；控件点击回传仍正常（沿用 `docs/debug-vmdesk.md` 的点击验证法）。
 - 验证时间预估：构建 2 次约 20 秒，浏览器验证约 3 分钟。
 
 ## 恢复点

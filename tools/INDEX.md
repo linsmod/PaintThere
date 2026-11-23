@@ -11,7 +11,7 @@
 - `export_theme_css.py` — 主题导出器（反编译）：`python tools/export_theme_css.py --all` 把预编译三件套原地导出为 CSS 子集（每个主题目录内的 `theme.css`，与 bins/图片一起入库；`--out` 指临时目录），`--check` 跑「导出→`--compile-css` 编译回→三件套逐字节比对」（当前 19/19 一致）；`--all` 同时维护 `themes/index.json`。协议级独立实现（Python struct 直读，不链 C 代码），与 xaml 工具链只共享冻结的二进制协议。CSS 子集语法见 `docs/task-jp-xaml-theme.md` S10 节。
 - **主题预览站点（traycmd 托管）**：short id `38097e6f`，`http://127.0.0.1:41010/`（workdir=assets，qcmd serve 41010，随托盘自启）。入口 `/`（主题列表，数据源 themes/index.json），交互预览 `/preview.html?theme-dir=<slug>`。停止：托盘"网站"分区或 `qcmd kill 38097e6f`。
 - `inspect_vm_frame.py` — 回放 `drive_vm_desktop.py` 抓到的 SSE 流，按前端语义维护 48 块瓦片当前内容，把 tile 局部坐标还原成画布绝对坐标并列出文本：`python tools/inspect_vm_frame.py temp/s1.txt --hist`。`--text K` 过滤文本、`--hist` 看每次增量帧改了哪些块、`--tiles` 看每块命令条数。
-- `assets/` — 共享前端资源（`app.js`、`systemColors.js`、`font_wasm.js`、`stb_font_wasm.mjs/.wasm`、`font.ttf`），供 demo_wm/demo_server 与 ConsoleApp2/TestHarness 共用，消除多份副本。当前 `font.ttf` 为宋体子集（`extract_system_font.py simsun --subset` 产物，2.5MB，XP 中文 UI 真实用字；原 simhei 9.7MB 可从 git 历史恢复）。`vm_server.c` 静态资源上限 16MB。中文 UI 依赖此字体，勿随意替换成纯拉丁字体；注意 stb 只渲染 SimSun 轮廓，不用其内嵌点阵。
+- `assets/` — 共享前端资源（`app.js`、`systemColors.js`、`font_wasm.js`、`stb_font_wasm.mjs/.wasm`、`font.ttf`），供 demo_wm/demo_server 与浏览器/C 渲染器共用，消除多份副本。当前 `font.ttf` 为宋体子集（`extract_system_font.py simsun --subset` 产物，2.5MB，XP 中文 UI 真实用字；原 simhei 9.7MB 可从 git 历史恢复）。`vm_server.c` 静态资源上限 16MB。中文 UI 依赖此字体，勿随意替换成纯拉丁字体；注意 stb 只渲染 SimSun 轮廓，不用其内嵌点阵。
 - `vm-desktop/clay_frame_adapter.c/.h` — Clay `RenderCommandArray` 到 VM 绘制帧 JSON 的 adapter。
 - `vm-desktop/demo_layout.c/.h` — 共享单窗口 Clay 布局，供 demo_frame/demo_server 复用。
 - `vm-desktop/demo_frame.c` — 输出单帧 JSON。构建：`gcc -std=c11 -I<clay-dir> -I. demo_frame.c demo_layout.c clay_frame_adapter.c -o demo_frame.exe`。
@@ -44,4 +44,4 @@
 - `vm-desktop/vm_server.c/.h` — C 跨平台 HTTP 服务：`GET /events` SSE 推帧、`POST /input` 收原始输入、白名单静态资源。
 - `vm-desktop/demo_server.c` — SSE 服务 demo。构建：`gcc -std=c11 -I<clay-dir> -I. demo_server.c demo_layout.c clay_frame_adapter.c vm_server.c -lws2_32 -o demo_server.exe`；运行：`./demo_server 9000`（webRoot 默认 `../assets`）。本机 clay 目录 `H:\github_repos\clay`；验证截图 `vm-desktop/demo_render.png`。
 
-构建与验证使用标准命令：`dotnet build ConsoleApp2/RemoteForm.csproj`、`dotnet build TestHarness/TestHarness.csproj`，浏览器验证使用 `agent-browser`。详见 `docs/debug-跨端图绘指令流.md`。
+构建与验证使用标准命令：`python tools/build_vm.py`、`python tools/start_vm_desktop.py`，浏览器验证使用 `agent-browser`。详见 `docs/debug-vmdesk.md`。

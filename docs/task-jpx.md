@@ -365,7 +365,7 @@ CMake 新增目标 `demo_jpx`、`test_frame`；`demo_wm` 保留为最小样例�
 ## 8. 构建与验证命令（当前 Windows host）
 
 ```powershell
-cd h:\github_repos\跨端图绘指令流
+
 python tools/build_vm.py
 # 产物：vm-desktop/build/demo_wm.exe、demo_jpx.exe、test_frame.exe、vm_renderer.exe
 

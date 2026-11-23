@@ -97,7 +97,7 @@ demo 的 XAML 内嵌为字符串；state 结构体含 3 个输入文本、2 个�
 ## 5. 构建与验证命令（Windows host）
 
 ```powershell
-cd h:\github_repos\跨端图绘指令流
+
 python tools/build_vm.py
 .\vm-desktop\build\test_jpx_xaml.exe --probe
 .\vm-desktop\build\test_frame.exe --probe
@@ -137,7 +137,7 @@ python tools/start_vm_desktop.py demo_xaml
 - `test_handler_table` 用了越界节点下标（Window 的直接子节点是 index 1，不是 2）。
 - `jpx_xaml_view.c` 重写后漏了 `<stdio.h>`，`snprintf` 隐式声明导致 `demo_xaml` 链接失败；补上头文件。
 - `JpxXaml_Render` 结尾曾无条件 `Jpx_Invalidate`，会破坏空闲零帧；移除，改由 handler 在状态变化时显式置脏。
-- **文本框输入被自身抹掉**：回放时给 `Jpx_TextInput` 传的是缓存的 `slot->len`（旧值），按键写入后下一帧 `ed.len != *len` 触发 `Jpx__TextEditInit` 重建，把刚输入的字符清空。改为传 `strlen(slot->buf)` 的实际长度。定位过程用 stdout 探针（见 `docs/debug-跨端图绘指令流.md` 第 28/40 条：诊断打印走 stdout、guest 侧观测优先于抓帧反推）。
+- **文本框输入被自身抹掉**：回放时给 `Jpx_TextInput` 传的是缓存的 `slot->len`（旧值），按键写入后下一帧 `ed.len != *len` 触发 `Jpx__TextEditInit` 重建，把刚输入的字符清空。改为传 `strlen(slot->buf)` 的实际长度。定位过程用 stdout 探针（见 `docs/debug-vmdesk.md` 第 28/40 条：诊断打印走 stdout、guest 侧观测优先于抓帧反推）。
 - demo 窗口高度 430 把按钮行与状态文本裁出 body（tile 里根本看不到）；改为 560 并上移窗口。
 
 验证证据：

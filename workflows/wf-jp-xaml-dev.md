@@ -26,7 +26,7 @@
 ## 常用命令
 
 ```powershell
-cd h:\github_repos\跨端图绘指令流
+
 python tools/build_vm.py
 .\vm-desktop\build\test_jpx_xaml.exe --probe
 

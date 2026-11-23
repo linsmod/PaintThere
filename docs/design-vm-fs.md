@@ -17,7 +17,7 @@
 
 这是本次设计中**最容易写错**的地方。
 
-Windows 的 `FindFirstFileA` / `GetFileAttributesA` 按系统 ANSI 码页转码。本项目仓库路径本身就含中文（`跨端图绘指令流`），用 A 系列 API 时：
+Windows 的 `FindFirstFileA` / `GetFileAttributesA` 按系统 ANSI 码页转码。本项目仓库路径之前含中文，用 A 系列 API 时：
 
 - 输入含中文的路径 → 打不开目录，表现为「列出来是空的」
 - 输出中文文件名 → 变成码页字节，UTF-8 解码后是乱码
@@ -27,7 +27,7 @@ Windows 的 `FindFirstFileA` / `GetFileAttributesA` 按系统 ANSI 码页转码�
 验证方式是 `test_fs` 里两条断言：
 
 - 以 `VmFs_Cwd()` 的结果（含中文的绝对路径）直接 `VmFs_Stat` / `VmFs_ListDir`
-- 在 `docs` 目录中精确匹配 `arch-跨端图绘指令流.md`
+- 在 `docs` 目录中精确匹配 `arch-vmdesk.md`
 
 前者验证 UTF-8 → UTF-16，后者验证 UTF-16 → UTF-8。
 

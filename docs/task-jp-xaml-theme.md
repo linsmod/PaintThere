@@ -107,7 +107,7 @@ workflows/wf-jp-xaml-dev.md  更新
 ## 5. 构建与验证命令
 
 ```powershell
-cd h:\github_repos\跨端图绘指令流
+
 python tools/build_vm.py
 .\vm-desktop\build\test_frame.exe --probe
 .\vm-desktop\build\test_jpx_xaml.exe --probe
@@ -124,7 +124,7 @@ python tools/start_vm_desktop.py demo_xaml
 - RetroBar 参考：`H:\gitee_repos\RetroBar\RetroBar\Themes\Windows XP Blue.xaml`、`RetroBar\Utilities\DictionaryManager.cs`。
 - 现有资源链：`vm-desktop/vm_theme.c`（`VmTheme_AppendResources`）、`vm_serialize_json.c`（`emit_resource`）、`assets/app.js`（`definePattern`/`drawRect`）。
 - jp_xaml：`vm-desktop/jpx_xaml/`（parser/state/view）。
-- 调试经验：`docs/debug-跨端图绘指令流.md`（stdout 探针、guest dump 优先）。
+- 调试经验：`docs/debug-vmdesk.md`（stdout 探针、guest dump 优先）。
 
 ## 7. 进度
 

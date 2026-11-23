@@ -2,11 +2,11 @@
 
 ## 适用场景
 
-在 guest 侧用 Clay 做布局、跨端只传绘制原语与原始输入、浏览器渲染的桌面/WM 场景中，做构建、启动、验证与排错。适用于修改 `vm-desktop/*.c`、`ConsoleApp2/app.js` / `main.js`、协议设计文档后。
+在 guest 侧用 Clay 做布局、跨端只传绘制原语与原始输入、浏览器渲染的桌面/WM 场景中，做构建、启动、验证与排错。适用于修改 `vm-desktop/*.c`、`assets/app.js` / `assets/vm_renderer.js`、协议设计文档后。
 
 ## 前置条件与环境
 
-- 工作区：`H:\github_repos\跨端图绘指令流`；设计冻结于 `docs/design-vm-draw-protocol.md`，进度见 `docs/task-vm-instruction-desktop.md`。
+- 设计冻结于 `docs/design-vm-draw-protocol.md`，进度见 `docs/task-vm-instruction-desktop.md`。
 - Clay 源码（工作区外只读）：`H:\github_repos\clay`。`clay.h` 单头文件，`CLAY_IMPLEMENTATION` 只能在一个编译单元定义。
 - mystbfont_c（工作区外只读）：`H:\github_repos\mystbfont_c`。字体度量/光栅化基于其 `stb_truetype.h`。
 - Emscripten：`H:\github_repos\emsdk`（emcc 7.0.0，装在 H 盘因 C 盘空间不足）。**每个新 shell 需先设置环境变量**：
@@ -34,15 +34,15 @@
 | `vm-desktop/vm_clipboard.c/.h` | guest 内单例剪贴板（4KB UTF-8），协议不传 |
 | `vm-desktop/test_frame.c` | 帧断言测试：不开服务、不开浏览器，直接断言 `VmDisplayList` |
 | `vm-desktop/demo_wm.c` | 双窗口 demo，含 hover/click、多客户端指针、本地背景、自适应帧率 |
-| `ConsoleApp2/app.js` | 前端原语执行：图片/字体/样式/图样/绘制程序/图层 |
-| `ConsoleApp2/font_wasm.js` + `stb_font_wasm.mjs/.wasm` | 浏览器端 wasm 字体封装 |
-| `ConsoleApp2/main.js` | WebSocket 通道的 frame envelope 与指针层（另一条通道，保留） |
+| `assets/app.js` | 前端原语执行：图片/字体/样式/图样/绘制程序/图层 |
+| `assets/font_wasm.js` + `stb_font_wasm.mjs/.wasm` | 浏览器端 wasm 字体封装 |
+| `assets/vm_renderer.js` | SSE tile 帧、资源批次与输入回传的唯一渲染入口 |
 
 ## 常用命令
 
 ```powershell
 # 一次构建两个 C 项目：demo_wm.exe + vm_renderer.exe（统一 CMake 工程）
-cd h:\github_repos\跨端图绘指令流
+
 python tools/build_vm.py
 # 产物：vm-desktop/build/demo_wm.exe 与 vm-desktop/build/vm_renderer.exe
 # 等效手动命令：
@@ -98,7 +98,7 @@ agent-browser --session vm close
 
 ## 验证清单（按阶段）
 
-1. **构建**：`python tools/build_vm.py` 一次通过并生成 `demo_wm.exe` + `vm_renderer.exe`；两个 `dotnet build` 通过；gcc 编译 `demo_frame` 通过；emcc 编译 wasm 通过。
+1. **构建**：`python tools/build_vm.py` 一次通过并生成 `demo_wm.exe` + `vm_renderer.exe`；gcc 编译 `demo_frame` 通过；emcc 编译 wasm 通过。
 2. **字体一致性**：`font_probe.exe <ttf> <size> <text>` 与 `node test_wasm_font.mjs <ttf> <size> <text>` 的宽度一致（本机验证过 91/70/247）。
 3. **协议**：`curl -N /events` 收到 `event: resources` + `event: fullframe`；fullframe 为 `{"type":"tiles",...}`，ops 依次含 `showLoading` / `config` / 48 个 `setTile` / `hideLoading`；帧中无 `wm_bg`，窗口背景为 `"s_window"`。
    - 增量验证：挂一个 SSE 连接后 `POST /input`，增量帧的 `setTile` 数量应远小于 48（指针移动通常 1–2 块），且始终带 loading 批次边界。
@@ -121,7 +121,7 @@ agent-browser --session vm close
 - 测试页 mousemove 必须换算 CSS 坐标到 canvas 内部坐标；document 上 canvas 外的位置会产生负/超界坐标。
 - 指针 3 秒超时；像素检查前必须持续 POST，否则检查为 0。
 - C HTTP 服务用 `Connection: close`，Node `fetch` 连接复用会触发 undici 断言，验证静态资源用 `curl`。
-- 用户启动的 `RemoteForm.exe` 可能占用 8080/8081；本任务用 9000 避开，不要终止非本任务进程。
+- 本任务使用 9000 系列端口；遇到端口占用先确认归属，不要终止非本任务进程。
 - **`start_vm_desktop.py` 是前台常驻的，按 Ctrl+C 会停掉它拉起的 demo**。因此不要用管道调用（`| Select-Object` 之类）——管道一直等 EOF，表现为命令挂住（服务其实已起来）。要留日志用重定向：`cmd /c "python tools/start_vm_desktop.py demo_jpx > temp\start.log 2>&1"`；终端还要干活就另开一个窗口。
 - `demo_wm.exe` 正在运行时 `build_vm.py` 会在链接阶段失败（`cannot open output file demo_wm.exe: Permission denied`），源码其实已全部编译通过。先 `Get-Process demo_wm` + `netstat -ano | findstr ":9000"` 确认归属，再决定是否停。不想停用户实例时，用 `gcc ... -o ..\temp\<dir>\demo_wm_new.exe` 手工链到临时路径、换端口验证，等价于完整构建。
 - PowerShell 里给 `curl.exe -d` 传 JSON **用单引号原样传，不要加 `\"` 转义**。转义后 guest 收到的是 `{\"kind\":...}`，`find_key` 匹配不到 `"kind"`，所有输入都变成 `changed=0` 的假阴性，容易误判成「事件没到 guest」。
@@ -142,7 +142,7 @@ agent-browser --session vm close
 - **列表会轻易撞爆单窗口 64 条命令配额**。20 行 × 2 列 = 60+ 条，超配额时 `VmCmdBuffer` 静默截断，帧里出现「行交错、clip 消失」这类看不懂的现象。正解是**只生成视口内的行**（视口外渲染成空占位容器保持流式高度），命令数立刻降到 20 条以内，而不是去调大配额。
 - **平台能力抽象先划「系统事实 vs 业务语义」的边界，再定字段**。进程表最容易犯的错是把 `appHandle`、窗口数塞进系统层结构，抽象层立刻被迫知道「应用」这个概念，然后每个平台实现都要跟着改。正确做法是两层结构字段几乎不重叠：`VmSysProc`（pid/ppid/线程/内存/CPU/内核状态）与 `VmIpcProcRow`（appHandle/窗口数/桌面状态），由 WMS 组装。判据：如果某个字段只有一个平台能填，或者只有某个调用方能填，它就不属于抽象层。
 - **枚举容量要按真实环境定，不要凭感觉写 256**。实测一台普通 Windows 开发机有 332 个进程，`VM_SYS_MAX_PROCS` 写成 256 时，`test_sys` 连测试进程自己都查不到（截断在中途），表现为「自己不在进程列表里」这种很怪的失败。
-- **Windows 文件系统 API 一律走 W 系列，`A` 系列会把中文路径直接弄坏**。`FindFirstFileA`/`GetFileAttributesA` 按 ANSI 码页转码；本项目仓库路径含中文，用 A 版时输入路径打不开（目录列出来是空的），输出文件名变乱码。`vm_fs` 统一 `MultiByteToWideChar(CP_UTF8)` → `FindFirstFileW` → `WideCharToMultiByte(CP_UTF8)`。验证手法：以 `VmFs_Cwd()` 的中文绝对路径直接 Stat/ListDir（验输入方向），并在 `docs` 目录精确匹配 `arch-跨端图绘指令流.md`（验输出方向）。
+- **Windows 文件系统 API 一律走 W 系列，`A` 系列会把中文路径直接弄坏**。`FindFirstFileA`/`GetFileAttributesA` 按 ANSI 码页转码；本项目仓库路径含中文，用 A 版时输入路径打不开（目录列出来是空的），输出文件名变乱码。`vm_fs` 统一 `MultiByteToWideChar(CP_UTF8)` → `FindFirstFileW` → `WideCharToMultiByte(CP_UTF8)`。验证手法：以 `VmFs_Cwd()` 的中文绝对路径直接 Stat/ListDir（验输入方向），并在 `docs` 目录精确匹配 `arch-vmdesk.md`（验输出方向）。
 - **构建环境里汇编器可能损坏，症状是 gcc 静默失败且没有任何错误输出**。本机 `mingw64/x86_64-w64-mingw32/bin/as.exe` 报 `0xC0000139`（DLL 入口点找不到），gcc 默认按相对路径挑中它，编译返回 1 却只在 `-v` 下暴露；`mingw64/bin/as.exe` 是好的。`build_vm.py` 给 CMake 加 `-DCMAKE_C_FLAGS=-BC:/msys64/mingw64/bin/` 强制从可用目录找 as。诊断顺序：`gcc -fsyntax-only`（过了说明源码没问题）→ 单独跑 `as.exe --version` 看退出码，别一直查源码。
 - **失效标记的细化要覆盖所有入口，漏一条就退回全量**。S2 只改 `Jpx__Invalidate` 时，键盘路径在 layout 之外调用它（`layoutWinId == 0`）→ 仍走全量分支，实测每次按键 `layoutCount` `+3`（三窗口全量）。补上 `window_key_cb` 的单窗口失效和 WM 键盘分支的「脏焦点窗口」之后才是 `+1`。验证手段：在帧 provider 里打印 `layoutCount` 的累计值，看两次出帧之间的**增量**——只打印总量会被基线掩盖。
 - **加了内容缓存后，每个改窗口状态的入口都要置失效标记**。`VmWm_SetWindowFlags(UNDECORATED)` 改了 flags 却没作废内容，帧里仍留着标题与边框，`test_frame` 的 5 项无装饰断言直接失败（`body y` 差 28 px = 标题高）。判据：凡是让「生成命令的输入」变化的 setter（flags/title/chrome/clip/位置/焦点/minimize），都必须同时标脏，否则旧内容会一直复用。焦点这类「旧值也有影响」的，要把旧窗口一起标。
@@ -155,4 +155,4 @@ agent-browser --session vm close
 
 ## 退出条件
 
-全部验证清单通过、console 无错误、截图留证后，关闭浏览器会话并停止本任务启动的 demo 进程；清理 `ConsoleApp2/font.ttf` 与测试二进制。遗留增强方向登记在 `docs/task-vm-instruction-desktop.md` 末尾。
+全部验证清单通过、console 无错误、截图留证后，关闭浏览器会话并停止本任务启动的 demo 进程；清理本任务生成的临时截图与测试二进制。遗留增强方向登记在 `docs/task-vm-instruction-desktop.md` 末尾。

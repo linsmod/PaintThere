@@ -1,6 +1,8 @@
 # 任务：VM 指令化桌面与窗口管理器（方案定义）
 
-> 本文是设计决策与实施计划，不是现状。目标架构落地后另写 `arch-vm-instruction-desktop.md` 描述现状。
+> 本文是设计决策与实施计划，不是现状。当前实现见 `docs/arch-vmdesk.md`。
+>
+> 历史说明：文中阶段 0~1 的 `dotnet build` / `ConsoleApp2` / `TestHarness` 描述属于已移除的 .NET 通道，仅作执行记录；相关描述均已过期。
 
 ## 目标与边界
 
@@ -145,7 +147,7 @@ created → mapped（可见）→ focused / unfocused
 
 ## 恢复点
 
-- 设计起点：本文 + `docs/arch-跨端图绘指令流.md`（现有指令流架构）+ `docs/task-multi-client-cursor.md`（多客户端指针）。
+- 设计起点：本文 + `docs/arch-vmdesk.md`（现有指令流架构）+ `docs/task-multi-client-cursor.md`（多客户端指针）。
 - Clay 源码：`H:\github_repos\clay\clay.h`、`README.md`、`renderers/terminal/clay_renderer_terminal_ansi.c`（最简非像素 renderer 参考）。
 - VM 环境：`H:\github_repos\RVVM`，token 在 `release.test.windows.x86_64\runtime\supervisor\token`。
 - 全部阶段完成；后续已完成**键盘输入闭环**、**前端 retained diff**、**内部模型分层重构**、**guest 侧增量发布**（见下节）。剩余增强方向：复杂图样的 wasm 通道。

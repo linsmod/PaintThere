@@ -78,7 +78,7 @@
 ### 6. 验证
 
 ```powershell
-cd h:\github_repos\跨端图绘指令流\vm-desktop
+\vm-desktop
 gcc -std=c11 -I"H:\github_repos\clay" -I. demo_wm.c clay_frame_adapter.c vm_display.c vm_serialize_json.c vm_tiles.c vm_wm.c vm_server.c -lws2_32 -o demo_wm.exe
 ```
 

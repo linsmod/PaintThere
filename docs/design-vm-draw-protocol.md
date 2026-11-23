@@ -1,6 +1,6 @@
 # 设计：VM 指令化桌面跨端协议
 
-> 本文是冻结在决策时的设计记录，不是现状。落地进度见 `docs/task-vm-instruction-desktop.md`；现状落地后另写 `arch-vm-instruction-desktop.md`。
+> 本文是冻结在决策时的设计记录，不是现状。落地进度见 `docs/task-vm-instruction-desktop.md`；当前实现见 `docs/arch-vmdesk.md`。
 
 ## 设计边界
 
@@ -28,7 +28,7 @@ Clay RenderCommandArray
 
 下行帧（guest → 浏览器）：
 
-> VM 桌面通道已改用 `type:"tiles"`（见下方「Remote tiles 模型」）；下列 `type:"frame"` 保留给既有 WinForms / 增量帧通道。
+> 当前 VM 桌面通道使用 `type:"tiles"`（见下方「Remote tiles 模型」）；下列 `type:"frame"` envelope 仅作早期协议设计记录，不代表现行通道。
 
 ```json
 {
@@ -57,11 +57,11 @@ Clay RenderCommandArray
 - **首帧必达**：新客户端连接时 `lastSentFrameId=0`，服务端立即推送当前帧 + `resources`，保证状态完整。
 - **retained diff 与脏矩形**：前端按 `id` 比较命令，只重画变化区域；背景层由 draw program 本地重放，不走每帧指令流。
 
-现有 WinForms 控件帧（纯数组）与多客户端指针帧（`type:'cursors'`）保持原样；VM 帧用 `type:'frame'` 区分，三者共存于同一 WebSocket。
+当前下行走 SSE `/events`，上行走 `POST /input`；帧 envelope 为 `type:"tiles"`。多客户端指针由 guest 合成，不单独占用协议通道。
 
 ## 绘制原语清单
 
-与 `ConsoleApp2/app.js` 的 `commandHandlers` 对齐。`color` 为 CSS 颜色字符串（Clay 的 RGBA 由 adapter 转成 `rgba(r,g,b,a)`），`resolveColor` 不接受数组。
+与 `assets/app.js` 的 `commandHandlers` 对齐。`color` 为 CSS 颜色字符串（Clay 的 RGBA 由 adapter 转成 `rgba(r,g,b,a)`），`resolveColor` 不接受数组。
 
 | cmd | args | 语义 |
 |---|---|---|
@@ -173,8 +173,8 @@ Clay RenderCommandArray
 - `drawLoop` 类的命名不采用——静态背景用 `mode:once`，动画用 `mode:loop`，避免“Loop”语义限制控件复用。
 - 指令批次统一由 `showLoading` / `hideLoading` 包住：`hideLoading` 之后才是可观察的稳定画面，避免把中间态暴露给客户端。
 
-## 与现有协议的关系
+## 与当前实现的关系
 
-- 现有 WinForms 帧、welcome/cursors 消息、DOM 事件回传全部保持原样，VM 协议作为新增分支共存。
-- 复用 `PaintCommand` 结构、签名去重、脏矩形、rAF 渲染循环、图片缓存与多客户端指针层。
+- 当前跨端只有 tiles 帧与原始输入事件；早期 WebSocket 上的 WinForms 控件帧、welcome/cursors 消息与 DOM 事件回传通道已移除。
+- `PaintCommand` 同形结构、签名去重、脏矩形、rAF 渲染循环与图片缓存的思路保留在 `assets/app.js` / `assets/vm_renderer.js`；指针改由 guest 多客户端指针表生成命令。
 - 本设计不引入任何窗口级指令，WM 状态不跨端传输。

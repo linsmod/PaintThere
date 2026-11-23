@@ -214,20 +214,25 @@ int Jpx_Checkbox(int win, const char *id, const char *label, int *checked) {
         },
     }) {
         hovered = Clay_Hovered();
+        /* XP 的勾选框是白底 + 深色勾；现代主题保持强调色块 + 白勾。 */
+        const int solidSkin = app->theme.buttonBgColor != NULL;
+        Clay_Color boxBg = Jpx__Color(app->theme.inputBgColor, (Clay_Color){18, 21, 32, 255});
+        if (*checked && !solidSkin) boxBg = accent(app);
+        Clay_Color markColor = solidSkin
+            ? Jpx__Color(app->theme.buttonTextColor, (Clay_Color){0, 0, 0, 255})
+            : (Clay_Color){255, 255, 255, 255};
         CLAY(Jpx__LocalId(app, "box"), {
             .layout = {
                 .sizing = {CLAY_SIZING_FIXED(16), CLAY_SIZING_FIXED(16)},
                 .childAlignment = {CLAY_ALIGN_X_CENTER, CLAY_ALIGN_Y_CENTER},
             },
-            .backgroundColor = *checked ? accent(app)
-                                        : Jpx__Color(app->theme.inputBgColor,
-                                                     (Clay_Color){18, 21, 32, 255}),
+            .backgroundColor = boxBg,
             .border = {.color = border(app), .width = CLAY_BORDER_OUTSIDE(1)},
-            .cornerRadius = CLAY_CORNER_RADIUS(3),
+            .cornerRadius = CLAY_CORNER_RADIUS(solidSkin ? 2.0f : 3.0f),
         }) {
             if (*checked) {
                 Clay_String mark = {.length = 3, .chars = "✓"};
-                jpx_text(mark, text_config(app, (Clay_Color){255, 255, 255, 255}, 1, 0));
+                jpx_text(mark, text_config(app, markColor, 1, 0));
             }
         }
         jpx_text(Jpx__Str(label), cfg);

@@ -254,8 +254,20 @@ Clay 的 `backgroundColor` 只吃单色，渐变填不进去。方案是给 WM �
 帧内开始按钮为 `drawImg` 位图 + 徽标；浏览器截图确认徽标与「开始」文字；
 `test_jpx_xaml_theme` 48 项（新增图片解析与路径归一化断言）；六套件全通过。
 
+### S7c：控件细节向 XP 靠拢（2026-11-23）
+
+- 控件边框改用灰蓝 `rgba(127,157,185,1)`（#7f9db9），与窗口的深蓝边框分离：
+  `Jpx_SetVmTheme` 在 XP 皮肤下只改 `JpxTheme.borderColor`，WM 边框仍取 `VmChrome`。
+- 复选框：XP 下勾选态是白底 + 深色勾（`buttonBgColor` 存在即走该分支），圆角 16px 方块 2。
+- 标题栏文字与「开始」文字做伪粗体：同色偏移 1px 再画一次（stb 光栅化不做合成粗体）。
+  标题的第二次绘制 id 后缀 `_b`，只在 `chrome.titleTextColor` 非空（XP）时启用。
+
 **剩余 gap（未做）**
 - RetroBar 的 XP 主题只有任务栏资源；窗口标题栏/边框/控件是按 Luna 惯例手写的近似值，不是从主题文件读的。
-- 字体仍是 `assets/font.ttf`（SimHei 黑体），XP 中文界面是宋体 9pt。
-- 控件细节（输入框内凹、复选框 3D、标题加粗）与 `DrawingBrush` 矢量尚未做。
+- 字体仍是 `assets/font.ttf`（SimHei 黑体），XP 中文界面是宋体 9pt。实测障碍：
+  系统里中文宋体只有 `simsun.ttc`（TTC 集合，18 MB），而 `stb_font_wasm.c` 与 `vm_font.c` 都用
+  `stbtt_InitFont(..., offset=0)`，不支持 TTC；`tahoma.ttf` 只有拉丁字形，缺中文会画方框，
+  而引擎没有字体回退链。要真正换字体需改两处 STB 初始化支持 TTC + 下发 18 MB，收益仅是字形。
+- `DrawingBrush` 矢量：本主题里只用于 `TaskButtonThumbnail` 的 6×6 棋盘格底纹，而缩略图功能本身未实现，
+  画出来也看不见；要做需要新增 `drawPath` 原语（SVG path data）并接入 `Path2D`。
 - 桌面无壁纸（图片资源），只用蓝天渐变近似。

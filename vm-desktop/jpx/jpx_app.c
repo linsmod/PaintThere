@@ -382,10 +382,12 @@ void Jpx_SetVmTheme(JpxApp *app, const VmTheme *theme) {
     t.inputBgColor = theme->inputBgColor;
     t.disabledColor = theme->disabledColor;
     t.selectedColor = theme->selectedColor;
-    /* startFrom 是 XP 皮肤的标记：按钮换成 Luna 米灰实体块，文字转黑。 */
+    /* startFrom 是 XP 皮肤的标记：按钮换成 Luna 米灰实体块，文字转黑；
+       控件边框用灰蓝 #7f9db9（窗口边框是深蓝，由 VmChrome 单独决定）。 */
     if (theme->startFrom) {
         t.buttonBgColor = "rgba(236,233,216,1)";
         t.buttonTextColor = "rgba(0,0,0,1)";
+        t.borderColor = "rgba(127,157,185,1)";
     }
     t.fontId = theme->fontId;
     t.fontSize = theme->fontSize;

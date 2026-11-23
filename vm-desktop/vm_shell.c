@@ -154,6 +154,11 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
         }
         append_text(out, "tb_start_label", labelX, by + (bh - lineStep) / 2,
                     tw > 0 ? tw : L.startW, lineStep, label, fontId, fontSize, color);
+        /* XP 的「开始」是粗体：同色偏移 1px 再画一次近似（stb 不做合成粗体）。 */
+        if (t->startFrom || t->startImageId) {
+            append_text(out, "tb_start_label_b", labelX + 1, by + (bh - lineStep) / 2,
+                        tw > 0 ? tw : L.startW, lineStep, label, fontId, fontSize, color);
+        }
     }
 
     /* 任务条目：按创建序固定排列，标题超宽按像素截断。 */

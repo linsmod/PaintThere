@@ -825,6 +825,13 @@ static void append_title_cmd(VmCmdBuffer *out, const char *id,
     int tw = w - 2 * ch->borderWidth - 2 * pad;
     if (tw < 0) tw = 0;
     append_text_cmd(out, id, tx, ty, tw, lineStep, title, ch->titleFontId, ch->titleFontSize, color);
+    /* XP 标题是粗体；stb 光栅化不做合成粗体，同色偏移 1px 再画一次近似。 */
+    if (ch->titleTextColor) {
+        char id2[80];
+        snprintf(id2, sizeof(id2), "%s_b", id);
+        append_text_cmd(out, id2, tx + 1, ty, tw, lineStep, title,
+                        ch->titleFontId, ch->titleFontSize, color);
+    }
 }
 
 static void append_clip_cmd(VmCmdBuffer *out, VmCmdType type, const char *id, VmRect r) {

@@ -25,6 +25,28 @@ typedef struct {
     int boldTitle;
 } VmChrome;
 
+/* 任务按钮模板层集：对应 RetroBar TaskButton 模板的嵌套 Border 链
+   （外 4 边 → 主渐变 → 内 3 边 → 对角高光层）。颜色指针借自主题资源表，
+   与 VmTheme 既有约定一致；shade 兜底串走 jpx_xaml_theme.c 的轮换缓冲。
+   stopCount >= 2 时 VmTheme_AppendResources 发多层 pattern/style、
+   shell 按层绘制；否则退回 From/To 单层渐变 + bevel（经典主题无这些 key）。 */
+#define VM_THEME_TASK_STOPS 8
+typedef struct {
+    const char *color;
+    float offset;                 /* 0..1 */
+} VmThemeStop;
+
+typedef struct {
+    VmThemeStop stops[VM_THEME_TASK_STOPS];
+    int stopCount;                /* 主渐变（TaskButtonBackground{Suffix}） */
+    const char *direction;        /* 主渐变方向 "x0,y0,x1,y1"；NULL = "0,0,0,1" */
+    VmThemeStop hlStops[VM_THEME_TASK_STOPS];
+    int hlStopCount;              /* 高光层（TaskButtonBackgroundHighlight{Suffix}） */
+    const char *hlDirection;      /* NULL = 沿用 direction */
+    const char *borderTop, *borderLeft, *borderBottom, *borderRight;
+    const char *innerLeft, *innerRight, *innerBottom;
+} VmTaskButtonLayer;
+
 /* 全量主题 token：WM 装饰 + 桌面背景 + 面板 + 控件。
    带 From/To 的成对字段表示「渐变皮肤」：非 NULL 时 VmTheme_AppendResources
    生成同名 pattern 与 s_* style，WM/shell 直接用 style id 当 paint。
@@ -57,9 +79,13 @@ typedef struct {
     const char *taskButtonHoverFrom, *taskButtonHoverTo;
     const char *taskButtonActiveFrom, *taskButtonActiveTo;
     const char *taskButtonTextColor;
-    /* 条目 bevel：未聚焦凸起（上/左浅、下/右深），聚焦按下反转。 */
+    /* 条目 bevel：未聚焦凸起（上/左浅、下/右深），聚焦按下反转。
+       仅在模板层集不可用（stopCount<2）时作为降级路径使用。 */
     const char *taskBorderTopColor, *taskBorderBottomColor;
     const char *taskBorderLeftColor, *taskBorderRightColor;
+    /* RetroBar TaskButton 模板层集：普通/悬停/按下三态，命名规则
+       TaskButton{...}{""|"Hover"|"Pressed"}，见 jpx_xaml_theme.c 派生。 */
+    VmTaskButtonLayer taskNormal, taskHover, taskActive;
     /* 右侧托盘区与时钟 */
     const char *trayFrom, *trayTo;
     const char *trayIconId;      /* 「显示桌面」按钮图标（RetroBar 的

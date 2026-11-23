@@ -111,6 +111,54 @@ static void append_gradient_pair(VmDisplayList *out, const char *name,
     append_style(out, sid, sid, pid);
 }
 
+/* 任务按钮模板层集 → pattern/style。stopCount>=2 才发：主渐变 p_<name>
+   （stops + direction）与对角高光 p_<name>_hl；style 只做画布引用别名。
+   返回 1 表示已按层集发出，调用方不再走 From/To 降级。 */
+static int append_task_layers(VmDisplayList *out, const char *name,
+                              const VmTaskButtonLayer *st) {
+    if (!st || st->stopCount < 2) return 0;
+    char pid[64], sid[64], did[80];
+    snprintf(pid, sizeof(pid), "p_%s", name);
+    snprintf(sid, sizeof(sid), "s_%s", name);
+    snprintf(did, sizeof(did), "def_%s", pid);
+    VmResourceCommand *p = append_pattern(out, did, pid, VM_PATTERN_GRADIENT);
+    if (!p) return 1;
+    p->args.definePattern.stopCount = st->stopCount;
+    for (int i = 0; i < st->stopCount && i < VM_PATTERN_MAX_STOPS; i++) {
+        VmDisplay_CopyStr(p->args.definePattern.stops[i].color,
+                          sizeof(p->args.definePattern.stops[i].color),
+                          st->stops[i].color);
+        p->args.definePattern.stops[i].offset = st->stops[i].offset;
+    }
+    VmDisplay_CopyStr(p->args.definePattern.direction,
+                      sizeof(p->args.definePattern.direction),
+                      st->direction ? st->direction : "0,0,0,1");
+    append_style(out, sid, sid, pid);
+
+    if (st->hlStopCount >= 2) {
+        char hpid[72], hsid[72], hdid[88];
+        snprintf(hpid, sizeof(hpid), "p_%s_hl", name);
+        snprintf(hsid, sizeof(hsid), "s_%s_hl", name);
+        snprintf(hdid, sizeof(hdid), "def_%s", hpid);
+        VmResourceCommand *h = append_pattern(out, hdid, hpid, VM_PATTERN_GRADIENT);
+        if (h) {
+            h->args.definePattern.stopCount = st->hlStopCount;
+            for (int i = 0; i < st->hlStopCount && i < VM_PATTERN_MAX_STOPS; i++) {
+                VmDisplay_CopyStr(h->args.definePattern.stops[i].color,
+                                  sizeof(h->args.definePattern.stops[i].color),
+                                  st->hlStops[i].color);
+                h->args.definePattern.stops[i].offset = st->hlStops[i].offset;
+            }
+            VmDisplay_CopyStr(h->args.definePattern.direction,
+                              sizeof(h->args.definePattern.direction),
+                              st->hlDirection ? st->hlDirection
+                                              : (st->direction ? st->direction : "0,0,0,1"));
+            append_style(out, hsid, hsid, hpid);
+        }
+    }
+    return 1;
+}
+
 void VmTheme_AppendResources(VmDisplayList *out, const VmTheme *theme) {
     if (!out) return;
     const VmTheme *t = theme ? theme : &kDefaultTheme;
@@ -145,9 +193,13 @@ void VmTheme_AppendResources(VmDisplayList *out, const VmTheme *theme) {
     append_gradient_pair(out, "title_active", t->titleActiveFrom, t->titleActiveTo);
     append_gradient_pair(out, "title_idle", t->titleIdleFrom, t->titleIdleTo);
     append_gradient_pair(out, "start", t->startFrom, t->startTo);
-    append_gradient_pair(out, "task", t->taskButtonFrom, t->taskButtonTo);
-    append_gradient_pair(out, "task_hover", t->taskButtonHoverFrom, t->taskButtonHoverTo);
-    append_gradient_pair(out, "task_active", t->taskButtonActiveFrom, t->taskButtonActiveTo);
+    /* 任务条目：模板层集优先（多 stop + 高光层），无层集退回 From/To。 */
+    if (!append_task_layers(out, "task", &t->taskNormal))
+        append_gradient_pair(out, "task", t->taskButtonFrom, t->taskButtonTo);
+    if (!append_task_layers(out, "task_hover", &t->taskHover))
+        append_gradient_pair(out, "task_hover", t->taskButtonHoverFrom, t->taskButtonHoverTo);
+    if (!append_task_layers(out, "task_active", &t->taskActive))
+        append_gradient_pair(out, "task_active", t->taskButtonActiveFrom, t->taskButtonActiveTo);
     append_gradient_pair(out, "tray", t->trayFrom, t->trayTo);
     append_gradient_pair(out, "showdesktop", t->showDesktopFrom, t->showDesktopTo);
     /* 标题栏三个按钮：最小化/最大化浅蓝，关闭红。Luna 的按钮是竖直渐变。 */

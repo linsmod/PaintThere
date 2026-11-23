@@ -242,6 +242,76 @@ static void test_derive(void) {
     expect(theme.chrome.titleHeight == 30, "chrome title height preserved");
 }
 
+/* 任务按钮模板层集：三态采集、offset/方向保留、缺 key 降级、资源层多 stop 发射。 */
+static void test_task_layers(void) {
+    section("task button template layers");
+    JpxXamlResourceTable table;
+    char err[256];
+    const char *xaml =
+        "<ResourceDictionary>"
+        "<LinearGradientBrush x:Key='TaskButtonBackground' StartPoint='0,0' EndPoint='0,1'>"
+        "<GradientStop Color='#4892f7' Offset='0.0' />"
+        "<GradientStop Color='#3980f4' Offset='0.17' />"
+        "</LinearGradientBrush>"
+        "<LinearGradientBrush x:Key='TaskButtonBackgroundHighlight' "
+        "StartPoint='0,0' EndPoint='0.03,1'>"
+        "<GradientStop Color='#70aafa' Offset='0.0' />"
+        "<GradientStop Color='#003980f4' Offset='0.3' />"
+        "</LinearGradientBrush>"
+        "<SolidColorBrush x:Key='TaskButtonTopBorder' Color='#3172da' />"
+        "<SolidColorBrush x:Key='TaskButtonLeftBorder' Color='#3067dd' />"
+        "<SolidColorBrush x:Key='TaskButtonBottomBorder' Color='#2652bc' />"
+        "<SolidColorBrush x:Key='TaskButtonRightBorder' Color='#264fad' />"
+        "<SolidColorBrush x:Key='TaskButtonInnerLeftBorder' Color='#5d98f5' />"
+        "<SolidColorBrush x:Key='TaskButtonInnerRightBorder' Color='#316fe8' />"
+        "<SolidColorBrush x:Key='TaskButtonInnerBottomBorder' Color='#316fe8' />"
+        "<LinearGradientBrush x:Key='TaskButtonBackgroundHover' "
+        "StartPoint='0,0' EndPoint='0,1'>"
+        "<GradientStop Color='#8bc0ff' Offset='0.0' />"
+        "<GradientStop Color='#59a4ff' Offset='0.05' />"
+        "<GradientStop Color='#2a81ff' Offset='1.0' />"
+        "</LinearGradientBrush>"
+        "</ResourceDictionary>";
+    expect(JpxXamlTheme_Parse(&table, xaml, err, sizeof(err)), "layer xaml parses");
+    VmTheme theme;
+    JpxXamlTheme_DeriveTheme(&table, &theme);
+
+    expect(theme.taskNormal.stopCount == 2, "normal stops collected");
+    expect(theme.taskNormal.stops[0].offset == 0.0f &&
+           theme.taskNormal.stops[1].offset == 0.17f,
+           "stop offsets preserved (0 -> 0.17, not stretched)");
+    expect_str(theme.taskNormal.stops[0].color, "rgba(72,146,247,1.000)",
+               "stop color carried");
+    expect(theme.taskNormal.direction != NULL, "main direction captured");
+    expect(theme.taskNormal.hlStopCount == 2, "highlight stops collected");
+    expect_str(theme.taskNormal.hlDirection, "0.0000,0.0000,0.0300,1.0000",
+               "diagonal highlight direction");
+    expect_str(theme.taskNormal.borderTop, "rgba(49,114,218,1.000)",
+               "outer border color");
+    expect_str(theme.taskNormal.innerLeft, "rgba(93,152,245,1.000)",
+               "inner border color");
+    expect(theme.taskHover.stopCount == 3, "hover stops collected (3)");
+    expect(theme.taskActive.stopCount == 0, "pressed missing -> legacy degrade");
+    expect(theme.taskActive.borderTop == NULL, "pressed borders missing");
+
+    /* 资源层：层集优先发射多 stop pattern 与高光 pattern。 */
+    static VmDisplayList list;
+    VmDisplay_Init(&list);
+    VmTheme_AppendResources(&list, &theme);
+    char *json = VmSerialize_CommandArrayJson(&list);
+    expect(json != NULL, "resources serialized");
+    if (json) {
+        expect(strstr(json, "\"stops\"") != NULL, "multi-stop pattern emitted");
+        expect(strstr(json, "0.170000") != NULL || strstr(json, "0.17") != NULL,
+               "stop offset reaches the wire");
+        expect(strstr(json, "p_task_hl") != NULL, "highlight pattern emitted");
+        expect(strstr(json, "s_task_hover") != NULL, "hover style emitted");
+        expect(strstr(json, "task_active_hl") == NULL,
+               "no active highlight without pressed keys");
+        free(json);
+    }
+}
+
 static void test_patterns(void) {
     section("append patterns");
     JpxXamlResourceTable table;
@@ -688,6 +758,7 @@ int main(int argc, char **argv) {
     test_resolve();
     test_derive();
     test_geometry_collection();
+    test_task_layers();
     test_patterns();
     test_images();
     test_merge();

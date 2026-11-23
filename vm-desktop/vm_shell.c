@@ -325,8 +325,25 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
         if (ix + iw > x + L.itemsRight) break;   /* 无滚动：放不下的不再画 */
         VmWindow *win = VmWm_FindWindow(sh->wm, L.ids[i]);
         if (!win) continue;
+        /* 悬停判定先于绘制：状态决定模板层集选择。 */
+        int hovered = 0;
+        if (sh->wm->pointerValid) {
+            int px = sh->wm->pointerX, py = sh->wm->pointerY;
+            hovered = px >= ix && px < ix + iw && py >= by && py < by + bh;
+        }
+
+        /* 模板层集：focused → Pressed；hovered 且非 focused → Hover（缺则
+           normal 层集 + 旧悬停叠加）；层集不可用走 From/To + bevel 旧路径。 */
+        const VmTaskButtonLayer *st = NULL;
+        if (win->focused) st = t->taskActive.stopCount >= 2 ? &t->taskActive : NULL;
+        else if (hovered) st = t->taskHover.stopCount >= 2 ? &t->taskHover : NULL;
+        if (!st && t->taskNormal.stopCount >= 2) st = &t->taskNormal;
+
         const char *paint;
-        if (win->focused && t->taskButtonActiveFrom) paint = "s_task_active";
+        if (st) paint = win->focused ? "s_task_active"
+                    : (hovered && t->taskHover.stopCount >= 2) ? "s_task_hover"
+                    : "s_task";
+        else if (win->focused && t->taskButtonActiveFrom) paint = "s_task_active";
         else if (t->taskButtonFrom) paint = "s_task";
         else paint = win->focused ? t->accentColor : t->fgColor;
 
@@ -343,49 +360,90 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
         snprintf(idbuf, sizeof(idbuf), "tb_item_%d", win->id);
         append_rect(out, idbuf, ix, iy, iw, ih, paint, radius);
 
-        /* 悬停：主题给了悬停渐变就用它，否则只在原底色上叠一层提亮。 */
-        int hovered = 0;
-        if (sh->wm->pointerValid) {
-            int px = sh->wm->pointerX, py = sh->wm->pointerY;
-            hovered = px >= ix && px < ix + iw && py >= by && py < by + bh;
-        }
-        if (hovered && !win->focused) {
-            snprintf(idbuf, sizeof(idbuf), "tb_item_hover_%d", win->id);
-            if (t->taskButtonHoverFrom) {
-                append_rect(out, idbuf, ix, iy, iw, ih, "s_task_hover", radius);
-            } else {
-                append_rect(out, idbuf, ix, iy, iw, ih,
-                            "rgba(255,255,255,0.14)", radius);
-            }
-        }
-
-        /* 条目 bevel：未聚焦凸起（上/左浅、下/右深），聚焦按下反转
-           （XP Luna 的四边 1px，颜色来自主题边框资源；画在内缩盒边缘）。 */
-        {
-            const char *top = t->taskBorderTopColor;
-            const char *left = t->taskBorderLeftColor;
-            const char *bottom = t->taskBorderBottomColor;
-            const char *right = t->taskBorderRightColor;
-            if (win->focused) {
-                const char *swap;
-                swap = top; top = bottom; bottom = swap;
-                swap = left; left = right; right = swap;
-            }
-            if (top) {
+        if (st) {
+            /* RetroBar 模板层次：主渐变 → 外 4 边 → 内 3 边 → 对角高光层。
+               各状态有自己的边色，不做 bevel 反转。 */
+            if (st->borderTop) {
                 snprintf(idbuf, sizeof(idbuf), "tb_item_top_%d", win->id);
-                append_rect(out, idbuf, ix, iy, iw, 1, top, 0.0f);
+                append_rect(out, idbuf, ix, iy, iw, 1, st->borderTop, 0.0f);
             }
-            if (bottom) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_bottom_%d", win->id);
-                append_rect(out, idbuf, ix, iy + ih - 1, iw, 1, bottom, 0.0f);
-            }
-            if (left) {
+            if (st->borderLeft) {
                 snprintf(idbuf, sizeof(idbuf), "tb_item_left_%d", win->id);
-                append_rect(out, idbuf, ix, iy + 1, 1, ih - 2, left, 0.0f);
+                append_rect(out, idbuf, ix, iy + 1, 1, ih - 2, st->borderLeft, 0.0f);
             }
-            if (right) {
+            if (st->borderBottom) {
+                snprintf(idbuf, sizeof(idbuf), "tb_item_bottom_%d", win->id);
+                append_rect(out, idbuf, ix, iy + ih - 1, iw, 1, st->borderBottom, 0.0f);
+            }
+            if (st->borderRight) {
                 snprintf(idbuf, sizeof(idbuf), "tb_item_right_%d", win->id);
-                append_rect(out, idbuf, ix + iw - 1, iy + 1, 1, ih - 2, right, 0.0f);
+                append_rect(out, idbuf, ix + iw - 1, iy + 1, 1, ih - 2, st->borderRight, 0.0f);
+            }
+            if (st->innerLeft) {
+                snprintf(idbuf, sizeof(idbuf), "tb_item_il_%d", win->id);
+                append_rect(out, idbuf, ix + 1, iy + 1, 1, ih - 3, st->innerLeft, 0.0f);
+            }
+            if (st->innerRight) {
+                snprintf(idbuf, sizeof(idbuf), "tb_item_ir_%d", win->id);
+                append_rect(out, idbuf, ix + iw - 2, iy + 1, 1, ih - 3, st->innerRight, 0.0f);
+            }
+            if (st->innerBottom) {
+                snprintf(idbuf, sizeof(idbuf), "tb_item_ib_%d", win->id);
+                append_rect(out, idbuf, ix + 1, iy + ih - 2, iw - 2, 1, st->innerBottom, 0.0f);
+            }
+            if (st->hlStopCount >= 2) {
+                const char *hl = win->focused ? "s_task_active_hl"
+                               : (hovered && t->taskHover.stopCount >= 2) ? "s_task_hover_hl"
+                               : "s_task_hl";
+                snprintf(idbuf, sizeof(idbuf), "tb_item_hl_%d", win->id);
+                append_rect(out, idbuf, ix + 2, iy + 1, iw - 4, ih - 3, hl, radius);
+            }
+            /* hover 无层集但主题给了悬停渐变：在层集之上叠加。 */
+            if (hovered && !win->focused && t->taskHover.stopCount < 2 &&
+                t->taskButtonHoverFrom) {
+                snprintf(idbuf, sizeof(idbuf), "tb_item_hover_%d", win->id);
+                append_rect(out, idbuf, ix, iy, iw, ih, "s_task_hover", radius);
+            }
+        } else {
+            /* 悬停：主题给了悬停渐变就用它，否则只在原底色上叠一层提亮。 */
+            if (hovered && !win->focused) {
+                snprintf(idbuf, sizeof(idbuf), "tb_item_hover_%d", win->id);
+                if (t->taskButtonHoverFrom) {
+                    append_rect(out, idbuf, ix, iy, iw, ih, "s_task_hover", radius);
+                } else {
+                    append_rect(out, idbuf, ix, iy, iw, ih,
+                                "rgba(255,255,255,0.14)", radius);
+                }
+            }
+
+            /* 条目 bevel：未聚焦凸起（上/左浅、下/右深），聚焦按下反转
+               （XP Luna 的四边 1px，颜色来自主题边框资源；画在内缩盒边缘）。 */
+            {
+                const char *top = t->taskBorderTopColor;
+                const char *left = t->taskBorderLeftColor;
+                const char *bottom = t->taskBorderBottomColor;
+                const char *right = t->taskBorderRightColor;
+                if (win->focused) {
+                    const char *swap;
+                    swap = top; top = bottom; bottom = swap;
+                    swap = left; left = right; right = swap;
+                }
+                if (top) {
+                    snprintf(idbuf, sizeof(idbuf), "tb_item_top_%d", win->id);
+                    append_rect(out, idbuf, ix, iy, iw, 1, top, 0.0f);
+                }
+                if (bottom) {
+                    snprintf(idbuf, sizeof(idbuf), "tb_item_bottom_%d", win->id);
+                    append_rect(out, idbuf, ix, iy + ih - 1, iw, 1, bottom, 0.0f);
+                }
+                if (left) {
+                    snprintf(idbuf, sizeof(idbuf), "tb_item_left_%d", win->id);
+                    append_rect(out, idbuf, ix, iy + 1, 1, ih - 2, left, 0.0f);
+                }
+                if (right) {
+                    snprintf(idbuf, sizeof(idbuf), "tb_item_right_%d", win->id);
+                    append_rect(out, idbuf, ix + iw - 1, iy + 1, 1, ih - 2, right, 0.0f);
+                }
             }
         }
 

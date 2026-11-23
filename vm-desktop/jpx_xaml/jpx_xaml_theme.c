@@ -1157,6 +1157,57 @@ static void gradient_ends(const JpxXamlResourceTable *table, const char *key,
     *to = r->stops[r->stopCount - 1].color;
 }
 
+/* 按 RetroBar 状态后缀（"" / "Hover" / "Pressed"）采集 TaskButton 模板层集：
+   主渐变（stops+offset+方向）、对角高光层、外 4 边与内 3 边 SolidColorBrush。
+   key 缺失即留空（stopCount=0），降级由 From/To + bevel legacy 字段承担；
+   这里不做 shade 兜底，避免伪造主题没有的层次。 */
+static void derive_task_layers(const JpxXamlResourceTable *table,
+                               VmTaskButtonLayer *st, const char *suffix) {
+    if (!st || !table) return;
+    char key[80];
+
+    snprintf(key, sizeof(key), "TaskButtonBackground%s", suffix);
+    const JpxXamlResource *r = JpxRes_Find(table, key);
+    if (r && r->stopCount >= 2 &&
+        (r->kind == JPX_XAML_RES_LINEAR_GRADIENT ||
+         r->kind == JPX_XAML_RES_RADIAL_GRADIENT)) {
+        int n = r->stopCount < VM_THEME_TASK_STOPS ? r->stopCount : VM_THEME_TASK_STOPS;
+        for (int i = 0; i < n; i++) {
+            st->stops[i].color = r->stops[i].color;
+            st->stops[i].offset = r->stops[i].offset;
+        }
+        st->stopCount = n;
+        if (r->direction[0]) st->direction = r->direction;
+    }
+
+    snprintf(key, sizeof(key), "TaskButtonBackgroundHighlight%s", suffix);
+    r = JpxRes_Find(table, key);
+    if (r && r->stopCount >= 2 && r->kind == JPX_XAML_RES_LINEAR_GRADIENT) {
+        int n = r->stopCount < VM_THEME_TASK_STOPS ? r->stopCount : VM_THEME_TASK_STOPS;
+        for (int i = 0; i < n; i++) {
+            st->hlStops[i].color = r->stops[i].color;
+            st->hlStops[i].offset = r->stops[i].offset;
+        }
+        st->hlStopCount = n;
+        if (r->direction[0]) st->hlDirection = r->direction;
+    }
+
+    snprintf(key, sizeof(key), "TaskButtonTopBorder%s", suffix);
+    st->borderTop = JpxRes_Color(table, key, NULL);
+    snprintf(key, sizeof(key), "TaskButtonLeftBorder%s", suffix);
+    st->borderLeft = JpxRes_Color(table, key, NULL);
+    snprintf(key, sizeof(key), "TaskButtonBottomBorder%s", suffix);
+    st->borderBottom = JpxRes_Color(table, key, NULL);
+    snprintf(key, sizeof(key), "TaskButtonRightBorder%s", suffix);
+    st->borderRight = JpxRes_Color(table, key, NULL);
+    snprintf(key, sizeof(key), "TaskButtonInnerLeftBorder%s", suffix);
+    st->innerLeft = JpxRes_Color(table, key, NULL);
+    snprintf(key, sizeof(key), "TaskButtonInnerRightBorder%s", suffix);
+    st->innerRight = JpxRes_Color(table, key, NULL);
+    snprintf(key, sizeof(key), "TaskButtonInnerBottomBorder%s", suffix);
+    st->innerBottom = JpxRes_Color(table, key, NULL);
+}
+
 /* rgba() 字符串亮度调节：factor<1 变暗、>1 变亮（clamp 到 255）。
    调用方需要稳定的返回指针（VmTheme 只存指针），用轮换缓冲池；
    同一表达式里最多用 4 个（activeFrom/To、hoverFrom/To），池给 6 个。 */
@@ -1364,6 +1415,10 @@ void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
                                  JpxRes_Color(table, "ButtonHighlight", NULL));
     out->taskBorderRightColor = JpxRes_Color(table, "TaskButtonRightBorder",
                                   JpxRes_Color(table, "ButtonShadow", NULL));
+    /* 模板层集三态：普通 / Hover / Pressed（RetroBar 命名规则 {Base}{Suffix}）。 */
+    derive_task_layers(table, &out->taskNormal, "");
+    derive_task_layers(table, &out->taskHover, "Hover");
+    derive_task_layers(table, &out->taskActive, "Pressed");
     /* 位图皮肤：uri 为空的（Aero 的 {DynamicResource} 形式，解析器拿不到路径）
        视为不存在，走上面的色块降级，避免前端 drawImg 空图。 */
     const JpxXamlResource *img = JpxRes_Find(table, "StartButtonImage");

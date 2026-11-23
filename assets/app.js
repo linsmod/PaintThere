@@ -98,7 +98,8 @@ function defineStyle(styleId, config) {
 }
 
 /* 资源包：guest 只下发 id（loadResPack），资源本体由 client 自己 GET 拉取并按 id 缓存。
-   刷新页面后重新拉同一个 id 即可恢复主题；同一 id 只解码一次。 */
+   图片按 id 覆盖注册：主题图片的 id 是 XAML 资源 key，跨主题同名不同内容，
+   短路会导致切主题后 startIcon 等停在旧图（只有刷新页面才更新）。 */
 const resPackCache = new Map();
 let resPackApplied = null;
 function setResPackApplied(cb) { resPackApplied = cb; }
@@ -122,12 +123,15 @@ function applyResPackCommands(list) {
 const RESPACK_MAGIC = 0x50524D56;
 
 function registerImageBlob(imgId, blob) {
-    if (imageCache.has(imgId)) return;
-    const entry = { image: null, ready: false, failed: false };
-    imageCache.set(imgId, entry);
+    let entry = imageCache.get(imgId);
+    if (!entry) {
+        entry = { image: null, ready: false, failed: false };
+        imageCache.set(imgId, entry);
+    }
     const done = (src) => {
         entry.image = src;
         entry.ready = true;
+        entry.failed = false;
         tintedCache.clear();
         if (textNeedsReplay) textNeedsReplay();
         /* 图片是异步解码的：就绪后按新缓存重放，否则首帧会画不出位图。 */
@@ -270,15 +274,19 @@ function setDrawTarget(target) {
 }
 
 function loadImg(imgId, dataUrl) {
-    if (imageCache.has(imgId)) return;
-    const entry = { image: null, ready: false, failed: false };
-    imageCache.set(imgId, entry);
+    let entry = imageCache.get(imgId);
+    if (!entry) {
+        entry = { image: null, ready: false, failed: false };
+        imageCache.set(imgId, entry);
+    }
     const img = new Image();
     img.onload = () => {
         entry.image = img;
         entry.ready = true;
+        entry.failed = false;
         tintedCache.clear();
         if (textNeedsReplay) textNeedsReplay();
+        if (resPackApplied) resPackApplied();
     };
     img.onerror = () => { entry.failed = true; };
     img.src = dataUrl;

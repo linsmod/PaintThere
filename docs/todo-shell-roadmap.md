@@ -2,8 +2,16 @@
 
 长期待办登记处。执行记录见对应 `task-*.md`。
 
-## 任务栏对齐 RetroBar（延续 docs/task-shell-context-menu-and-settings.md）
+## 任务栏对齐 RetroBar（延续 docs/task-shell-context-menu-and-settings.md、docs/task-taskbar-retrobar-fidelity.md）
 
+几何主题数据驱动与条目动态宽度已完成（见 fidelity 任务文档进度节），遗留：
+
+- [ ] **条目溢出滚动/折叠**（优先级：低）
+  条目收缩到 `TaskButtonMinWidth` 后放不下的条目当前直接截断不画；
+  RetroBar 是减半宽度 + ScrollViewer 滚动（或折行）。依赖滚动条组件。
+- [ ] **开始按钮文字斜体**（优先级：低）
+  XP 的 StartLabel 是 19px Italic；stb 字体无合成斜体，drawText 协议也
+  没有 skew。要做需协议加倾斜参数或内嵌斜体字体。
 - [ ] **动态托盘图标 API**（优先级：中）
   应用向托盘区注册/更新图标 + 气泡通知。需要扩展 `design-vm-ipc.md` 的消息集
   （当前 9+6 条已冻结），走一次协议修订再实现。验收：demo 应用注册一个图标，
@@ -18,5 +26,5 @@
 - [ ] **时钟 tooltip 与日历**（优先级：低）
   悬停显示完整日期；双击/左键打开日历窗口。依赖：悬停 tooltip 组件（可复用
   popup 基础设施）。
-- [ ] **任务条目拖拽重排 / 分组 / 溢出**（优先级：低，RetroBar 高级行为）
+- [ ] **任务条目拖拽重排 / 分组**（优先级：低，RetroBar 高级行为）
   当前条目按创建序固定排列。

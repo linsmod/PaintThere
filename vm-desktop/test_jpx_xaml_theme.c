@@ -304,6 +304,83 @@ static void test_errors(void) {
         err, sizeof(err)), "resource without x:Key yields no resources");
 }
 
+/* 厚度/模板几何采集：RetroBar 的任务栏间距全在 Margin/Padding/Thickness
+   里，任务栏观感由这些数字决定。 */
+static void test_geometry_collection(void) {
+    section("thickness and template geometry");
+    JpxXamlResourceTable table;
+    char err[256];
+    const char *xaml =
+        "<ResourceDictionary>"
+        /* Thickness 资源：属性形式。 */
+        "<Thickness x:Key='TaskButtonMargin' Right='3' />"
+        /* Thickness 资源：文本形式，2 值 = (左右,上下)。 */
+        "<Thickness x:Key='Pad2'>8,3</Thickness>"
+        /* Setter：字面量四值。 */
+        "<Style x:Key='StartButton'>"
+        "<Setter Property='Margin' Value='0,0,1,-3' />"
+        "<Setter Property='MinWidth' Value='99' />"
+        "</Style>"
+        /* Setter：{DynamicResource} 引用 Thickness 资源。 */
+        "<Style x:Key='TaskButton'>"
+        "<Setter Property='Margin' Value='{DynamicResource TaskButtonMargin}' />"
+        /* 模板内命名元素的几何与圆角。 */
+        "<Setter Property='Template'>"
+        "<Setter.Value>"
+        "<ControlTemplate>"
+        "<Border Padding='0,3,0,2' x:Name='ButtonBorder'>"
+        "<Border BorderThickness='0,1,0,0' CornerRadius='2' "
+        "        x:Name='ButtonTopBorder' />"
+        "</Border>"
+        "</ControlTemplate>"
+        "</Setter.Value>"
+        "</Setter>"
+        "</Style>"
+        /* 阴影效果颜色。 */
+        "<DropShadowEffect x:Key='StartLabelShadow' Color='#FF00609C' />"
+        "</ResourceDictionary>";
+    expect(JpxXamlTheme_Parse(&table, xaml, err, sizeof(err)), "geometry xaml parses");
+    if (!table.count) { printf("  err=%s\n", err); return; }
+    expect(JpxRes_Number(&table, "TaskButtonMargin.Right", -1) == 3,
+           "thickness attr form collected");
+    expect(JpxRes_Number(&table, "TaskButtonMargin.Left", 0) == 0,
+           "missing thickness side defaults to 0");
+    expect(JpxRes_Number(&table, "Pad2.Left", -1) == 8 &&
+           JpxRes_Number(&table, "Pad2.Top", -1) == 3,
+           "thickness two-value text form collected");
+    expect(JpxRes_Number(&table, "StartButton.Margin.Right", -1) == 1 &&
+           JpxRes_Number(&table, "StartButton.Margin.Bottom", -1) == -3,
+           "style margin setter collected (negative value kept)");
+    expect(JpxRes_Number(&table, "StartButton.MinWidth", -1) == 99,
+           "metric setter still collected alongside thickness");
+    expect(JpxRes_Number(&table, "TaskButton.Margin.Right", -1) == 3,
+           "DynamicResource thickness reference resolved");
+    expect(JpxRes_Number(&table, "TaskButton.ButtonBorder.Padding.Top", -1) == 3,
+           "template named-element padding collected");
+    expect(JpxRes_Number(&table,
+               "TaskButton.ButtonTopBorder.BorderThickness.Top", -1) == 1,
+           "template border thickness collected (two-value form)");
+    expect(JpxRes_Number(&table, "TaskButton.ButtonTopBorder.CornerRadius", -1) == 2,
+           "template corner radius collected");
+    expect_str(JpxRes_Color(&table, "StartLabelShadow.Brush", NULL),
+               "rgba(0,96,156,1.000)", "drop shadow color collected");
+
+    /* 组合 key 全长（base + ".Bottom"）超 VM_DISPLAY_MAX_ID 时整组跳过：
+       add_res 会把超长 key 截断出带尾点的短 key，与别的资源碰撞，
+       CSS 往返（导出全名 → 编译回截断）也对不上。 */
+    expect(JpxXamlTheme_Parse(&table,
+        "<ResourceDictionary>"
+        "<SolidColorBrush x:Key='Filler' Color='#FF112233' />"
+        "<Style x:Key='ScrollButtonKeyPaddingThatIsDeliberatelyLong000000'>"
+        "<Setter Property='Margin' Value='1,2,3,4' />"
+        "</Style>"
+        "</ResourceDictionary>", err, sizeof(err)), "over-long style parses");
+    expect(JpxRes_Number(&table,
+        "ScrollButtonKeyPaddingThatIsDeliberatelyLong000000.Margin.Bottom",
+        -1) == -1,
+        "over-length composite keys skipped whole");
+}
+
 /* MergedDictionaries 递归合并：WPF 语义 = 本地 > 后合并 > 先合并。 */
 static void test_merge(void) {
     section("merged dictionaries");
@@ -599,6 +676,7 @@ int main(int argc, char **argv) {
     test_parse();
     test_resolve();
     test_derive();
+    test_geometry_collection();
     test_patterns();
     test_images();
     test_merge();

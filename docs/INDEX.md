@@ -18,4 +18,5 @@
 - `design-jp-xaml-theme.md` — ResourceDictionary 主题设计（2026-11-23 冻结）：多 stop 渐变协议扩展、资源热更新、VM 主题派生、尺寸实测修正。
 - `task-jp-xaml-theme.md` — ResourceDictionary 主题执行文档：协议/前端渐变、资源字典解析、WM/shell 接入、热更新的分阶段计划与恢复点。
 - `task-shell-context-menu-and-settings.md` — 任务栏右键菜单与设置面板（对标 RetroBar）：WM 右键通道、vm_menu 弹出菜单控件、jpx_shell_settings 设置组件与配置持久化的执行记录。
-- `todo-shell-roadmap.md` — 桌面外壳长期待办：动态托盘图标（IPC 扩展）、开始菜单 popup 化、快速启动栏、时钟 tooltip、任务条目拖拽。
+- `task-taskbar-retrobar-fidelity.md` — 任务栏几何全量主题数据驱动（对标 RetroBar）：Thickness/模板几何采集、条目动态宽度、托盘内容驱动、按钮溢出高度、开始按钮 XP 排版；含逐元素几何验证证据。
+- `todo-shell-roadmap.md` — 桌面外壳长期待办：动态托盘图标（IPC 扩展）、开始菜单 popup 化、快速启动栏、时钟 tooltip、任务条目拖拽重排、条目溢出滚动、斜体字体。

@@ -38,11 +38,28 @@ static const VmTheme kDefaultTheme = {
     .panelPad = 6,
     .panelStartWidth = 72,
     .panelButtonHeight = 28,
-    .panelItemWidth = 110,
-    .panelItemGap = 6,
-    .panelTrayWidth = 56,
+    .panelStartMarginRight = 6,
+    .panelStartIconW = 0,
+    .panelStartIconH = 0,
+    .panelStartIconMarginLeft = 0,
+    .panelStartLabelFontSize = 0,
+    .panelStartLabelMarginRight = 0,
+    .panelStartLabelShadow = 0,
+    .panelItemWidthDefault = 110,
+    .panelItemWidthMin = 45,
+    .panelItemMarginRight = 6,
+    .panelTaskListMarginLeft = 0,
+    .panelTaskTextInsetX = 10,
+    .panelTrayMarginLeft = 0,
+    .clockMarginLeft = 6,
+    .clockMarginTop = 0,
+    .clockMarginRight = 6,
+    .clockMarginBottom = 0,
+    .panelShowDesktopIconW = 0,
+    .panelShowDesktopIconH = 0,
+    .panelShowDesktopMarginL = 0,
+    .panelShowDesktopMarginR = 0,
     .panelRadius = 5,
-    .panelStartIconSize = 0,
     .boldChromeText = 0,
 };
 
@@ -129,6 +146,7 @@ void VmTheme_AppendResources(VmDisplayList *out, const VmTheme *theme) {
     append_gradient_pair(out, "task_hover", t->taskButtonHoverFrom, t->taskButtonHoverTo);
     append_gradient_pair(out, "task_active", t->taskButtonActiveFrom, t->taskButtonActiveTo);
     append_gradient_pair(out, "tray", t->trayFrom, t->trayTo);
+    append_gradient_pair(out, "showdesktop", t->showDesktopFrom, t->showDesktopTo);
     /* 标题栏三个按钮：最小化/最大化浅蓝，关闭红。Luna 的按钮是竖直渐变。 */
     if (t->titleActiveFrom) {
         append_gradient_pair(out, "cap_btn", "rgba(102,156,240,1)", "rgba(48,107,206,1)");

@@ -455,8 +455,10 @@ static void test_shell(void) {
     if (idx >= 0) {
         char payload[160];
         const VmTheme *dt = VmTheme_Default();
-        int cx = dt->panelPad + dt->panelStartWidth + dt->panelItemGap +
-                 idx * (dt->panelItemWidth + dt->panelItemGap) + dt->panelItemWidth / 2;
+        int cx = dt->panelPad + dt->panelStartWidth + dt->panelStartMarginRight +
+                 dt->panelTaskListMarginLeft +
+                 idx * (dt->panelItemWidthDefault + dt->panelItemMarginRight) +
+                 dt->panelItemWidthDefault / 2;
         snprintf(payload, sizeof(payload),
                  "{\"kind\":\"mousedown\",\"x\":%d,\"y\":580,\"button\":0,\"clientId\":\"A\"}",
                  cx);

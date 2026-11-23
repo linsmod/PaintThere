@@ -113,11 +113,107 @@ static void parse_direction(const JpxXamlNode *node, JpxXamlResource *r, int rad
     }
 }
 
-/* 只收单值尺寸属性：Margin/Padding 是多值，需要时再单独解析。 */
+/* 只收单值尺寸属性。Margin/Padding/BorderThickness 是 Thickness，
+   由 parse_thickness4 单独解析（RetroBar 的关键间距都在这些属性里）。 */
 static int metric_prop(const char *prop) {
     return strcmp(prop, "Height") == 0 || strcmp(prop, "Width") == 0 ||
            strcmp(prop, "MinWidth") == 0 || strcmp(prop, "MaxWidth") == 0 ||
            strcmp(prop, "FontSize") == 0;
+}
+static int thickness_prop(const char *prop) {
+    return strcmp(prop, "Margin") == 0 || strcmp(prop, "Padding") == 0 ||
+           strcmp(prop, "BorderThickness") == 0;
+}
+
+/* 前置声明：厚度引用解析在资源查找实现之前使用。 */
+const JpxXamlResource *JpxRes_Find(const JpxXamlResourceTable *table, const char *key);
+
+/* WPF Thickness 文本："4"（四边）、"4,8"（左右,上下）、"l,t,r,b"。负值合法
+   （XP 的 StartButton Margin 0,0,1,-3）。1/2/4 值合法，3 值不合法。 */
+static int parse_thickness4(const char *val, double out[4]) {
+    double v[4];
+    int n = 0;
+    const char *p = val;
+    while (*p == ' ') p++;
+    while (n < 4) {
+        char *end;
+        double d = strtod(p, &end);
+        if (end == p) return 0;
+        v[n++] = d;
+        p = end;
+        while (*p == ' ' || *p == ',') p++;
+        if (!*p) break;
+    }
+    if (*p || n == 0 || n == 3) return 0;
+    if (n == 1) { out[0] = out[1] = out[2] = out[3] = v[0]; }
+    else if (n == 2) { out[0] = out[2] = v[0]; out[1] = out[3] = v[1]; }
+    else { memcpy(out, v, sizeof(v)); }
+    return 1;
+}
+
+static const char *kThicknessSides[4] = { "Left", "Top", "Right", "Bottom" };
+
+/* 组合 key 超过资源 id 上限就不收：add_res 会静默截断，截断后的短 key
+   可能与别的资源碰撞，宁缺勿错。 */
+static int thickness_key_fits(const char *a, const char *b, const char *c) {
+    size_t n = strlen(a) + 1 + (b ? strlen(b) : 0) + (b && c ? 1 : 0) + (c ? strlen(c) : 0);
+    return n < VM_DISPLAY_MAX_ID;
+}
+
+/* 把四值厚度收成 baseKey.{Left,Top,Right,Bottom} 四条 NUMBER。
+   最终 key = base + "." + side，全长必须留在资源 id 上限内：
+   守卫用最长的 side（Bottom）验证，否则 add_res 会截断出带尾点的 key，
+   与 CSS 往返（导出全名 → 编译回截断）对不上。 */
+static int add_thickness_res(JpxXamlResourceTable *table, const char *baseKey,
+                             const double v[4], char *err, size_t errCap) {
+    if (!thickness_key_fits(baseKey, "Bottom", NULL)) return 1;
+    for (int s = 0; s < 4; s++) {
+        char mk[96];
+        snprintf(mk, sizeof(mk), "%s.%s", baseKey, kThicknessSides[s]);
+        int fresh = 0;
+        JpxXamlResource *r = add_res(table, mk, JPX_XAML_RES_NUMBER, err, errCap, &fresh);
+        if (!r) return 0;
+        if (fresh) r->number = v[s];
+    }
+    return 1;
+}
+
+/* Setter/属性值里的 {DynamicResource K}/{StaticResource K} → 查已收集的
+   Thickness 资源 K。解析顺序：Thickness 元素与 Style Setter 先于模板元素
+   收集（同一次线性扫描按文档序，引用者通常在后面，v1 先到先得可能取不到
+   前向引用——RetroBar 的 Thickness 资源都定义在使用之前，可接受）。 */
+static int resolve_thickness_ref(const JpxXamlResourceTable *table, const char *expr,
+                                 double out[4]) {
+    const char *p = expr;
+    if (strncmp(p, "{DynamicResource ", 17) == 0) p += 17;
+    else if (strncmp(p, "{StaticResource ", 16) == 0) p += 16;
+    else return 0;
+    const char *end = strchr(p, '}');
+    if (!end) return 0;
+    size_t len = (size_t)(end - p);
+    if (len == 0 || len >= 80) return 0;
+    char key[96];
+    memcpy(key, p, len);
+    key[len] = '\0';
+    if (!thickness_key_fits(key, NULL, NULL)) return 0;
+    for (int s = 0; s < 4; s++) {
+        char mk[112];
+        snprintf(mk, sizeof(mk), "%s.%s", key, kThicknessSides[s]);
+        const JpxXamlResource *r = JpxRes_Find(table, mk);
+        if (!r || r->kind != JPX_XAML_RES_NUMBER) return 0;
+        out[s] = r->number;
+    }
+    return 1;
+}
+
+/* 一条 Margin/Padding/BorderThickness 值：字面量 Thickness 文本或资源引用。 */
+static int collect_thickness_value(JpxXamlResourceTable *table, const char *baseKey,
+                                   const char *val, char *err, size_t errCap) {
+    double v[4];
+    if (parse_thickness4(val, v)) return add_thickness_res(table, baseKey, v, err, errCap);
+    if (resolve_thickness_ref(table, val, v))
+        return add_thickness_res(table, baseKey, v, err, errCap);
+    return 1;   /* 解析不了的值（如绑定表达式）跳过，不报错 */
 }
 
 /* 前置声明：合并递归在定义之前使用（定义在图片路径一节）。 */
@@ -218,6 +314,61 @@ static int find_attr_desc(const JpxXamlDoc *doc, int idx, const char *attr) {
     return -1;
 }
 
+/* 模板子树里带 x:Name 的元素的几何：<StyleKey>.<Name>.<Prop>[.<Side>]。
+   x:Name 缺失的元素跳过（无稳定 key），子树照常深入。 */
+static int template_walk(const JpxXamlDoc *doc, int idx, const char *styleKey,
+                         JpxXamlResourceTable *table, char *err, size_t errCap) {
+    static const char *kGeomProps[] = { "Margin", "Padding", "BorderThickness",
+                                        "CornerRadius" };
+    for (int c = doc->nodes[idx].firstChild; c >= 0; c = doc->nodes[c].nextSibling) {
+        const JpxXamlNode *n = &doc->nodes[c];
+        const char *name = JpxXamlNode_Attr(n, "x:Name");
+        if (name) {
+            for (int p = 0; p < 4; p++) {
+                const char *prop = kGeomProps[p];
+                const char *val = JpxXamlNode_Attr(n, prop);
+                if (!val) continue;
+                char base[112];
+                snprintf(base, sizeof(base), "%s.%s.%s", styleKey, name, prop);
+                if (!thickness_key_fits(styleKey, name, prop)) continue;
+                if (strcmp(prop, "CornerRadius") == 0) {
+                    /* 圆角统一取 Left（RetroBar 全部是单值或四值同值）。 */
+                    double v[4];
+                    if (parse_thickness4(val, v)) {
+                        int fresh = 0;
+                        JpxXamlResource *r =
+                            add_res(table, base, JPX_XAML_RES_NUMBER, err, errCap, &fresh);
+                        if (!r) return 0;
+                        if (fresh) r->number = v[0];
+                    }
+                    continue;
+                }
+                if (!collect_thickness_value(table, base, val, err, errCap)) return 0;
+            }
+        }
+        if (!template_walk(doc, c, styleKey, table, err, errCap)) return 0;
+    }
+    return 1;
+}
+
+static int find_tag_desc(const JpxXamlDoc *doc, int idx, const char *tag) {
+    for (int c = doc->nodes[idx].firstChild; c >= 0; c = doc->nodes[c].nextSibling) {
+        if (strcmp(doc->nodes[c].tag, tag) == 0) return c;
+        int deeper = find_tag_desc(doc, c, tag);
+        if (deeper >= 0) return deeper;
+    }
+    return -1;
+}
+
+static int collect_template_geometry(const JpxXamlDoc *doc, int styleIdx,
+                                     const char *styleKey,
+                                     JpxXamlResourceTable *table,
+                                     char *err, size_t errCap) {
+    int tpl = find_tag_desc(doc, styleIdx, "ControlTemplate");
+    if (tpl < 0) return 1;
+    return template_walk(doc, tpl, styleKey, table, err, errCap);
+}
+
 static int build_resources(const JpxXamlDoc *doc, JpxXamlResourceTable *table,
                            char *err, size_t errCap) {
     for (int i = 0; i < doc->count; i++) {
@@ -307,16 +458,60 @@ static int build_resources(const JpxXamlDoc *doc, JpxXamlResourceTable *table,
                     }
                 }
             }
+        } else if (strcmp(node->tag, "DropShadowEffect") == 0) {
+            /* 文字阴影效果：只取颜色（StartLabelShadow）。 */
+            const char *col = JpxXamlNode_Attr(node, "Color");
+            if (col && col[0] && col[0] != '{' && thickness_key_fits(key, "Brush", NULL)) {
+                char mk[96];
+                snprintf(mk, sizeof(mk), "%s.Brush", key);
+                int fresh = 0;
+                JpxXamlResource *r =
+                    add_res(table, mk, JPX_XAML_RES_COLOR, err, errCap, &fresh);
+                if (!r) return 0;
+                if (fresh) color_to_css(col, r->color, sizeof(r->color));
+            }
+        } else if (strcmp(node->tag, "Thickness") == 0) {
+            /* Thickness 资源：属性形式（Left/Top/Right/Bottom）或文本形式
+               （"l,t,r,b"）；缺省边为 0。收成 <Key>.<Side> 四条 NUMBER。 */
+            double v[4];
+            const char *l = JpxXamlNode_Attr(node, "Left");
+            const char *t = JpxXamlNode_Attr(node, "Top");
+            const char *ri = JpxXamlNode_Attr(node, "Right");
+            const char *b = JpxXamlNode_Attr(node, "Bottom");
+            if (l || t || ri || b) {
+                v[0] = l ? atof(l) : 0;
+                v[1] = t ? atof(t) : 0;
+                v[2] = ri ? atof(ri) : 0;
+                v[3] = b ? atof(b) : 0;
+            } else if (!parse_thickness4(JpxXamlNode_Text(node), v)) {
+                continue;
+            }
+            if (!add_thickness_res(table, key, v, err, errCap)) return 0;
         } else if (strcmp(node->tag, "Style") == 0) {
-            /* Style/模板不执行，但尺寸要由主题决定：把直接子 Setter 里
-               的单值尺寸收成 "<StyleKey>.<Property>" 数值资源。 */
+            /* Style/模板不执行，但几何要由主题决定：直接子 Setter 里单值尺寸
+               收成 "<StyleKey>.<Property>"；Margin/Padding/BorderThickness 收成
+               ".<Prop>.<Side>"（字面量或 {DynamicResource} 引用 Thickness 资源）；
+               模板内带 x:Name 的元素另收一层 "<StyleKey>.<x:Name>.<Prop>"。
+               这是模板支持的最小子集：只取命名元素的几何，不执行模板。
+               隐式 key（x:Key="{x:Type ...}"）跳过：CSS 往返无法表达花括号，
+               采集它会让 export/compile 逐字节比对失配。 */
+            if (strchr(key, '{')) continue;
             for (int c = node->firstChild; c >= 0; c = doc->nodes[c].nextSibling) {
                 const JpxXamlNode *setter = &doc->nodes[c];
                 if (strcmp(setter->tag, "Setter") != 0) continue;
                 const char *prop = JpxXamlNode_Attr(setter, "Property");
                 const char *val = JpxXamlNode_Attr(setter, "Value");
-                if (!prop || !val || val[0] == '{') continue;
+                if (!prop || !val) continue;
+                if (thickness_prop(prop)) {
+                    if (!thickness_key_fits(key, prop, NULL)) continue;
+                    char mk[96];
+                    snprintf(mk, sizeof(mk), "%s.%s", key, prop);
+                    if (!collect_thickness_value(table, mk, val, err, errCap)) return 0;
+                    continue;
+                }
+                if (val[0] == '{') continue;   /* 单值尺寸的引用形式不解析 */
                 if (!metric_prop(prop)) continue;
+                if (!thickness_key_fits(key, prop, NULL)) continue;
                 char mk[96];
                 snprintf(mk, sizeof(mk), "%s.%s", key, prop);
                 int fresh = 0;
@@ -324,6 +519,7 @@ static int build_resources(const JpxXamlDoc *doc, JpxXamlResourceTable *table,
                 if (!r) return 0;
                 if (fresh) r->number = atof(val);
             }
+            if (!collect_template_geometry(doc, i, key, table, err, errCap)) return 0;
         }
     }
     return 1;
@@ -1031,16 +1227,45 @@ void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
     out->startTextColor = JpxRes_Color(table, "StartLabel",
                             JpxRes_Color(table, "ButtonForeground", out->startTextColor));
     out->panelHeight = (int)JpxRes_Number(table, "TaskbarHeight", out->panelHeight);
-    /* 任务栏几何：优先取主题 Style 里的尺寸（StartButton.Height/MinWidth 等），
-       主题没写的才落回 Luna 的观感值。shell 只消费这些 token。 */
-    out->panelPad = 3;
+    /* 任务栏几何：全部由主题资源/Style/模板几何决定，这里只做 key→token 映射；
+       兜底值 = System.xaml（RetroBar 全主题共享基座 TaskButtonWidth 等）与
+       XP Blue 惯例值。shell 不写死像素。 */
+    out->panelPad = 0;   /* XP 任务栏内容左缘贴边（Taskbar 模板无 Padding） */
     out->panelStartWidth = (int)JpxRes_Number(table, "StartButton.MinWidth", 99);
     out->panelButtonHeight = (int)JpxRes_Number(table, "StartButton.Height", 32);
-    out->panelItemWidth = (int)JpxRes_Number(table, "TaskButton.Width", 110);
-    out->panelItemGap = 3;
-    out->panelTrayWidth = (int)JpxRes_Number(table, "Tray.Width", 76);
-    out->panelRadius = 3;
-    out->panelStartIconSize = 22;
+    out->panelStartMarginRight = (int)JpxRes_Number(table, "StartButton.Margin.Right", 1);
+    out->panelStartIconW = (int)JpxRes_Number(table, "StartIcon.Width", 25);
+    out->panelStartIconH = (int)JpxRes_Number(table, "StartIcon.Height", 20);
+    out->panelStartIconMarginLeft =
+        (int)JpxRes_Number(table, "StartIcon.Margin.Left", 10);
+    out->panelStartLabelFontSize =
+        (int)JpxRes_Number(table, "StartLabel.FontSize", 0);
+    out->panelStartLabelMarginRight =
+        (int)JpxRes_Number(table, "StartLabel.Margin.Right", 26);
+    out->panelStartLabelShadow = JpxRes_Find(table, "StartLabelShadow") ? 1 : 0;
+    out->panelItemWidthDefault = (int)JpxRes_Number(table, "TaskButtonWidth", 160);
+    out->panelItemWidthMin = (int)JpxRes_Number(table, "TaskButtonMinWidth", 45);
+    out->panelItemMarginRight = (int)JpxRes_Number(table, "TaskButtonMargin.Right", 3);
+    out->panelTaskListMarginLeft =
+        (int)JpxRes_Number(table, "TaskListScrollViewer.Margin.Left", 4);
+    out->panelTaskTextInsetX =
+        (int)JpxRes_Number(table, "TaskButton.Content.Margin.Left", 8);
+    out->panelTrayMarginLeft = (int)JpxRes_Number(table, "Tray.Margin.Left", 10);
+    out->clockMarginLeft = (int)JpxRes_Number(table, "Clock.Margin.Left", 8);
+    out->clockMarginTop = (int)JpxRes_Number(table, "Clock.Margin.Top", 1);
+    out->clockMarginRight = (int)JpxRes_Number(table, "Clock.Margin.Right", 11);
+    out->clockMarginBottom = (int)JpxRes_Number(table, "Clock.Margin.Bottom", 6);
+    out->panelShowDesktopIconW =
+        (int)JpxRes_Number(table, "ShowDesktopIcon.Width", 16);
+    out->panelShowDesktopIconH =
+        (int)JpxRes_Number(table, "ShowDesktopIcon.Height", 16);
+    out->panelShowDesktopMarginL =
+        (int)JpxRes_Number(table, "ShowDesktopButton.Content.Margin.Left", 5);
+    out->panelShowDesktopMarginR =
+        (int)JpxRes_Number(table, "ShowDesktopButton.Content.Margin.Right", 3);
+    /* 圆角来自任务按钮模板（XP Blue 是嵌套 Border 的 CornerRadius=2）。 */
+    out->panelRadius =
+        (int)JpxRes_Number(table, "TaskButton.ButtonTopBorder.CornerRadius", 2);
     out->boldChromeText = 1;
     out->chrome.boldTitle = 1;
     /* 任务按钮：按下渐变 → 纯色（Watercolor 的 TaskButtonActive）→
@@ -1076,6 +1301,14 @@ void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
     if (!trayFrom) { trayFrom = JpxRes_Color(table, "TrayBackground", NULL); trayTo = trayFrom; }
     if (!trayFrom) { trayFrom = panel; trayTo = panel; }
     if (trayFrom) { out->trayFrom = trayFrom; out->trayTo = trayTo; }
+    /* 显示桌面按钮底纹（TaskListScrollButtonBackground）→ 托盘色降级。 */
+    const char *sdFrom = NULL, *sdTo = NULL;
+    gradient_ends(table, "TaskListScrollButtonBackground", &sdFrom, &sdTo);
+    if (!sdFrom) { sdFrom = JpxRes_Color(table, "TaskListScrollButtonBackground", NULL); sdTo = sdFrom; }
+    if (!sdFrom && trayFrom) { sdFrom = trayFrom; sdTo = trayTo; }
+    if (sdFrom) { out->showDesktopFrom = sdFrom; out->showDesktopTo = sdTo; }
+    /* 开始按钮文字阴影（StartLabelShadow 效果的颜色）。 */
+    out->startLabelShadowColor = JpxRes_Color(table, "StartLabelShadow.Brush", NULL);
     /* 开始按钮：位图优先；无位图时 StartButtonBackground（Watercolor）→
        任务栏色（Aero 无位图时取蓝渐变端点，经典取灰）→ 保持 Luna 绿。 */
     if (!out->startImageId) {

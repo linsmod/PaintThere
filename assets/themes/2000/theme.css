@@ -13,6 +13,18 @@
   --InputLanguageBackground: rgba(10,36,106,1.000);
   --ToolTipBackground: rgba(255,255,225,1.000);
   --ToolTipForeground: rgba(0,0,0,1.000);
+  --StartLabel.Margin.Left: 0.0;
+  --StartLabel.Margin.Top: -1.0;
+  --StartLabel.Margin.Right: 0.0;
+  --StartLabel.Margin.Bottom: 0.0;
+  --Clock.Margin.Left: 13.0;
+  --Clock.Margin.Top: 0.0;
+  --Clock.Margin.Right: 10.0;
+  --Clock.Margin.Bottom: 0.0;
+  --ToolbarThumb.Margin.Left: 3.0;
+  --ToolbarThumb.Margin.Top: 2.0;
+  --ToolbarThumb.Margin.Right: 0.0;
+  --ToolbarThumb.Margin.Bottom: 2.0;
   --GlobalFontFamily: 'Tahoma';
   --ShowDesktopIconImageSmall: url(ShowDesktopIconImageSmall.png);
   --ShowDesktopIconImageLarge: url(ShowDesktopIconImageLarge.png);

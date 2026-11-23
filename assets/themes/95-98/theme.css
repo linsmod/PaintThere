@@ -13,5 +13,25 @@
   --InputLanguageBackground: rgba(0,0,128,1.000);
   --ToolTipBackground: rgba(255,255,225,1.000);
   --ToolTipForeground: rgba(0,0,0,1.000);
+  --Tray.OuterTrayBorder.Margin.Left: 0.0;
+  --Tray.OuterTrayBorder.Margin.Top: 2.0;
+  --Tray.OuterTrayBorder.Margin.Right: 0.0;
+  --Tray.OuterTrayBorder.Margin.Bottom: 2.0;
+  --Tray.OuterTrayBorder.BorderThickness.Left: 0.0;
+  --Tray.OuterTrayBorder.BorderThickness.Top: 0.0;
+  --Tray.OuterTrayBorder.BorderThickness.Right: 0.0;
+  --Tray.OuterTrayBorder.BorderThickness.Bottom: 0.0;
+  --Tray.InnerTrayBorder.Padding.Left: 2.0;
+  --Tray.InnerTrayBorder.Padding.Top: 0.0;
+  --Tray.InnerTrayBorder.Padding.Right: 2.0;
+  --Tray.InnerTrayBorder.Padding.Bottom: 0.0;
+  --Tray.InnerTrayBorder.BorderThickness.Left: 0.0;
+  --Tray.InnerTrayBorder.BorderThickness.Top: 0.0;
+  --Tray.InnerTrayBorder.BorderThickness.Right: 0.0;
+  --Tray.InnerTrayBorder.BorderThickness.Bottom: 0.0;
   --GlobalFontFamily: 'Microsoft Sans Serif';
+  --ShowDesktopButton.Padding.Left: 0.0;
+  --ShowDesktopButton.Padding.Top: 2.0;
+  --ShowDesktopButton.Padding.Right: 2.0;
+  --ShowDesktopButton.Padding.Bottom: 2.0;
 }

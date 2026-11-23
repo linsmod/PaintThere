@@ -13,7 +13,9 @@
 extern "C" {
 #endif
 
-#define JPX_XAML_MAX_RESOURCES 256
+/* 厚度/模板几何采集后 XP Silver 实测 510 条，512 余量不足；
+   NUMBER 只驻 guest 内存（不进下发通道），代价是表容量本身。 */
+#define JPX_XAML_MAX_RESOURCES 768
 
 /* 资源种类即预编译二进制的元素标记 id（xalm.bin 的 tagId），数值冻结：
    1=SOLID_COLOR 2=LINEAR_GRADIENT 3=RADIAL_GRADIENT 4=NUMBER

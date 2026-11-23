@@ -1,0 +1,20 @@
+:root {
+  --ButtonInnerHighlight: Transparent;
+  --ButtonHighlight: rgba(255,255,255,1.000);
+  --ButtonLight: rgba(212,208,200,1.000);
+  --ButtonFace: rgba(212,208,200,1.000);
+  --ButtonShadow: rgba(128,128,128,1.000);
+  --ButtonDarkShadow: rgba(64,64,64,1.000);
+  --ButtonFlashingFace: rgba(10,36,106,1.000);
+  --ButtonForeground: rgba(0,0,0,1.000);
+  --ButtonFlashingForeground: rgba(255,255,255,1.000);
+  --ClockForeground: rgba(0,0,0,1.000);
+  --InputLanguageForeground: rgba(255,255,255,1.000);
+  --InputLanguageBackground: rgba(10,36,106,1.000);
+  --ToolTipBackground: rgba(255,255,225,1.000);
+  --ToolTipForeground: rgba(0,0,0,1.000);
+  --GlobalFontFamily: 'Tahoma';
+  --StartIconImage: url(StartIconImage.png);
+  --ShowDesktopIconImageSmall: url(ShowDesktopIconImageSmall.png);
+  --ShowDesktopIconImageLarge: url(ShowDesktopIconImageLarge.png);
+}

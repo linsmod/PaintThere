@@ -1,0 +1,6 @@
+:root {
+  --ButtonInnerHighlight: Transparent;
+  --StartIconImage: url(StartIconImage.png);
+  --ShowDesktopIconImageSmall: url(ShowDesktopIconImageSmall.png);
+  --ShowDesktopIconImageLarge: url(ShowDesktopIconImageLarge.png);
+}

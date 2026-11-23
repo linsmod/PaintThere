@@ -239,15 +239,34 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
             }
         }
 
-        /* 条目的上/下内边是不同颜色（上浅下深），颜色来自主题边框资源。 */
-        if (t->taskBorderTopColor) {
-            snprintf(idbuf, sizeof(idbuf), "tb_item_top_%d", win->id);
-            append_rect(out, idbuf, ix, by, L.itemW, 1, t->taskBorderTopColor, 0.0f);
-        }
-        if (t->taskBorderBottomColor) {
-            snprintf(idbuf, sizeof(idbuf), "tb_item_bottom_%d", win->id);
-            append_rect(out, idbuf, ix, by + bh - 1, L.itemW, 1,
-                        t->taskBorderBottomColor, 0.0f);
+        /* 条目 bevel：未聚焦凸起（上/左浅、下/右深），聚焦按下反转
+           （XP Luna 的四边 1px，颜色来自主题边框资源）。 */
+        {
+            const char *top = t->taskBorderTopColor;
+            const char *left = t->taskBorderLeftColor;
+            const char *bottom = t->taskBorderBottomColor;
+            const char *right = t->taskBorderRightColor;
+            if (win->focused) {
+                const char *swap;
+                swap = top; top = bottom; bottom = swap;
+                swap = left; left = right; right = swap;
+            }
+            if (top) {
+                snprintf(idbuf, sizeof(idbuf), "tb_item_top_%d", win->id);
+                append_rect(out, idbuf, ix, by, L.itemW, 1, top, 0.0f);
+            }
+            if (bottom) {
+                snprintf(idbuf, sizeof(idbuf), "tb_item_bottom_%d", win->id);
+                append_rect(out, idbuf, ix, by + bh - 1, L.itemW, 1, bottom, 0.0f);
+            }
+            if (left) {
+                snprintf(idbuf, sizeof(idbuf), "tb_item_left_%d", win->id);
+                append_rect(out, idbuf, ix, by + 1, 1, bh - 2, left, 0.0f);
+            }
+            if (right) {
+                snprintf(idbuf, sizeof(idbuf), "tb_item_right_%d", win->id);
+                append_rect(out, idbuf, ix + L.itemW - 1, by + 1, 1, bh - 2, right, 0.0f);
+            }
         }
 
         char label[128];

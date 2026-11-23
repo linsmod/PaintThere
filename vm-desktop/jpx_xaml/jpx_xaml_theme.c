@@ -1086,11 +1086,15 @@ void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
         if (!sf && panel) { sf = panel; st = panel; }
         if (sf) { out->startFrom = sf; out->startTo = st; }
     }
-    /* 条目 3D 边框：XP 有专用 Top/BottomBorder；经典用高光/阴影。 */
+    /* 条目 3D 边框：XP 有专用 Top/Bottom/Left/RightBorder；经典用高光/阴影。 */
     out->taskBorderTopColor = JpxRes_Color(table, "TaskButtonTopBorder",
                                 JpxRes_Color(table, "ButtonHighlight", out->taskBorderTopColor));
     out->taskBorderBottomColor = JpxRes_Color(table, "TaskButtonBottomBorder",
                                 JpxRes_Color(table, "ButtonShadow", out->taskBorderBottomColor));
+    out->taskBorderLeftColor = JpxRes_Color(table, "TaskButtonLeftBorder",
+                                 JpxRes_Color(table, "ButtonHighlight", NULL));
+    out->taskBorderRightColor = JpxRes_Color(table, "TaskButtonRightBorder",
+                                  JpxRes_Color(table, "ButtonShadow", NULL));
     /* 位图皮肤：uri 为空的（Aero 的 {DynamicResource} 形式，解析器拿不到路径）
        视为不存在，走上面的色块降级，避免前端 drawImg 空图。 */
     const JpxXamlResource *img = JpxRes_Find(table, "StartButtonImage");

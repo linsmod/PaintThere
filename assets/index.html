@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>vm-desktop 主题预览</title>
+<style>
+  body { margin: 0; min-height: 100vh; background: linear-gradient(#1e6fd9, #6fa8e8);
+         font: 14px "Microsoft YaHei", sans-serif; color: #fff;
+         display: flex; align-items: center; justify-content: center; }
+  .card { background: rgba(0,0,0,0.35); padding: 24px 32px; border-radius: 6px; min-width: 420px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { opacity: 0.8; font-size: 12px; margin-bottom: 16px; }
+  li { margin: 3px 0; list-style: none; }
+  a { color: #ffd76e; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .css { opacity: 0.6; font-size: 12px; margin-left: 10px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>主题预览</h1>
+  <div class="sub">预览壳把导出的 CSS 子集展开成真交互态（hover / 按下 / 开始按钮三态）</div>
+  <ul id="list">加载中…</ul>
+</div>
+<script>
+/* 数据源 themes/index.json 由 tools/export_theme_css.py --all 维护。 */
+fetch("themes/index.json").then(r => r.json()).then(slugs => {
+  const ul = document.getElementById("list");
+  ul.innerHTML = "";
+  for (const s of slugs) {
+    const li = document.createElement("li");
+    li.innerHTML = `<a href="preview.html?theme-dir=${s}">${s}</a>` +
+      `<span class="css">themes/${s}/theme.css</span>`;
+    ul.appendChild(li);
+  }
+}).catch(e => {
+  document.getElementById("list").textContent =
+    "themes/index.json 加载失败：" + e.message;
+});
+</script>
+</body>
+</html>

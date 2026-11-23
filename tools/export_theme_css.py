@@ -146,7 +146,8 @@ def export(theme_dir: Path, out_dir: Path) -> Path:
         src = theme_dir / rel
         dst = out_dir / rel
         if src.is_file():
-            shutil.copyfile(src, dst)
+            if src.resolve() != dst.resolve():   # 原地导出（css 入主题目录）时跳过
+                shutil.copyfile(src, dst)
         elif not dst.is_file():
             raise FileNotFoundError(f"missing image: {src}")
     return css
@@ -202,10 +203,18 @@ def main() -> int:
         return 1 if fail else 0
 
     for t in themes:
-        slug = t.name
-        out = Path(args.out) if args.out else ROOT / "temp" / "css" / slug
+        # 默认原地导出（theme.css 是主题包的一部分，与 bins/图片同目录）；
+        # --out 指定临时导出目录。
+        out = Path(args.out) if args.out else t
         css = export(t, out)
         print(f"{t.name:24s} -> {css} ({css.stat().st_size} B)")
+    # --all 时维护 themes/index.json：assets/index.html 的主题列表数据源。
+    if args.all:
+        slugs = sorted(p.name for p in THEMES_ROOT.iterdir()
+                       if p.is_dir() and (p / "theme.css").is_file())
+        (THEMES_ROOT / "index.json").write_text(
+            __import__("json").dumps(slugs, indent=1), encoding="utf-8")
+        print(f"[css] index.json: {len(slugs)} themes")
     return 0
 
 

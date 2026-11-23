@@ -38,8 +38,9 @@
    协议约束不变：主题仍是扁平资源表，结构在骨架里；var() 引用、选择器等
    原始 CSS 特性不进协议，预览的"动态"全部由本页 JS 生成。 */
 const params = new URLSearchParams(location.search);
+/* theme-dir 简写指向 assets 根下的 themes/<slug>/（预览壳固定在 assets 根）。 */
 const cssUrl = params.get("theme") || (params.get("theme-dir")
-  ? params.get("theme-dir").replace(/\/?$/, "/") + "theme.css" : null);
+  ? "themes/" + params.get("theme-dir").replace(/\/?$/, "/") + "theme.css" : null);
 const err = document.getElementById("err");
 const hint = document.getElementById("hint");
 let cssDir = "";   /* css 文件所在目录（url() 值的解析基准） */
@@ -108,15 +109,18 @@ function render(res) {
       background: ${cssValue(res.TaskButtonBackground || "rgba(59,142,232,0.9)")};
       ${res.TaskButtonTopBorder ? `border-top: 1px solid ${cssValue(res.TaskButtonTopBorder)};` : ""}
       ${res.TaskButtonBottomBorder ? `border-bottom: 1px solid ${cssValue(res.TaskButtonBottomBorder)};` : ""}
+      ${res.TaskButtonLeftBorder ? `border-left: 1px solid ${cssValue(res.TaskButtonLeftBorder)};` : ""}
+      ${res.TaskButtonRightBorder ? `border-right: 1px solid ${cssValue(res.TaskButtonRightBorder)};` : ""}
     }
     #item1:hover, #item2:hover {
       background: ${cssValue(res.TaskButtonBackgroundHover || res.TaskButtonBackground || "rgba(120,180,255,0.9)")};
     }
-    #item1:active, #item2:active {
+    /* 按下/聚焦：bevel 反转（上/左深、下/右浅），与 shell 侧一致。 */
+    #item1:active, #item2:active, .tb-item.active {
       background: ${cssValue(res.TaskButtonBackgroundPressed || res.TaskButtonBackground || "rgba(30,80,180,0.9)")};
-    }
-    .tb-item.active {
-      background: ${cssValue(res.TaskButtonBackgroundPressed || res.TaskButtonBackground || "rgba(30,80,180,0.9)")};
+      ${res.TaskButtonTopBorder && res.TaskButtonBottomBorder ? `
+      border-top-color: ${cssValue(res.TaskButtonBottomBorder)};
+      border-bottom-color: ${cssValue(res.TaskButtonTopBorder)};` : ""}
       font-weight: bold;
     }
     #tray {

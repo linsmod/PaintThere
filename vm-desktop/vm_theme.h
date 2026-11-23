@@ -56,7 +56,9 @@ typedef struct {
     const char *taskButtonHoverFrom, *taskButtonHoverTo;
     const char *taskButtonActiveFrom, *taskButtonActiveTo;
     const char *taskButtonTextColor;
+    /* 条目 bevel：未聚焦凸起（上/左浅、下/右深），聚焦按下反转。 */
     const char *taskBorderTopColor, *taskBorderBottomColor;
+    const char *taskBorderLeftColor, *taskBorderRightColor;
     /* 右侧托盘区与时钟 */
     const char *trayFrom, *trayTo;
     const char *trayIconId;      /* 托盘内的「显示桌面」图标 */

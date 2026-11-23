@@ -386,9 +386,11 @@ async function boot() {
                 clientId: cid, color, frameId: lastFrameId });
   };
   document.addEventListener('mousemove', (e) => {
-    // 指针移出画布就不再上报：越界坐标会把服务端的 hover 状态清掉，
+    // 未按下时移出画布就不再上报：越界坐标会把服务端的 hover 状态清掉，
     // 远端指针停在最后位置即可。
-    if (!insideCanvas(e)) {
+    // 按下（拖动）时移出画布继续上报：toCanvasPoint 已钳位到边界，
+    // guest 侧对应轴停在 0 / WIDTH-1，拖动不会中途断掉。
+    if (!insideCanvas(e) && e.buttons === 0) {
       pendingMove = null;
       if (moveTimer) {
         clearTimeout(moveTimer);

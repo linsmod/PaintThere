@@ -57,6 +57,8 @@ struct VmServer {
     void *resPackUserData;
     VmResPackImageAt resPackImageAt;
     void *resPackImageUserData;
+    /* 主题字体路径：非空时 /font.ttf 直接读它（前端与 guest 共用同一文件）。 */
+    char fontPath[640];
     VmFullFrameProvider fullFrameProvider;
     void *fullFrameUserData;
     VmTickHandler tickHandler;
@@ -487,7 +489,11 @@ static void vm_serve_static(VmServer *s, vm_socket fd, const char *path) {
         return;
     }
     char full[640];
-    if (!vm_safe_join(full, sizeof(full), s->webRoot, name)) {
+    /* 主题字体：允许指向 webRoot 之外的显式路径（例如系统 simsun.ttc），
+       这样前端与 guest 用同一份字体文件，度量与字形才一致。 */
+    if (strcmp(path, "/font.ttf") == 0 && s->fontPath[0]) {
+        snprintf(full, sizeof(full), "%s", s->fontPath);
+    } else if (!vm_safe_join(full, sizeof(full), s->webRoot, name)) {
         vm_send_response(fd, 403, "Forbidden", "text/plain", "forbidden", 9);
         return;
     }
@@ -499,9 +505,9 @@ static void vm_serve_static(VmServer *s, vm_socket fd, const char *path) {
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    /* 中文字体（如 SimHei 9.7MB）需要更大的静态资源上限；
+    /* 中文字体（SimHei 9.7MB / simsun.ttc 18MB）需要更大的静态资源上限；
        这是本地演示服务，只提供白名单内的几个静态文件，提高上限无外部风险。 */
-    if (size < 0 || size > 16 * 1024 * 1024) {
+    if (size < 0 || size > 32 * 1024 * 1024) {
         fclose(f);
         vm_send_response(fd, 413, "Payload Too Large", "text/plain", "too large", 9);
         return;
@@ -778,6 +784,11 @@ void VmServer_SetResPackImageProvider(VmServer *s, VmResPackImageAt provider, vo
     if (!s) return;
     s->resPackImageAt = provider;
     s->resPackImageUserData = userData;
+}
+
+void VmServer_SetFontPath(VmServer *s, const char *path) {
+    if (!s) return;
+    snprintf(s->fontPath, sizeof(s->fontPath), "%s", path ? path : "");
 }
 
 void VmServer_SetFullFrameProvider(VmServer *s, VmFullFrameProvider provider, void *userData) {

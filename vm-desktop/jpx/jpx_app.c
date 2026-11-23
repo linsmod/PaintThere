@@ -312,6 +312,8 @@ JpxApp *Jpx_Create(const JpxOptions *opt) {
     }
     VmServer_SetResourceProvider(app->server, resource_provider, app);
     VmServer_SetResPackProvider(app->server, respack_provider, app);
+    /* 前端 fetch('./font.ttf') 拿到的是同一份字体：度量与字形才不会两边不一致。 */
+    if (app->opt.fontPath) VmServer_SetFontPath(app->server, app->opt.fontPath);
     VmServer_SetFrameProvider(app->server, frame_provider, app);
     VmServer_SetFullFrameProvider(app->server, full_frame_provider, app);
     VmServer_SetInputHandler(app->server, input_handler, app);

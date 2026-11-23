@@ -66,6 +66,17 @@ static void append_text(VmCmdBuffer *out, const char *id, int x, int y, int w, i
     VmDisplay_CopyStr(c->args.drawText.color, sizeof(c->args.drawText.color), color);
 }
 
+static void append_path(VmCmdBuffer *out, const char *id, int x, int y, int w, int h,
+                        const char *d, const char *paint) {
+    VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_PATH, id);
+    if (!c) return;
+    VmRect r = {(float)x, (float)y, (float)w, (float)h};
+    c->rect = r;
+    c->args.drawPath.rect = r;
+    VmDisplay_CopyStr(c->args.drawPath.path, sizeof(c->args.drawPath.path), d);
+    VmDisplay_CopyStr(c->args.drawPath.paint, sizeof(c->args.drawPath.paint), paint);
+}
+
 static void append_img(VmCmdBuffer *out, const char *id, int x, int y, int w, int h,
                        const char *imgId, int radius) {
     VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_IMG, id);
@@ -175,6 +186,25 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
         char idbuf[48];
         snprintf(idbuf, sizeof(idbuf), "tb_item_%d", win->id);
         append_rect(out, idbuf, ix, by, SHELL_ITEM_W, bh, paint, 3.0f);
+
+        /* hover：条目提亮；XP 的缩略图占位底纹用矢量棋盘格（DrawingBrush 转 path），
+           真实内容缩略图未做，这里只表达「有预览入口」。 */
+        int hovered = 0;
+        if (sh->wm->pointerValid) {
+            int px = sh->wm->pointerX, py = sh->wm->pointerY;
+            hovered = px >= ix && px < ix + SHELL_ITEM_W && py >= by && py < by + bh;
+        }
+        if (hovered) {
+            snprintf(idbuf, sizeof(idbuf), "tb_item_hover_%d", win->id);
+            append_rect(out, idbuf, ix, by, SHELL_ITEM_W, bh, "rgba(255,255,255,0.14)", 3.0f);
+            int gs = bh - 10;
+            if (gs > 6) {
+                snprintf(idbuf, sizeof(idbuf), "tb_item_thumb_%d", win->id);
+                append_path(out, idbuf, ix + SHELL_ITEM_W - gs - 5, by + 5, gs, gs,
+                            "M0 0h0.5v0.5H0z M0.5 0.5h0.5v0.5H0.5z",
+                            "rgba(255,255,255,0.55)");
+            }
+        }
 
         /* XP 条目有 1px 深色内边 + 亮色内线；没有皮肤时留空。 */
         if (t->taskButtonFrom) {

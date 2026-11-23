@@ -32,6 +32,7 @@ typedef enum {
     VM_CMD_CLIP_POP,
     VM_CMD_OVERLAY_PUSH,
     VM_CMD_OVERLAY_POP,
+    VM_CMD_DRAW_PATH,
     VM_CMD_LOAD_IMG,
     VM_CMD_DEFINE_PATTERN,
     VM_CMD_DEFINE_STYLE,
@@ -75,6 +76,14 @@ typedef struct {
     char tint[VM_DISPLAY_MAX_STR];  /* empty string = untinted */
     float cornerRadius;
 } VmDrawImgArgs;
+
+/* 矢量填充：path 是 SVG path data，坐标取 0..1 归一化（前端按 rect 缩放后 fill）。
+   用于 DrawingBrush 这类只有几何没有像素的皮肤（如 XP 缩略图棋盘格）。 */
+typedef struct {
+    VmRect rect;
+    char path[192];
+    char paint[64];
+} VmDrawPathArgs;
 
 typedef struct {
     char imgId[VM_DISPLAY_MAX_STR];
@@ -138,6 +147,7 @@ typedef struct {
         VmDrawBorderArgs drawBorder;
         VmDrawTextArgs drawText;
         VmDrawImgArgs drawImg;
+        VmDrawPathArgs drawPath;
         VmRect clip;
         /* overlay 颜色。必须是内联数组而不是指针：命令要跨帧复用、并且要
            跨进程传给 WMS，指针会指向调用方的临时缓冲。 */

@@ -122,6 +122,14 @@ static void emit_command(StrBuf *b, const VmDrawCommand *c) {
             printf_(b, ",%g", a->cornerRadius);
             break;
         }
+        case VM_CMD_DRAW_PATH: {
+            const VmDrawPathArgs *a = &c->args.drawPath;
+            puts_(b, "drawPath\",\"args\":[");
+            rect_args(b, a->rect);
+            puts_(b, ","); json_string(b, a->path);
+            puts_(b, ","); json_string(b, a->paint);
+            break;
+        }
         case VM_CMD_CLIP_PUSH: {
             puts_(b, "clipPush\",\"args\":[");
             rect_args(b, c->args.clip);

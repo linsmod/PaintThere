@@ -44,6 +44,9 @@ void VmServer_SetResPackProvider(VmServer *server, VmResPackProvider provider, v
 /* 资源包内的图片：设置后 /respack/<id> 返回打包容器（一次 HTTP 拿全），不设则只返回 JSON。 */
 void VmServer_SetResPackImageProvider(VmServer *server, VmResPackImageAt provider,
                                       void *userData);
+/* 主题字体：非空时 GET /font.ttf 直接读该路径（可指向系统字体），
+   前端与 guest 因此用同一份字体文件，度量与字形一致。 */
+void VmServer_SetFontPath(VmServer *server, const char *path);
 void VmServer_SetFullFrameProvider(VmServer *server, VmFullFrameProvider provider, void *userData);
 void VmServer_SetTickHandler(VmServer *server, int intervalMs, VmTickHandler handler, void *userData);
 /* 向所有已连接客户端广播一次 resources-update 事件（覆盖 defineStyle/Pattern 缓存）。

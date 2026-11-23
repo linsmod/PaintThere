@@ -41,7 +41,10 @@ int VmFont_LoadFile(const char *ttfPath, int fontId) {
     if (!data) return -2;
 
     VmFontSlot *slot = &g_fonts[fontId];
-    if (!stbtt_InitFont(&slot->info, data, 0)) {
+    /* TTC（字体集合，如 simsun.ttc）取第 0 个字体；普通 TTF 返回 0。 */
+    int offset = stbtt_GetFontOffsetForIndex(data, 0);
+    if (offset < 0) offset = 0;
+    if (!stbtt_InitFont(&slot->info, data, offset)) {
         free(data);
         return -3;
     }

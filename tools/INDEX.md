@@ -2,6 +2,7 @@
 
 - `build_vm.py` — 一次构建桌面服务端 `demo_wm.exe` 与 C 渲染器 `vm_renderer.exe`：`python tools/build_vm.py`。统一 CMake 工程 `vm-desktop/CMakeLists.txt`，产物都在 `vm-desktop/build/`。脚本同步 canvas-cpp 的 `libcanvas.a` / `antjsb.dll`，再 cmake 配置 + 构建。环境变量：`CANVAS_BUILD_DIR`、`CANVAS_SOURCE_DIR`、`CLAY_DIR`、`VM_BUILD_DIR`。注意 Windows 下需先停掉运行中的 exe 才能覆盖（启动脚本会先按端口停旧实例）。
 - `vm-desktop/CMakeLists.txt` — 统一 CMake 工程：`demo_wm` 目标链接 Clay + ws2_32，`vm_renderer` 目标链接 canvas-cpp/ant；两者一次 `--build` 产出。
+- `extract_system_font.py` — 从系统 TTC 提取单个字体为 TTF 并可选子集化：`python tools/extract_system_font.py simsun --subset`，输出 `temp/fonts/simsun.ttf`（约 2.5 MB）。用途：`demo_xaml --font` 指定主题字体，前端与 guest 共用同一文件。依赖 fontTools（已装 4.56）；系统字体有版权，输出不进仓库（`temp/` 不受 git 管理）。
 - `start_vm_renderer.py` — 一键启动 C 版 VM 渲染器：`python tools/build_vm.py && python tools/start_vm_renderer.py`。同时拉起 SSE 服务端与 `vm_renderer.exe`，进程级禁用代理，Ctrl+C 一起停止。调试用环境变量：`VM_DESKTOP_PORT`、`VM_RENDERER_FRAMES`（>0 时跑满帧数自动退出）。
 - `assets/vm_renderer.js` — C 渲染器页面：复用 `app.js` 原语 + wasm 字体 + `EventSource`，无兼容 shim。将 `app.js` 所需但 SDK 缺失的标准 API（`ctx.canvas`、context 缓存）在页面入口对齐。
 - `start_vm_desktop.py` — 零参数启动浏览器版 VM 桌面：`python tools/start_vm_desktop.py` 启 `demo_wm`；`python tools/start_vm_desktop.py demo_jpx` 启 JPX 应用外壳（开始菜单 / ProcMan / Files）。自动定位 `assets/`、显式传 webRoot 绝对路径、检查 `build_vm.py` 产物、按端口停掉目标程序的旧实例后启动并打开浏览器。脚本在前台保持运行，按 Ctrl+C 会停止它拉起的 demo。两者默认端口不同（`demo_wm` 9000 / `demo_jpx` 9050），可同时开着对比。调试用环境变量：`VM_DESKTOP_PORT`、`VM_DESKTOP_NO_BROWSER=1`、`VM_DESKTOP_APP`（命令行参数优先）。

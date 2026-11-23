@@ -431,6 +431,25 @@ function drawBorder(x, y, w, h, color, widths, cornerRadius = 0) {
     applyOverlay(x, y, w, h);
 }
 
+/* 矢量填充：path 是 SVG path data，坐标取 0..1，按 rect 缩放后填充。
+   DrawingBrush 这类只有几何、没有像素的皮肤走这条路（不需要位图）。 */
+function drawPath(x, y, w, h, d, paint) {
+    if (!ctx || !d || w <= 0 || h <= 0) return;
+    if (typeof Path2D !== 'function') return;   // 无 Path2D 的宿主跳过
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.scale(w, h);
+    const p = resolvePaint(paint, '#FFFFFF');
+    if (p && typeof p === 'object') {
+        ctx.fillStyle = gradientFill(p, 0, 0, 1, 1, '#FFFFFF');
+    } else {
+        ctx.fillStyle = resolveColor(p);
+    }
+    ctx.fill(new Path2D(d));
+    ctx.restore();
+    applyOverlay(x, y, w, h);
+}
+
 // 栅格化失败的 key：避免逐帧重试并逐帧刷错误日志，字体重新加载后放开
 const rasterFailed = new Set();
 
@@ -878,6 +897,7 @@ const commandHandlers = {
     clear,
     drawRect,
     drawBorder,
+    drawPath,
     drawText,
     clipPush,
     clipPop,
@@ -918,6 +938,7 @@ export {
     clear,
     drawRect,
     drawBorder,
+    drawPath,
     drawText,
     clipPush,
     clipPop,

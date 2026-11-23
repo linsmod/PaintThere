@@ -41,7 +41,10 @@ int loadFont(int fontId, const unsigned char *ttf, int len) {
     unsigned char *copy = (unsigned char *)malloc((size_t)len);
     if (!copy) return -2;
     memcpy(copy, ttf, (size_t)len);
-    if (!stbtt_InitFont(&slot->info, copy, 0)) {
+    /* TTC（字体集合，如 simsun.ttc）取第 0 个字体；普通 TTF 返回 0。 */
+    int offset = stbtt_GetFontOffsetForIndex(copy, 0);
+    if (offset < 0) offset = 0;
+    if (!stbtt_InitFont(&slot->info, copy, offset)) {
         free(copy);
         return -3;
     }

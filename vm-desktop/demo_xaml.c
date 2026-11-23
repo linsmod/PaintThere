@@ -148,12 +148,16 @@ int main(int argc, char **argv) {
     opt.tileH = 100;
     opt.port = argc > 1 ? (unsigned short)atoi(argv[1]) : 9060;
     opt.webRoot = argc > 2 ? argv[2] : "../assets";
-    /* 可选：--theme <path> 加载真实 ResourceDictionary 文件（如 RetroBar 的 XP Blue）。 */
+    /* 可选：--theme <path> 加载真实 ResourceDictionary 文件（如 RetroBar 的 XP Blue）；
+       --font <path> 指定主题字体（可指向系统字体，前端与 guest 共用同一文件）。 */
     const char *themePath = NULL;
+    const char *fontOverride = NULL;
     for (int i = 3; i + 1 < argc; i++) {
         if (strcmp(argv[i], "--theme") == 0) themePath = argv[i + 1];
+        else if (strcmp(argv[i], "--font") == 0) fontOverride = argv[i + 1];
     }
-    snprintf(fontPath, sizeof(fontPath), "%s/font.ttf", opt.webRoot);
+    if (fontOverride) snprintf(fontPath, sizeof(fontPath), "%s", fontOverride);
+    else snprintf(fontPath, sizeof(fontPath), "%s/font.ttf", opt.webRoot);
     opt.fontPath = fontPath;
     opt.logLevel = 2;
 

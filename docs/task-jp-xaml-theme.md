@@ -262,12 +262,40 @@ Clay 的 `backgroundColor` 只吃单色，渐变填不进去。方案是给 WM �
 - 标题栏文字与「开始」文字做伪粗体：同色偏移 1px 再画一次（stb 光栅化不做合成粗体）。
   标题的第二次绘制 id 后缀 `_b`，只在 `chrome.titleTextColor` 非空（XP）时启用。
 
+### S7d：可见细节（最大化 / 按钮渐变 / 条目 hover）（2026-11-23）
+
+- 最大化窗口：`bodyRadius`/`titleRadius` 归零，且不画外框（`if (!maxed)` 跳过 border 命令），
+  与 XP 最大化行为一致。
+- 标题栏三个按钮改为渐变色块：`s_cap_btn`（浅蓝）/ `s_cap_close`（红），由
+  `VmTheme_AppendResources` 在 XP 皮肤下生成（`titleActiveFrom` 非空即生成）。
+- 任务栏条目 hover：读全局指针判定命中，叠一层 `rgba(255,255,255,0.14)` 提亮。
+
+### S7e：矢量填充原语 drawPath（2026-11-23）
+
+- `VM_CMD_DRAW_PATH` + `VmDrawPathArgs{rect, path[192], paint[64]}`：`path` 是 SVG path data，
+  坐标取 0..1 归一化；前端 `translate/scale` 后 `fill(new Path2D(d))`。
+- 落点：任务栏条目 hover 时的缩略图占位底纹，直接用 RetroBar `DrawingBrush` 的几何
+  `M0 0h0.5v0.5H0z M0.5 0.5h0.5v0.5H0.5z`（等价于原始 `M 1 1 L 1 3 L 3 3 L 3 1 z` 缩放到 0..1）。
+- 真实内容缩略图**未做**（需要把窗口内容缩放渲染，是独立特性）；这里只表达「有预览入口」。
+
+### S7f：主题字体（宋体）（2026-11-23）
+
+- `vm_font.c` 与 `stb_font_wasm.c` 改用 `stbtt_GetFontOffsetForIndex(data, 0)`，
+  为 TTC 留出通道（普通 TTF 返回 0，行为不变）。
+- 但重量级 wasm 未重编（本机 emsdk 只有脚本、没有安装 emscripten），因此实际走
+  **TTC → TTF 提取**：`tools/extract_system_font.py` 用 fontTools 从 `simsun.ttc` 取字体 0，
+  可 `--subset` 裁到 ASCII + GB2312（实测 2.5 MB）。
+- `VmServer_SetFontPath`：非空时 `GET /font.ttf` 直接读该路径（可指向 `temp/fonts/simsun.ttf`），
+  前端与 guest 共用同一文件；静态资源上限 16 MB → 32 MB。
+- `demo_xaml --font <path>` 指定主题字体；`Jpx_Create` 把 `opt.fontPath` 转给 server。
+- 字体文件不进仓库：系统字体有版权，`temp/` 不受 git 管理。
+
+验证：`--font temp/fonts/simsun.ttf` 启动后 `/font.ttf` 返回 2606576 B，截图确认中文为宋体
+（标题与「开始」为伪粗体）；hover 帧出现 `drawPath`（`tb_item_thumb_1`，16×16 棋盘格）；
+最大化截图确认直角、无外框、内容自适应。
+
 **剩余 gap（未做）**
 - RetroBar 的 XP 主题只有任务栏资源；窗口标题栏/边框/控件是按 Luna 惯例手写的近似值，不是从主题文件读的。
-- 字体仍是 `assets/font.ttf`（SimHei 黑体），XP 中文界面是宋体 9pt。实测障碍：
-  系统里中文宋体只有 `simsun.ttc`（TTC 集合，18 MB），而 `stb_font_wasm.c` 与 `vm_font.c` 都用
-  `stbtt_InitFont(..., offset=0)`，不支持 TTC；`tahoma.ttf` 只有拉丁字形，缺中文会画方框，
-  而引擎没有字体回退链。要真正换字体需改两处 STB 初始化支持 TTC + 下发 18 MB，收益仅是字形。
-- `DrawingBrush` 矢量：本主题里只用于 `TaskButtonThumbnail` 的 6×6 棋盘格底纹，而缩略图功能本身未实现，
-  画出来也看不见；要做需要新增 `drawPath` 原语（SVG path data）并接入 `Path2D`。
+- 任务栏缩略图只有占位底纹，没有窗口内容缩放预览。
 - 桌面无壁纸（图片资源），只用蓝天渐变近似。
+- 字体需要手动跑一次 `tools/extract_system_font.py` 并在启动时传 `--font`；未做自动探测。

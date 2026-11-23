@@ -119,4 +119,9 @@ void VmTheme_AppendResources(VmDisplayList *out, const VmTheme *theme) {
     append_gradient_pair(out, "task", t->taskButtonFrom, t->taskButtonTo);
     append_gradient_pair(out, "task_active", t->taskButtonActiveFrom, t->taskButtonActiveTo);
     append_gradient_pair(out, "tray", t->trayFrom, t->trayTo);
+    /* 标题栏三个按钮：最小化/最大化浅蓝，关闭红。Luna 的按钮是竖直渐变。 */
+    if (t->titleActiveFrom) {
+        append_gradient_pair(out, "cap_btn", "rgba(102,156,240,1)", "rgba(48,107,206,1)");
+        append_gradient_pair(out, "cap_close", "rgba(234,110,92,1)", "rgba(190,56,38,1)");
+    }
 }

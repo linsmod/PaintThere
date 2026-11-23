@@ -858,9 +858,11 @@ static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
                         win->w + 12, win->h + 12, "rgba(0,0,0,0.42)", 10);
     }
 
-    /* 现代主题是圆角卡片；XP 窗口是直角，只保留标题栏顶部一点圆角。 */
-    const int bodyRadius = ch->showShadow ? 8 : 0;
-    const int titleRadius = ch->showShadow ? 7 : 4;
+    /* 现代主题是圆角卡片；XP 窗口是直角，只保留标题栏顶部一点圆角。
+       最大化后贴满工作区：全部直角，且不画外框（与 XP 行为一致）。 */
+    const int maxed = win->maximized;
+    const int bodyRadius = (ch->showShadow && !maxed) ? 8 : 0;
+    const int titleRadius = maxed ? 0 : (ch->showShadow ? 7 : 4);
 
     snprintf(idbuf, sizeof(idbuf), "w%d_body", win->id);
     append_rect_cmd(out, idbuf, bodyX, bodyY, bodyW, bodyH,
@@ -892,17 +894,17 @@ static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
                           rect_contains(maxRect, wm->pointerX, wm->pointerY);
             int overClose = wm->pointerValid &&
                             rect_contains(closeRect, wm->pointerX, wm->pointerY);
-            /* XP 的标题按钮是常驻实心色块（关闭红）；现代主题只在 hover 时提示。 */
+            /* XP 的标题按钮是常驻渐变块（关闭红）；现代主题只在 hover 时提示。 */
             if (!ch->showShadow) {
                 snprintf(idbuf, sizeof(idbuf), "w%d_btn_min_bg", win->id);
                 append_rect_cmd(out, idbuf, (int)minRect.x, (int)minRect.y, size, size,
-                                "rgba(70,132,228,0.90)", 3);
+                                "s_cap_btn", 3);
                 snprintf(idbuf, sizeof(idbuf), "w%d_btn_max_bg", win->id);
                 append_rect_cmd(out, idbuf, (int)maxRect.x, (int)maxRect.y, size, size,
-                                "rgba(70,132,228,0.90)", 3);
+                                "s_cap_btn", 3);
                 snprintf(idbuf, sizeof(idbuf), "w%d_btn_close_bg", win->id);
                 append_rect_cmd(out, idbuf, (int)closeRect.x, (int)closeRect.y, size, size,
-                                "rgba(226,84,60,0.95)", 3);
+                                "s_cap_close", 3);
             }
             if (overMin) {
                 snprintf(idbuf, sizeof(idbuf), "w%d_min_hover", win->id);
@@ -959,9 +961,11 @@ static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
                             "rgba(255,255,255,0.95)");
         }
 
-        snprintf(idbuf, sizeof(idbuf), "w%d_border", win->id);
-        append_border_cmd(out, idbuf, win->x, win->y, win->w, win->h, bw,
-                          win->focused ? ch->borderFocusColor : ch->borderIdleColor);
+        if (!maxed) {
+            snprintf(idbuf, sizeof(idbuf), "w%d_border", win->id);
+            append_border_cmd(out, idbuf, win->x, win->y, win->w, win->h, bw,
+                              win->focused ? ch->borderFocusColor : ch->borderIdleColor);
+        }
     }
 
     /* 窗口内容裁到 body：防止控件溢出画到别的窗口上。 */

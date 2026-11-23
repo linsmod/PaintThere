@@ -130,6 +130,27 @@ static void build_resources(JpxApp *app) {
         bg->args.drawRect.rect = r;
         VmDisplay_CopyStr(bg->args.drawRect.paint, sizeof(bg->args.drawRect.paint), "s_desktop");
     }
+    /* 编译时间水印（小字）：左下角贴任务栏上缘，肉眼核对正在运行的 exe
+       属于哪次构建，截图时能和任务栏同框。__DATE__/__TIME__ 是
+       jpx_app.c 的编译时刻，随每次重编变化。 */
+    {
+        VmDrawCommand *stamp =
+            VmDisplay_Append(&app->desktopProgram, VM_CMD_DRAW_TEXT, "desktop_build_stamp");
+        if (stamp) {
+            VmRect box = {8, (float)app->opt.height - 54,
+                          (float)app->opt.width - 16, 20};
+            stamp->rect = box;
+            stamp->args.drawText.rect = box;
+            char stampText[96];
+            snprintf(stampText, sizeof(stampText), "build %s %s", __DATE__, __TIME__);
+            VmDisplay_CopyStr(stamp->args.drawText.text,
+                              sizeof(stamp->args.drawText.text), stampText);
+            stamp->args.drawText.fontId = 0;
+            stamp->args.drawText.fontSize = 15;
+            VmDisplay_CopyStr(stamp->args.drawText.color,
+                              sizeof(stamp->args.drawText.color), "rgba(255,255,255,0.75)");
+        }
+    }
 
     VmResourceCommand *p = VmDisplay_AppendResource(&res, VM_CMD_DEFINE_DRAW_PROGRAM, "def_prog_desktop");
     if (p) {
@@ -420,6 +441,10 @@ const VmTheme *Jpx_VmTheme(JpxApp *app) {
 
 struct VmServer *Jpx_Server(JpxApp *app) {
     return app ? (struct VmServer *)app->server : NULL;
+}
+
+const struct VmDisplayList *Jpx_DesktopProgram(JpxApp *app) {
+    return app ? &app->desktopProgram : NULL;
 }
 
 int Jpx_WindowOpen(JpxApp *app, const JpxWindowDesc *desc) {

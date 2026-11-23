@@ -22,8 +22,6 @@
 #define SHELL_FALLBACK_START_W 72
 #define SHELL_FALLBACK_ITEM_W 110
 #define SHELL_FALLBACK_ITEM_MIN 45
-#define SHELL_FALLBACK_GAP 3
-#define SHELL_FALLBACK_RADIUS 4
 
 struct VmShell {
     VmWm *wm;
@@ -149,7 +147,10 @@ static void shell_geometry(VmShell *sh, ShellLayout *L) {
     L->startX = L->pad;
     int startMR = t->panelStartMarginRight;
     int listML = t->panelTaskListMarginLeft;
-    L->gap = t->panelItemMarginRight > 0 ? t->panelItemMarginRight : SHELL_FALLBACK_GAP;
+    /* 间距直接用主题值：派生层已按 key 缺失兜底，这里不能再把显式 0
+       当缺失回退（XP Blue 的 TaskButtonMargin 覆盖为空 = 0 = 条目相邻，
+       回退会让 3px 缝在消费端复活）。 */
+    L->gap = t->panelItemMarginRight;
     int itemDef = t->panelItemWidthDefault > 0 ? t->panelItemWidthDefault
                                                : SHELL_FALLBACK_ITEM_W;
     int itemMin = t->panelItemWidthMin > 0 ? t->panelItemWidthMin
@@ -203,18 +204,27 @@ static void shell_geometry(VmShell *sh, ShellLayout *L) {
     }
 }
 
-/* 按钮高度由主题给；允许超出栏高（XP：32 高按钮放进 30 高栏，
-   顶对齐、底部溢出画布外，绘制与命中都用同一 bh）。 */
-static int shell_button_height(VmShell *sh) {
+/* 开始按钮高度由主题给；允许超出栏高（XP：StartButton.Height=32 放进 30 高栏，
+   Top 对齐、底部溢出画布外）。任务条目 0 = 占满栏（RetroBar 的纵向 Stretch），
+   主题给正值时按给定高度居中。 */
+static int shell_start_height(VmShell *sh) {
     const int h = sh->height;
-    int bh = sh->theme->panelButtonHeight > 0 ? sh->theme->panelButtonHeight : h - 8;
+    int bh = sh->theme->panelStartButtonHeight > 0 ? sh->theme->panelStartButtonHeight : h - 8;
     if (bh < 8) bh = h - 4;
     return bh;
 }
 
+static int shell_item_height(VmShell *sh) {
+    const int h = sh->height;
+    int bh = sh->theme->panelItemHeight > 0 ? sh->theme->panelItemHeight : h;
+    if (bh < 8) bh = h;
+    return bh;
+}
+
 static float shell_radius(VmShell *sh) {
-    return sh->theme->panelRadius > 0 ? (float)sh->theme->panelRadius
-                                      : (float)SHELL_FALLBACK_RADIUS;
+    /* 0 = 直角（经典主题无 CornerRadius 资源），是显式值，不回退；
+       派生层按 key 缺失给 0，默认主题（现代深色）自带 5。 */
+    return (float)sh->theme->panelRadius;
 }
 
 static int shell_item_visible(VmShell *sh, int id) {
@@ -237,8 +247,11 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
     shell_geometry(sh, &L);
 
     /* 几何全部来自主题：高度、圆角、间距、图标尺寸都不在这里写死。
-       按钮高于栏时顶对齐（XP：32 高按钮放进 30 高栏，底部溢出画布外）。 */
-    const int bh = shell_button_height(sh);
+       开始按钮高于栏时顶对齐（XP：32 高按钮放进 30 高栏，底部溢出画布外）；
+       条目占满栏（panelItemHeight=0）时 by=y、bh=h。 */
+    const int sbh = shell_start_height(sh);
+    const int sby = sbh >= h ? y : y + (h - sbh) / 2;
+    const int bh = shell_item_height(sh);
     const int by = bh >= h ? y : y + (h - bh) / 2;
     const float radius = shell_radius(sh);
 
@@ -248,7 +261,7 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
     if (sh->wm->pointerValid) {
         int px = sh->wm->pointerX, py = sh->wm->pointerY;
         overStart = px >= x + L.startX && px < x + L.startX + L.startW &&
-                    py >= by && py < by + bh;
+                    py >= sby && py < sby + sbh;
     }
     if (t->startImageId) {
         const char *seg = overStart
@@ -256,10 +269,10 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
             : "0,0,1,0.3333";
         char imgRef[160];
         snprintf(imgRef, sizeof(imgRef), "%s#%s", t->startImageId, seg);
-        append_img(out, "tb_start", x + L.startX, by, L.startW, bh, imgRef, (int)radius);
+        append_img(out, "tb_start", x + L.startX, sby, L.startW, sbh, imgRef, (int)radius);
     } else {
         const char *startPaint = t->startFrom ? "s_start" : t->accentColor;
-        append_rect(out, "tb_start", x + L.startX, by, L.startW, bh, startPaint, radius);
+        append_rect(out, "tb_start", x + L.startX, sby, L.startW, sbh, startPaint, radius);
     }
     {
         /* XP 排版：StartIcon 25×20 左 10px，StartLabel 左对齐跟在图标后、
@@ -274,10 +287,10 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
         const char *color = t->startTextColor ? t->startTextColor : t->accentTextColor;
         int labelX, labelW;
         if (t->startIconId) {
-            int iconW = t->panelStartIconW > 0 ? t->panelStartIconW : bh - 8;
+            int iconW = t->panelStartIconW > 0 ? t->panelStartIconW : sbh - 8;
             int iconH = t->panelStartIconH > 0 ? t->panelStartIconH : iconW;
             int iconX = x + L.startX + t->panelStartIconMarginLeft;
-            append_img(out, "tb_start_icon", iconX, by + (bh - iconH) / 2,
+            append_img(out, "tb_start_icon", iconX, sby + (sbh - iconH) / 2,
                        iconW, iconH, t->startIconId, 0);
             labelX = iconX + iconW;
             labelW = x + L.startX + L.startW - t->panelStartLabelMarginRight - labelX;
@@ -285,7 +298,7 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
             labelX = x + L.startX + (L.startW - tw) / 2;
             labelW = tw > 0 ? tw : L.startW;
         }
-        int labelY = by + (bh - labelLine) / 2;
+        int labelY = sby + (sbh - labelLine) / 2;
         if (labelW > 0) {
             if (t->startLabelShadowColor) {
                 append_text(out, "tb_start_label_sh", labelX + 1, labelY + 1,
@@ -317,9 +330,18 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
         else if (t->taskButtonFrom) paint = "s_task";
         else paint = win->focused ? t->accentColor : t->fgColor;
 
+        /* 绘制区 = 条目盒内缩模板 Padding（XP ButtonBorder 0,3,0,2）：
+           渐变体不画满整栏，栏顶/底露出背景条；开始按钮无此内缩，
+           所以看起来比条目高。悬停判定仍用整条目盒。 */
+        int padTop = t->panelItemPadTop > 0 ? t->panelItemPadTop : 0;
+        int padBottom = t->panelItemPadBottom > 0 ? t->panelItemPadBottom : 0;
+        if (padTop + padBottom > bh - 8) padTop = padBottom = 0;   /* 防栏过矮 */
+        const int iy = by + padTop;
+        const int ih = bh - padTop - padBottom;
+
         char idbuf[48];
         snprintf(idbuf, sizeof(idbuf), "tb_item_%d", win->id);
-        append_rect(out, idbuf, ix, by, iw, bh, paint, radius);
+        append_rect(out, idbuf, ix, iy, iw, ih, paint, radius);
 
         /* 悬停：主题给了悬停渐变就用它，否则只在原底色上叠一层提亮。 */
         int hovered = 0;
@@ -330,15 +352,15 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
         if (hovered && !win->focused) {
             snprintf(idbuf, sizeof(idbuf), "tb_item_hover_%d", win->id);
             if (t->taskButtonHoverFrom) {
-                append_rect(out, idbuf, ix, by, iw, bh, "s_task_hover", radius);
+                append_rect(out, idbuf, ix, iy, iw, ih, "s_task_hover", radius);
             } else {
-                append_rect(out, idbuf, ix, by, iw, bh,
+                append_rect(out, idbuf, ix, iy, iw, ih,
                             "rgba(255,255,255,0.14)", radius);
             }
         }
 
         /* 条目 bevel：未聚焦凸起（上/左浅、下/右深），聚焦按下反转
-           （XP Luna 的四边 1px，颜色来自主题边框资源）。 */
+           （XP Luna 的四边 1px，颜色来自主题边框资源；画在内缩盒边缘）。 */
         {
             const char *top = t->taskBorderTopColor;
             const char *left = t->taskBorderLeftColor;
@@ -351,29 +373,29 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
             }
             if (top) {
                 snprintf(idbuf, sizeof(idbuf), "tb_item_top_%d", win->id);
-                append_rect(out, idbuf, ix, by, iw, 1, top, 0.0f);
+                append_rect(out, idbuf, ix, iy, iw, 1, top, 0.0f);
             }
             if (bottom) {
                 snprintf(idbuf, sizeof(idbuf), "tb_item_bottom_%d", win->id);
-                append_rect(out, idbuf, ix, by + bh - 1, iw, 1, bottom, 0.0f);
+                append_rect(out, idbuf, ix, iy + ih - 1, iw, 1, bottom, 0.0f);
             }
             if (left) {
                 snprintf(idbuf, sizeof(idbuf), "tb_item_left_%d", win->id);
-                append_rect(out, idbuf, ix, by + 1, 1, bh - 2, left, 0.0f);
+                append_rect(out, idbuf, ix, iy + 1, 1, ih - 2, left, 0.0f);
             }
             if (right) {
                 snprintf(idbuf, sizeof(idbuf), "tb_item_right_%d", win->id);
-                append_rect(out, idbuf, ix + iw - 1, by + 1, 1, bh - 2, right, 0.0f);
+                append_rect(out, idbuf, ix + iw - 1, iy + 1, 1, ih - 2, right, 0.0f);
             }
         }
 
         char label[128];
-        int inset = t->panelTaskTextInsetX > 0 ? t->panelTaskTextInsetX : 4;
+        int inset = t->panelTaskTextInsetX;   /* 0 = 贴边，显式值不回退 */
         truncate_utf8(fontId, fontSize, win->title, iw - inset - 4, label,
                       sizeof(label));
         snprintf(idbuf, sizeof(idbuf), "tb_item_text_%d", win->id);
         const char *color = t->taskButtonTextColor ? t->taskButtonTextColor : t->accentTextColor;
-        append_text(out, idbuf, ix + inset, by + (bh - lineStep) / 2,
+        append_text(out, idbuf, ix + inset, iy + (ih - lineStep) / 2,
                     iw - inset - 4, lineStep, label, fontId, fontSize, color);
     }
 

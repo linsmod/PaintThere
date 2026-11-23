@@ -144,3 +144,54 @@
     (17,+,24,30) ✓、托盘 (751,+,49,30) 贴右缘 ✓、时钟 (759,576) ✓。
   - 一次瞬时链接失败（exe 被上一轮测试进程占用），重跑构建即恢复，非代码问题。
 - [x] 收尾：todo 登记、INDEX（2026-11-23）
+
+## 5. 追加：pill 尺寸偏差修复（2026-11-23 晚）
+
+用户对照 RetroBar 截图反馈：条目与开始按钮一样高、缝隙不对。逐像素实测 +
+对照 `Windows XP Blue.xaml` 模板，定位三处（前两处在上一轮修复中已改对，
+第三处是本轮真正的根因）：
+
+1. 条目间距：XP Blue 把 `TaskButtonMargin` 覆盖为空 Thickness（=0 相邻），
+   解析层丢弃无属性元素，派生回退 System 的 3px。
+   修：`jpx_xaml_theme.c` 空 Thickness 元素收成四边显式 0（覆盖 ≠ 缺失）。
+2. 条目高度来源：原实现把 `StartButton.Height=32` 借给所有条目；
+   RetroBar 真值 = TaskButton 无显式 Height、纵向 Stretch 占满栏。
+   修：`panelButtonHeight` 拆为 `panelStartButtonHeight`（仅开始按钮）与
+   `panelItemHeight`（0 = 占满栏）；默认主题保持 28 居中。
+3. **条目绘制区内缩**：TaskButton 模板外层
+   `<Border Name="ButtonBorder" Padding="0,3,0,2">`，蓝色渐变体内缩
+   3px/2px，栏顶/底露出背景条；开始按钮无此 Padding 所以「更高」。
+   解析层只认 `x:Name`，而 RetroBar 模板外层元素用的是 `Name=`（WPF 两者
+   等价），Padding 没进资源表。
+   修：`template_walk` 兼容 `Name=`；新增 `panelItemPadTop/Bottom`
+   （`TaskButton.ButtonBorder.Padding.{Top,Bottom}`）；shell 条目渐变体、
+   bevel、文字全部画在内缩盒内，悬停判定仍用整条目盒。
+4. **消费端二次兜底（缝隙真正复活的位置）**：前 3 层修好后
+   `vm_shell.c` 的 `L->gap = panelItemMarginRight > 0 ? ... : SHELL_FALLBACK_GAP`
+   又把显式 0 打回 3px——「0 是显式值」的语义没有贯通到消费端。
+   修：间距直接用主题值。并全链路审查同类模式：
+   - `panelRadius`：0 = 直角是合法显式值（95-98/2000/vista-classic 任务
+     按钮无圆角）。派生 fallback 2 → 0（无 CornerRadius 资源 = 直角），
+     shell 去兜底，删除 `SHELL_FALLBACK_RADIUS`。
+   - `panelTaskTextInsetX`：0 = 贴边合法，shell 直接用（派生 fallback 8 保留）。
+   - 其余 `> 0 ? :`（StartWidth/itemWidth*/IconW/H/StartButtonHeight/
+     panelHeight）0 无物理意义，回退合理，保留；`panelItemHeight=0`、
+     `panelStartLabelFontSize=0` 是定义的「未设」语义。
+
+实测（demo_jpx + xp-blue，帧数据还原绝对坐标）：条目绘制体
+(104/264/424, 573, 160, 25)——相邻无缝（264 = 104+160）、25 高内缩正确；
+逐像素 band/panel 比例 0.84 ≈ 15% 黑叠加（显示桌面按钮底纹忠实）。
+测试 119 + 120 项 0 失败；预编译重扫 19/19；CSS 往返 19/19。
+
+附带修复：桌面背景程序 `prog_desktop` 原本只在 default respack，client 只
+拉最近一次注册的包 → 启动即应用主题的 demo_jpx 下，新连接永远拿不到桌面
+程序（用户看到的桌面是页面 body 渐变）。修：`Jpx_DesktopProgram()` 暴露
+只读访问，`jpx_xaml_theme_apply` 把它并入每个主题包；前端
+`scheduleReplay` 重放时补上 bg 层（文字位图异步就绪后背景也要补画）。
+另按用户要求加了编译时间水印（`desktop_build_stamp`，左下角任务栏上方，
+15px，用于肉眼核对运行的 exe 构建批次）。
+
+遗留小项：`TaskListScrollButtonBackground` 的渐变方向 RetroBar 是对角
+（0,0→1,1），我们统一竖直（0,0,0,1），24px 按钮上肉眼无差，留作主题包
+保真小尾巴。显示桌面图标（desktopxp-sm.png）自带蓝色底板为 XP 原始资源
+内容，非渲染错误。

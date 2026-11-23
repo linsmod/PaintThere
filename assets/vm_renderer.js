@@ -177,6 +177,9 @@ async function boot() {
     replayQueued = true;
     requestAnimationFrame(() => {
       replayQueued = false;
+      /* 文字位图/图片是异步就绪的：bg 层绘制程序里的 drawText（如编译时间
+         水印）同样依赖重放才能补画，只重放 tile 会漏掉它们。 */
+      replayBackgroundPrograms();
       replayTiles();
     });
   };

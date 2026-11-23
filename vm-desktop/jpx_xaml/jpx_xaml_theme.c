@@ -318,8 +318,9 @@ static int find_attr_desc(const JpxXamlDoc *doc, int idx, const char *attr) {
     return -1;
 }
 
-/* 模板子树里带 x:Name 的元素的几何：<StyleKey>.<Name>.<Prop>[.<Side>]。
-   x:Name 缺失的元素跳过（无稳定 key），子树照常深入。 */
+/* 模板子树里带 x:Name / Name 的元素的几何：<StyleKey>.<Name>.<Prop>[.<Side>]。
+   WPF 里 Name 与 x:Name 等价（RetroBar 模板两种混用：外层 ButtonBorder 用
+   Name=，内层用 x:Name=）；都缺失的元素跳过（无稳定 key），子树照常深入。 */
 static int template_walk(const JpxXamlDoc *doc, int idx, const char *styleKey,
                          JpxXamlResourceTable *table, char *err, size_t errCap) {
     static const char *kGeomProps[] = { "Margin", "Padding", "BorderThickness",
@@ -327,6 +328,7 @@ static int template_walk(const JpxXamlDoc *doc, int idx, const char *styleKey,
     for (int c = doc->nodes[idx].firstChild; c >= 0; c = doc->nodes[c].nextSibling) {
         const JpxXamlNode *n = &doc->nodes[c];
         const char *name = JpxXamlNode_Attr(n, "x:Name");
+        if (!name) name = JpxXamlNode_Attr(n, "Name");
         if (name) {
             for (int p = 0; p < 4; p++) {
                 const char *prop = kGeomProps[p];
@@ -493,7 +495,11 @@ static int build_resources(const JpxXamlDoc *doc, JpxXamlResourceTable *table,
                 v[2] = ri ? atof(ri) : 0;
                 v[3] = b ? atof(b) : 0;
             } else if (!parse_thickness4(JpxXamlNode_Text(node), v)) {
-                continue;
+                /* 空元素（<Thickness x:Key="K" />）= WPF 默认 Thickness，
+                   四边显式为 0——是覆盖，不能当缺失跳过（XP Blue 的
+                   TaskButtonMargin 就靠它把 System 的 Right=3 压成 0）。 */
+                if (JpxXamlNode_Text(node) && JpxXamlNode_Text(node)[0]) continue;
+                v[0] = v[1] = v[2] = v[3] = 0;
             }
             if (!add_thickness_res(table, key, v, err, errCap)) return 0;
         } else if (strcmp(node->tag, "Style") == 0) {
@@ -1250,7 +1256,17 @@ void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
        XP Blue 惯例值。shell 不写死像素。 */
     out->panelPad = 0;   /* XP 任务栏内容左缘贴边（Taskbar 模板无 Padding） */
     out->panelStartWidth = (int)JpxRes_Number(table, "StartButton.MinWidth", 99);
-    out->panelButtonHeight = (int)JpxRes_Number(table, "StartButton.Height", 32);
+    out->panelStartButtonHeight = (int)JpxRes_Number(table, "StartButton.Height", 32);
+    /* 任务条目高：RetroBar 的 TaskButton 无显式 Height，纵向 Stretch 占满栏
+       （TaskbarRowHeight 只参与多行窗口尺寸计算，不绑按钮高）。0 = 占满。
+       绘制区内缩来自模板外层 ButtonBorder 的 Padding（XP 0,3,0,2）：渐变体
+       不画满整栏，栏顶/底露出背景条；开始按钮（StartButton.Height=32）无
+       此 Padding，所以它比条目「高」——这就是 XP 任务的观感来源。 */
+    out->panelItemHeight = 0;
+    out->panelItemPadTop =
+        (int)JpxRes_Number(table, "TaskButton.ButtonBorder.Padding.Top", 0);
+    out->panelItemPadBottom =
+        (int)JpxRes_Number(table, "TaskButton.ButtonBorder.Padding.Bottom", 0);
     out->panelStartMarginRight = (int)JpxRes_Number(table, "StartButton.Margin.Right", 1);
     out->panelStartIconW = (int)JpxRes_Number(table, "StartIcon.Width", 25);
     out->panelStartIconH = (int)JpxRes_Number(table, "StartIcon.Height", 20);
@@ -1281,9 +1297,11 @@ void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
         (int)JpxRes_Number(table, "ShowDesktopButton.Content.Margin.Left", 5);
     out->panelShowDesktopMarginR =
         (int)JpxRes_Number(table, "ShowDesktopButton.Content.Margin.Right", 3);
-    /* 圆角来自任务按钮模板（XP Blue 是嵌套 Border 的 CornerRadius=2）。 */
+    /* 圆角来自任务按钮模板（XP Blue 是嵌套 Border 的 CornerRadius=2）。
+       模板没有 CornerRadius 资源 = 直角（95-98/2000/vista-classic），
+       fallback 必须是 0：直角是显式观感，不能给经典主题画上圆角。 */
     out->panelRadius =
-        (int)JpxRes_Number(table, "TaskButton.ButtonTopBorder.CornerRadius", 2);
+        (int)JpxRes_Number(table, "TaskButton.ButtonTopBorder.CornerRadius", 0);
     out->boldChromeText = 1;
     out->chrome.boldTitle = 1;
     /* 任务按钮：按下渐变 → 纯色（Watercolor 的 TaskButtonActive）→

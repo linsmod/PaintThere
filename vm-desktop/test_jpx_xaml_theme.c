@@ -328,7 +328,7 @@ static void test_geometry_collection(void) {
         "<Setter Property='Template'>"
         "<Setter.Value>"
         "<ControlTemplate>"
-        "<Border Padding='0,3,0,2' x:Name='ButtonBorder'>"
+        "<Border Padding='0,3,0,2' Name='ButtonBorder'>"
         "<Border BorderThickness='0,1,0,0' CornerRadius='2' "
         "        x:Name='ButtonTopBorder' />"
         "</Border>"
@@ -379,6 +379,17 @@ static void test_geometry_collection(void) {
         "ScrollButtonKeyPaddingThatIsDeliberatelyLong000000.Margin.Bottom",
         -1) == -1,
         "over-length composite keys skipped whole");
+
+    /* 空 Thickness 元素 = WPF 默认 Thickness，四边显式为 0（覆盖语义，
+       不能当缺失跳过：XP Blue 用它把 System 的 TaskButtonMargin.Right=3
+       压成 0，任务按钮相邻无间距）。 */
+    expect(JpxXamlTheme_Parse(&table,
+        "<ResourceDictionary>"
+        "<Thickness x:Key='TaskButtonMargin' />"
+        "</ResourceDictionary>", err, sizeof(err)), "empty thickness parses");
+    expect(JpxRes_Number(&table, "TaskButtonMargin.Right", -1) == 0 &&
+           JpxRes_Number(&table, "TaskButtonMargin.Bottom", -1) == 0,
+           "empty thickness collected as explicit zeros");
 }
 
 /* MergedDictionaries 递归合并：WPF 语义 = 本地 > 后合并 > 先合并。 */

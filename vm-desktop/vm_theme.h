@@ -78,7 +78,10 @@ typedef struct {
        （RetroBar 全主题共享基座）与 XP 惯例。 */
     int panelPad;                 /* 栏左内边距（开始按钮前的空隙） */
     int panelStartWidth;          /* 开始按钮宽（StartButton.MinWidth） */
-    int panelButtonHeight;        /* 开始按钮与任务条目高（StartButton.Height） */
+    int panelStartButtonHeight;   /* 开始按钮高（StartButton.Height，XP 32，Top 对齐溢出栏外） */
+    int panelItemHeight;          /* 任务条目高；0 = 占满栏（RetroBar TaskButton 纵向 Stretch） */
+    int panelItemPadTop;          /* 条目绘制区内缩（模板 ButtonBorder.Padding.Top，XP 3） */
+    int panelItemPadBottom;       /* 同上（Padding.Bottom，XP 2）；背景条从内缩处露出 */
     int panelStartMarginRight;    /* StartButton.Margin.Right（与条目区隔 1px） */
     int panelStartIconW;          /* StartIcon.Width（XP 是 25×20 非正方形） */
     int panelStartIconH;          /* StartIcon.Height */

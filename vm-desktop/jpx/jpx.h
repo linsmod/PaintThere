@@ -113,6 +113,10 @@ const VmTheme *Jpx_VmTheme(JpxApp *app);
 /* 内部 HTTP 服务（调试自动化挂 VmServer_SetAutoHandler 用）。 */
 struct VmServer;
 struct VmServer *Jpx_Server(JpxApp *app);
+/* 桌面背景绘制程序（bg 层：桌面底色 + 编译时间水印）。主题应用时由
+   jpx_xaml_theme_apply 并入每个 respack——client 只拉取最近一次注册的包，
+   不随包下发的话新连接永远拿不到桌面底色。 */
+const struct VmDisplayList *Jpx_DesktopProgram(JpxApp *app);
 /* 资源包：资源本体不进 SSE。注册后服务端只向 client 下发 loadResPack(id)，
    client 自己 GET /respack/<id> 拉取命令数组并覆盖缓存。
    同一时刻只保留最近一次注册的包（旧包不再提供服务）。

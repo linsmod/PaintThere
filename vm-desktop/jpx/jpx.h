@@ -112,6 +112,15 @@ void    Jpx_SetVmTheme(JpxApp *app, const VmTheme *theme);
    同一时刻只保留最近一次注册的包（旧包不再提供服务）。
    已连接客户端会立即收到 loadResPack，新连接从 events 首事件拿到同一个 id。 */
 int     Jpx_ResPack_Register(JpxApp *app, const char *resPackId, const char *json);
+/* 资源包里的图片：注册后 /respack/<id> 一次返回「命令数组 + 全部图片」的打包容器。
+   provider 按 index 从 0 枚举，返回 1 表示有效（签名见 vm_server.h）。
+   不设则容器里 imgCount=0，client 只解析命令数组。 */
+void    Jpx_ResPack_SetImageProvider(JpxApp *app,
+                                     int (*provider)(void *userData, const char *resPackId,
+                                                     int index, const char **imgId,
+                                                     const char **mime,
+                                                     const char **data, size_t *size),
+                                     void *userData);
 
 int  Jpx_WindowOpen(JpxApp *app, const JpxWindowDesc *desc);   /* 返回 winId > 0 */
 void Jpx_WindowClose(JpxApp *app, int winId);

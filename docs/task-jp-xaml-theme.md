@@ -232,8 +232,30 @@ Clay 的 `backgroundColor` 只吃单色，渐变填不进去。方案是给 WM �
 
 验证：六套件全通过；截图确认任务栏为 30 高、蓝渐变、绿色圆角开始按钮、条目带 1px 深边、托盘浅蓝 + 时钟。
 
+### S7b：图片进资源包（一次 HTTP 拿全）+ 位图开始按钮（2026-11-23）
+
+用户要求「资源包只发 id，图片走 loadImg，一个 HTTP 到位」。
+
+- 容器格式（`vm_server.c` 顶部注释，全小端）：
+  `u32 magic "VMRP" | u32 jsonLen | u32 imgCount | imgCount×(u16 idLen, id, u8 mimeLen, mime, u32 dataLen) | json | images`
+- `GET /respack/<id>` 返回该容器；`VmServer_SetResPackImageProvider` 按 index 枚举图片，
+  provider 的 `data` 只需当次有效（服务端两次遍历：先目录后字节）。
+- 图片**保持原始编码**直接拼接：guest 侧没有 PNG 编码器，为 4 张图标引入
+  stb_image/stb_image_write 不划算；真雪碧（像素拼合）的收益是 GPU 批处理，这里为 0。
+- `JpxXamlTheme_ImageAt` 实现 provider：按资源表里的 `JPX_XAML_RES_IMAGE` 枚举、读文件、按扩展名给 mime。
+- `JpxXamlTheme_ResolveImages(table, themePath)`：把 `UriSource="../Resources/x.png"` 以主题目录为基准
+  归一化成绝对路径（逐段处理 `..`，不依赖 OS 相对路径）。
+- 前端：`parseResPack` 解析容器 → 每张图 `createImageBitmap` → 放入 imageCache →
+  就绪后触发重放；`drawImg` 的 `imgId` 支持 `#u0,v0,u1,v1` 取源图子区域。
+- 三态：`StartButtonImage` 是 99×99 竖排三联图，用 `StartButtonImage#0,0,1,0.3333` 取普通态，
+  不需要 guest 预处理雪碧；悬停/按下换成另外两段即可。
+
+验证：`/respack/theme-1` 一次返回 41112 B（jsonLen 25396 + 4 张 PNG）；
+帧内开始按钮为 `drawImg` 位图 + 徽标；浏览器截图确认徽标与「开始」文字；
+`test_jpx_xaml_theme` 48 项（新增图片解析与路径归一化断言）；六套件全通过。
+
 **剩余 gap（未做）**
 - RetroBar 的 XP 主题只有任务栏资源；窗口标题栏/边框/控件是按 Luna 惯例手写的近似值，不是从主题文件读的。
-- 开始按钮还没有位图（`StartButtonImage`/`StartIconImage` 是 PNG，需要 ImageBrush 链路）。
 - 字体仍是 `assets/font.ttf`（SimHei 黑体），XP 中文界面是宋体 9pt。
-- 桌面无壁纸（图片资源），只用蓝天渐变近似；`Style`/`ControlTemplate`/`DrawingBrush` 仍未支持。
+- 控件细节（输入框内凹、复选框 3D、标题加粗）与 `DrawingBrush` 矢量尚未做。
+- 桌面无壁纸（图片资源），只用蓝天渐变近似。

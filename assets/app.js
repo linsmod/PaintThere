@@ -116,21 +116,89 @@ function applyResPackCommands(list) {
     if (resPackApplied) resPackApplied();
 }
 
+/* 资源包容器（与 vm_server.c 的 vm_send_respack 对应，全部小端）：
+   u32 magic "VMRP" | u32 jsonLen | u32 imgCount
+   imgCount × { u16 idLen, id, u8 mimeLen, mime, u32 dataLen } | json | images */
+const RESPACK_MAGIC = 0x50524D56;
+
+function registerImageBlob(imgId, blob) {
+    if (imageCache.has(imgId)) return;
+    const entry = { image: null, ready: false, failed: false };
+    imageCache.set(imgId, entry);
+    const done = (src) => {
+        entry.image = src;
+        entry.ready = true;
+        tintedCache.clear();
+        if (textNeedsReplay) textNeedsReplay();
+        /* 图片是异步解码的：就绪后按新缓存重放，否则首帧会画不出位图。 */
+        if (resPackApplied) resPackApplied();
+    };
+    if (typeof createImageBitmap === 'function') {
+        createImageBitmap(blob).then(done).catch(() => { entry.failed = true; });
+    } else {
+        const img = new Image();
+        img.onload = () => done(img);
+        img.onerror = () => { entry.failed = true; };
+        img.src = URL.createObjectURL(blob);
+    }
+}
+
+function parseResPack(buf) {
+    const dv = new DataView(buf);
+    if (buf.byteLength < 12 || dv.getUint32(0, true) !== RESPACK_MAGIC) return null;
+    const jsonLen = dv.getUint32(4, true);
+    const imgCount = dv.getUint32(8, true);
+    const dec = new TextDecoder();
+    let off = 12;
+    const entries = [];
+    for (let i = 0; i < imgCount; i++) {
+        if (off + 2 > buf.byteLength) return null;
+        const idLen = dv.getUint16(off, true); off += 2;
+        if (off + idLen + 1 > buf.byteLength) return null;
+        const id = dec.decode(new Uint8Array(buf, off, idLen)); off += idLen;
+        const mimeLen = dv.getUint8(off); off += 1;
+        if (off + mimeLen + 4 > buf.byteLength) return null;
+        const mime = dec.decode(new Uint8Array(buf, off, mimeLen)); off += mimeLen;
+        const size = dv.getUint32(off, true); off += 4;
+        entries.push({ id, mime, size, offset: 0, blob: null });
+    }
+    if (off + jsonLen > buf.byteLength) return null;
+    const list = JSON.parse(dec.decode(new Uint8Array(buf, off, jsonLen)));
+    off += jsonLen;
+    for (const e of entries) {
+        if (off + e.size > buf.byteLength) return null;
+        e.offset = off;
+        off += e.size;
+    }
+    return { list, entries };
+}
+
+function applyResPack(pack) {
+    if (!pack) return;
+    for (const e of pack.entries || []) if (e.blob) registerImageBlob(e.id, e.blob);
+    applyResPackCommands(pack.list);
+}
+
 function loadResPack(resPackId) {
     if (!resPackId) return;
     const cached = resPackCache.get(resPackId);
-    if (cached) { applyResPackCommands(cached); return; }
+    if (cached) { applyResPack(cached); return; }
     if (typeof fetch !== 'function') return;   // 无网络原语的宿主跳过
     const base = (typeof location !== 'undefined' && location.protocol !== 'file:')
         ? location.origin : '';
     fetch(base + '/respack/' + encodeURIComponent(resPackId), { cache: 'no-store' })
         .then((r) => {
             if (!r.ok) throw new Error('respack ' + r.status);
-            return r.json();
+            return r.arrayBuffer();
         })
-        .then((list) => {
-            resPackCache.set(resPackId, list);
-            applyResPackCommands(list);
+        .then((buf) => {
+            const pack = parseResPack(buf);
+            if (!pack) throw new Error('respack format');
+            for (const e of pack.entries) {
+                e.blob = new Blob([new Uint8Array(buf, e.offset, e.size)], { type: e.mime });
+            }
+            resPackCache.set(resPackId, pack);
+            applyResPack(pack);
         })
         .catch((e) => console.error('loadResPack failed:', resPackId, e));
 }
@@ -237,10 +305,23 @@ function getTintedImage(imgId, tint) {
     return off;
 }
 
+/* imgId 可带 "#u0,v0,u1,v1" 指定源图的归一化子区域：
+   XP 的三态图是竖排雪碧（普通/悬停/按下各占 1/3），靠这个取其中一段，
+   不需要在 guest 侧解码重编码 PNG。 */
+function parseImgId(imgId) {
+    if (typeof imgId !== 'string') return { id: imgId, src: null };
+    const hash = imgId.indexOf('#');
+    if (hash <= 0) return { id: imgId, src: null };
+    const p = imgId.slice(hash + 1).split(',').map(Number);
+    if (p.length !== 4 || !p.every((v) => Number.isFinite(v))) return { id: imgId, src: null };
+    return { id: imgId.slice(0, hash), src: p };
+}
+
 function drawImg(imgId, x, y, w, h, tint, cornerRadius = 0) {
     const target = drawImgCtx || ctx;
     if (!target) return;
-    const src = getTintedImage(imgId, tint);
+    const parsed = parseImgId(imgId);
+    const src = getTintedImage(parsed.id, tint);
     if (!src) return; // 资源未就绪时静默跳过，不打断既有渲染
     const dw = w || src.width, dh = h || src.height;
     if (cornerRadius > 0) {
@@ -250,7 +331,15 @@ function drawImg(imgId, x, y, w, h, tint, cornerRadius = 0) {
         else target.rect(x, y, dw, dh);
         target.clip();
     }
-    target.drawImage(src, x, y, dw, dh);
+    if (parsed.src) {
+        const sw = src.width, sh = src.height;
+        target.drawImage(src,
+                         parsed.src[0] * sw, parsed.src[1] * sh,
+                         parsed.src[2] * sw, parsed.src[3] * sh,
+                         x, y, dw, dh);
+    } else {
+        target.drawImage(src, x, y, dw, dh);
+    }
     if (cornerRadius > 0) target.restore();
 }
 

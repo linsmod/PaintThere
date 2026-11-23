@@ -189,6 +189,24 @@ static void test_respack_command(void) {
     }
 }
 
+/* 图片资源：解析保留原始 uri，ResolveImages 以主题目录为基准归一化。 */
+static void test_images(void) {
+    section("image resources");
+    static JpxXamlResourceTable table;
+    char err[256];
+    expect(JpxXamlTheme_Parse(&table,
+        "<ResourceDictionary>"
+        "<BitmapImage x:Key='Ico' UriSource='../Resources/a.png' />"
+        "</ResourceDictionary>", err, sizeof(err)), "bitmap image parsed");
+    const JpxXamlResource *r = JpxRes_Find(&table, "Ico");
+    expect(r != NULL && r->kind == JPX_XAML_RES_IMAGE, "image kind recorded");
+    expect(r && strcmp(r->uri, "../Resources/a.png") == 0, "uri kept raw before resolve");
+    JpxXamlTheme_ResolveImages(&table, "H:/themes/xp/Blue.xaml");
+    r = JpxRes_Find(&table, "Ico");
+    expect(r && strcmp(r->uri, "H:/themes/Resources/a.png") == 0,
+           "relative uri resolved against theme dir");
+}
+
 static void test_errors(void) {
     section("error reporting");
     JpxXamlResourceTable table;
@@ -206,6 +224,7 @@ int main(int argc, char **argv) {
     test_resolve();
     test_derive();
     test_patterns();
+    test_images();
     test_respack_command();
     test_errors();
     printf("%d checks, %d failures\n", g_checks, g_failures);

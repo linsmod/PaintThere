@@ -102,6 +102,17 @@ int Jpx_ResPack_Register(JpxApp *app, const char *resPackId, const char *json) {
     return app->resPackJson && strcmp(app->resPackId, resPackId) == 0;
 }
 
+void Jpx_ResPack_SetImageProvider(JpxApp *app,
+                                  int (*provider)(void *userData, const char *resPackId,
+                                                  int index, const char **imgId,
+                                                  const char **mime,
+                                                  const char **data, size_t *size),
+                                  void *userData) {
+    if (!app || !app->server) return;
+    /* 签名与 VmResPackImageAt 完全一致，直接转交；jpx.h 不必 include vm_server.h。 */
+    VmServer_SetResPackImageProvider(app->server, (VmResPackImageAt)provider, userData);
+}
+
 static void build_resources(JpxApp *app) {
     static VmDisplayList res;
     VmDisplay_Init(&res);

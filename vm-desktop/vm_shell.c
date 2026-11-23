@@ -66,6 +66,17 @@ static void append_text(VmCmdBuffer *out, const char *id, int x, int y, int w, i
     VmDisplay_CopyStr(c->args.drawText.color, sizeof(c->args.drawText.color), color);
 }
 
+static void append_img(VmCmdBuffer *out, const char *id, int x, int y, int w, int h,
+                       const char *imgId, int radius) {
+    VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_IMG, id);
+    if (!c) return;
+    VmRect r = {(float)x, (float)y, (float)w, (float)h};
+    c->rect = r;
+    c->args.drawImg.rect = r;
+    VmDisplay_CopyStr(c->args.drawImg.imgId, sizeof(c->args.drawImg.imgId), imgId);
+    c->args.drawImg.cornerRadius = (float)radius;
+}
+
 /* 按像素宽截断 UTF-8：从末尾去掉完整字符，直到放得下。 */
 static void truncate_utf8(int fontId, int px, const char *text, int maxW,
                           char *out, size_t cap) {
@@ -116,18 +127,32 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
     ShellLayout L;
     shell_geometry(sh, &L);
 
-    /* 开始按钮：主题给了渐变皮肤就用 s_start，否则退回强调色。 */
+    /* 开始按钮：有位图皮肤优先用位图（XP 的竖排三态取上 1/3），
+       其次是渐变（s_start），最后退回强调色单色。 */
     const int by = y + 2;
     const int bh = h - 4;
-    const char *startPaint = t->startFrom ? "s_start" : t->accentColor;
-    append_rect(out, "tb_start", x + L.startX, by, L.startW, bh, startPaint,
-                t->startFrom ? 4.0f : 6.0f);
+    if (t->startImageId) {
+        char imgRef[160];
+        snprintf(imgRef, sizeof(imgRef), "%s#0,0,1,0.3333", t->startImageId);
+        append_img(out, "tb_start", x + L.startX, by, L.startW, bh, imgRef, 4);
+    } else {
+        const char *startPaint = t->startFrom ? "s_start" : t->accentColor;
+        append_rect(out, "tb_start", x + L.startX, by, L.startW, bh, startPaint,
+                    t->startFrom ? 4.0f : 6.0f);
+    }
     {
         const char *label = "开始";
         int tw = VmFont_Width(fontId, fontSize, label, -1);
         const char *color = t->startTextColor ? t->startTextColor : t->accentTextColor;
-        append_text(out, "tb_start_label",
-                    x + L.startX + (L.startW - tw) / 2, by + (bh - lineStep) / 2,
+        int labelX = x + L.startX + (L.startW - tw) / 2;
+        /* 有徽标时文字右移，给图标留出位置（XP 的徽标在左、文字在右）。 */
+        if (t->startIconId) {
+            int icon = bh - 8;
+            append_img(out, "tb_start_icon", x + L.startX + 6, by + (bh - icon) / 2,
+                       icon, icon, t->startIconId, 0);
+            labelX = x + L.startX + 6 + icon + 4;
+        }
+        append_text(out, "tb_start_label", labelX, by + (bh - lineStep) / 2,
                     tw > 0 ? tw : L.startW, lineStep, label, fontId, fontSize, color);
     }
 

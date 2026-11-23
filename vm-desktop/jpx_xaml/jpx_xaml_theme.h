@@ -20,7 +20,8 @@ typedef enum {
     JPX_XAML_RES_COLOR,
     JPX_XAML_RES_LINEAR_GRADIENT,
     JPX_XAML_RES_RADIAL_GRADIENT,
-    JPX_XAML_RES_NUMBER
+    JPX_XAML_RES_NUMBER,
+    JPX_XAML_RES_IMAGE      /* BitmapImage / ImageBrush：uri 是图片路径 */
 } JpxXamlResKind;
 
 typedef struct {
@@ -33,6 +34,8 @@ typedef struct {
     int stopCount;
     char direction[VM_DISPLAY_MAX_STR];  /* 线性端点或径向 cx,cy,r */
     double number;
+    /* 图片资源：xaml 里写的相对路径，解析可执行目录后为绝对路径。 */
+    char uri[256];
 } JpxXamlResource;
 
 typedef struct {
@@ -55,6 +58,16 @@ double JpxRes_Number(const JpxXamlResourceTable *table, const char *key,
 /* 把资源表转换成 definePattern 资源命令，追加到 list->resources。
    返回追加数量。 */
 int JpxXamlTheme_AppendPatterns(const JpxXamlResourceTable *table, VmDisplayList *list);
+
+/* 图片资源的相对路径以主题文件目录为基准：解析后写回 uri（绝对路径）。 */
+void JpxXamlTheme_ResolveImages(JpxXamlResourceTable *table, const char *themeFilePath);
+
+/* VmResPackImageAt 的实现：userData 是资源表，按 index 枚举图片资源并读文件。
+   mime 按扩展名给（png/jpg/bmp/gif），未知一律 image/png。
+   图片保持原始字节，打包容器直接把 PNG/JPEG 拼进去，不做解码重编码。 */
+int JpxXamlTheme_ImageAt(void *userData, const char *resPackId, int index,
+                         const char **imgId, const char **mime,
+                         const char **data, size_t *size);
 
 /* 从资源表派生 VmTheme（颜色 token）。缺失的 key 用 base 的值。 */
 void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out);

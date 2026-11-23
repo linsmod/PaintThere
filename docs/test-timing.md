@@ -8,7 +8,7 @@
 | `test_sys` | `.\vm-desktop\build\test_sys.exe --probe` | 16 | 53 ms | 无（进程表、内存、CPU 差分、错误分类） |
 | `test_text_edit` | `.\vm-desktop\build\test_text_edit.exe --probe` | 66 | 13 ms | 无 |
 | `test_jpx_xaml` | `.\vm-desktop\build\test_jpx_xaml.exe --probe` | 47 | 47 ms | 无（纯解析/绑定/handler 逻辑） |
-| `test_jpx_xaml_theme` | `.\vm-desktop\build\test_jpx_xaml_theme.exe --probe` | 44 | 22 ms | 无（纯资源字典解析/查找/派生/资源包序列化）；`--file <path>` 可解析真实主题文件 |
+| `test_jpx_xaml_theme` | `.\vm-desktop\build\test_jpx_xaml_theme.exe --probe` | 48 | 24 ms | 无（纯资源字典解析/查找/派生/资源包序列化）；`--file <path>` 可解析真实主题文件 |
 | `test_fs` | `.\vm-desktop\build\test_fs.exe --probe` | 19 | 9 ms | cwd 必须是仓库根（读 `docs/INDEX.md`） |
 
 ## 说明

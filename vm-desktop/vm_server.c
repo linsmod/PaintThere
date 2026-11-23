@@ -55,6 +55,8 @@ struct VmServer {
     void *resourceUserData;
     VmResPackProvider resPackProvider;
     void *resPackUserData;
+    VmResPackImageAt resPackImageAt;
+    void *resPackImageUserData;
     VmFullFrameProvider fullFrameProvider;
     void *fullFrameUserData;
     VmTickHandler tickHandler;
@@ -364,6 +366,98 @@ static void vm_send_response(vm_socket fd, int code, const char *reason,
     if (len) vm_send_all(fd, body, len);
 }
 
+/* ---------------- 资源包打包 ----------------
+   一个 HTTP 就拿到「命令数组 + 全部图片」，client 只有一条解析路径：
+     u32 magic "VMRP" | u32 jsonLen | u32 imgCount
+     imgCount × { u16 idLen, id, u8 mimeLen, mime, u32 dataLen }
+     json | img0 | img1 | ...
+   全部小端。图片保持原始编码（PNG/JPEG 字节直接拼），不做解码重编码：
+   guest 侧没有 PNG 编码器，也没必要为几张图标引入它。 */
+
+#define VM_RESPACK_MAGIC 0x50524D56u
+#define VM_RESPACK_MAX_IMAGES 16
+
+static void vm_put_u16(unsigned char *p, unsigned v) {
+    p[0] = (unsigned char)(v & 0xFF);
+    p[1] = (unsigned char)((v >> 8) & 0xFF);
+}
+
+static void vm_put_u32(unsigned char *p, unsigned v) {
+    p[0] = (unsigned char)(v & 0xFF);
+    p[1] = (unsigned char)((v >> 8) & 0xFF);
+    p[2] = (unsigned char)((v >> 16) & 0xFF);
+    p[3] = (unsigned char)((v >> 24) & 0xFF);
+}
+
+static void vm_send_respack(VmServer *s, vm_socket fd, const char *id) {
+    const char *json = s->resPackProvider ? s->resPackProvider(id, s->resPackUserData) : NULL;
+    if (!json) {
+        vm_send_response(fd, 404, "Not Found", "text/plain", "no respack", 10);
+        return;
+    }
+
+    static char ids[VM_RESPACK_MAX_IMAGES][64];
+    static char mimes[VM_RESPACK_MAX_IMAGES][24];
+    static size_t sizes[VM_RESPACK_MAX_IMAGES];
+    int count = 0;
+    if (s->resPackImageAt) {
+        for (int i = 0; i < VM_RESPACK_MAX_IMAGES; i++) {
+            const char *iid = NULL, *mime = NULL, *data = NULL;
+            size_t size = 0;
+            if (!s->resPackImageAt(s->resPackImageUserData, id, i, &iid, &mime, &data, &size))
+                break;
+            if (!iid || !iid[0] || size == 0) break;
+            snprintf(ids[count], sizeof(ids[count]), "%s", iid);
+            snprintf(mimes[count], sizeof(mimes[count]), "%s", mime && mime[0] ? mime : "image/png");
+            sizes[count] = size;
+            count++;
+        }
+    }
+
+    const size_t jsonLen = strlen(json);
+    size_t total = 12 + jsonLen;
+    for (int i = 0; i < count; i++)
+        total += 2 + strlen(ids[i]) + 1 + strlen(mimes[i]) + 4 + sizes[i];
+
+    unsigned char *buf = (unsigned char *)malloc(total);
+    if (!buf) {
+        vm_send_response(fd, 500, "Internal Error", "text/plain", "oom", 3);
+        return;
+    }
+    vm_put_u32(buf, VM_RESPACK_MAGIC);
+    vm_put_u32(buf + 4, (unsigned)jsonLen);
+    vm_put_u32(buf + 8, (unsigned)count);
+    size_t off = 12;
+    for (int i = 0; i < count; i++) {
+        size_t idLen = strlen(ids[i]);
+        vm_put_u16(buf + off, (unsigned)idLen); off += 2;
+        memcpy(buf + off, ids[i], idLen); off += idLen;
+        size_t mimeLen = strlen(mimes[i]);
+        buf[off++] = (unsigned char)mimeLen;
+        memcpy(buf + off, mimes[i], mimeLen); off += mimeLen;
+        vm_put_u32(buf + off, (unsigned)sizes[i]); off += 4;
+    }
+    memcpy(buf + off, json, jsonLen); off += jsonLen;
+
+    /* 第二遍取字节：provider 的 data 指针只需当次有效，逐个追加即可。 */
+    for (int i = 0; i < count; i++) {
+        const char *iid = NULL, *mime = NULL, *data = NULL;
+        size_t size = 0;
+        if (!s->resPackImageAt(s->resPackImageUserData, id, i, &iid, &mime, &data, &size) ||
+            !data || size != sizes[i]) {
+            free(buf);
+            vm_send_response(fd, 500, "Internal Error", "text/plain", "image mismatch", 14);
+            return;
+        }
+        memcpy(buf + off, data, size);
+        off += size;
+    }
+
+    vm_send_response(fd, 200, "OK", "application/octet-stream",
+                     (const char *)buf, off);
+    free(buf);
+}
+
 static int vm_safe_join(char *out, size_t cap, const char *root, const char *name) {
     if (strcmp(name, "app.js") != 0 && strcmp(name, "systemColors.js") != 0 &&
         strcmp(name, "index.html") != 0 && strcmp(name, "vm_renderer.js") != 0 &&
@@ -553,14 +647,8 @@ static void vm_handle_request(VmServer *s, VmClient *client) {
             if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
                   (ch >= '0' && ch <= '9') || ch == '-' || ch == '_')) valid = 0;
         }
-        const char *json = (valid && s->resPackProvider)
-                               ? s->resPackProvider(id, s->resPackUserData) : NULL;
-        if (json) {
-            vm_send_response(client->fd, 200, "OK", "application/json; charset=utf-8",
-                             json, strlen(json));
-        } else {
-            vm_send_response(client->fd, 404, "Not Found", "text/plain", "no respack", 10);
-        }
+        if (valid && s->resPackProvider) vm_send_respack(s, client->fd, id);
+        else vm_send_response(client->fd, 404, "Not Found", "text/plain", "no respack", 10);
         VM_CLOSE(client->fd);
         client->fd = VM_INVALID;
         return;
@@ -684,6 +772,12 @@ void VmServer_SetResPackProvider(VmServer *s, VmResPackProvider provider, void *
     if (!s) return;
     s->resPackProvider = provider;
     s->resPackUserData = userData;
+}
+
+void VmServer_SetResPackImageProvider(VmServer *s, VmResPackImageAt provider, void *userData) {
+    if (!s) return;
+    s->resPackImageAt = provider;
+    s->resPackImageUserData = userData;
 }
 
 void VmServer_SetFullFrameProvider(VmServer *s, VmFullFrameProvider provider, void *userData) {

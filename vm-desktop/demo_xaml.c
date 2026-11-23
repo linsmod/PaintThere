@@ -217,8 +217,12 @@ int main(int argc, char **argv) {
     if (!JpxXamlTheme_Parse(&g_theme, themeXml, themeErr, sizeof(themeErr))) {
         fprintf(stderr, "demo_xaml: theme parse failed: %s\n", themeErr);
     } else {
+        /* 图片相对路径以主题文件目录为基准；内置主题没有图片资源。 */
+        if (themeFile) JpxXamlTheme_ResolveImages(&g_theme, themePath);
         printf("demo_xaml: theme loaded from %s, %d resources\n",
                themeFile ? themePath : "builtin", g_theme.count);
+        /* 图片由资源包打包下发：client 一次 GET 拿「命令数组 + 全部图片」。 */
+        Jpx_ResPack_SetImageProvider(g_app, JpxXamlTheme_ImageAt, &g_theme);
     }
     free(themeFile);
 

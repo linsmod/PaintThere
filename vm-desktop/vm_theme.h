@@ -44,9 +44,11 @@ typedef struct {
     /* XP 风格窗口标题栏（chrome.titleFocusColor/IdleColor 置为 s_title_*） */
     const char *titleActiveFrom, *titleActiveTo;
     const char *titleIdleFrom, *titleIdleTo;
-    /* 开始按钮：纯色 accent 换成绿渐变 */
+    /* 开始按钮：纯色 accent 换成绿渐变；有位图时优先用位图（XP 的三态图）。 */
     const char *startFrom, *startTo;
     const char *startTextColor;
+    const char *startImageId;   /* 开始按钮底图（竖排三态，取上 1/3） */
+    const char *startIconId;    /* 开始按钮左侧的徽标 */
     /* 任务栏条目：普通态与聚焦/按下态 */
     const char *taskButtonFrom, *taskButtonTo;
     const char *taskButtonActiveFrom, *taskButtonActiveTo;

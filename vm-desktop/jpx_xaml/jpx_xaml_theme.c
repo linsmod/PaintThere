@@ -126,6 +126,15 @@ static int build_resources(const JpxXamlDoc *doc, JpxXamlResourceTable *table,
             JpxXamlResource *r = add_res(table, key, JPX_XAML_RES_NUMBER, err, errCap);
             if (!r) return 0;
             r->number = atof(JpxXamlNode_Text(node));
+        } else if (strcmp(node->tag, "BitmapImage") == 0 ||
+                   strcmp(node->tag, "ImageBrush") == 0) {
+            JpxXamlResource *r = add_res(table, key, JPX_XAML_RES_IMAGE, err, errCap);
+            if (!r) return 0;
+            /* ImageBrush 用 ImageSource，BitmapImage 用 UriSource；
+               {DynamicResource ...} 形式没有直接路径，跳过（留空 uri）。 */
+            const char *src = JpxXamlNode_Attr(node, "UriSource");
+            if (!src) src = JpxXamlNode_Attr(node, "ImageSource");
+            if (src && src[0] != '{') snprintf(r->uri, sizeof(r->uri), "%s", src);
         }
     }
     return 1;
@@ -199,6 +208,95 @@ int JpxXamlTheme_AppendPatterns(const JpxXamlResourceTable *table, VmDisplayList
 /* RetroBar 的主题只描述任务栏（155 个 key 全是 Taskbar/Tray/TaskButton/StartButton/Clock），
    没有窗口边框、标题栏与控件资源。窗口侧按 Luna 惯例给固定值，任务栏侧才查表。
    用静态字面量：VmTheme 只持有指针，调用方（资源表）生命期之外的值必须常驻。 */
+/* 逐段归一化：丢弃空段与 "."，".." 回退一段。不依赖 OS 的相对路径解析，
+   因为主题文件里的路径是 Windows 风格，而解析结果要同时能 fopen。 */
+static void normalize_path(const char *src, char *out, size_t cap) {
+    char tmp[512];
+    snprintf(tmp, sizeof(tmp), "%s", src ? src : "");
+    int outLen = 0;
+    out[0] = '\0';
+    const char *p = tmp;
+    while (*p) {
+        while (*p == '/' || *p == '\\') p++;
+        if (!*p) break;
+        const char *seg = p;
+        while (*p && *p != '/' && *p != '\\') p++;
+        int segLen = (int)(p - seg);
+        if (segLen == 1 && seg[0] == '.') continue;
+        if (segLen == 2 && seg[0] == '.' && seg[1] == '.') {
+            while (outLen > 0 && out[outLen - 1] != '/') outLen--;
+            if (outLen > 0) outLen--;
+            out[outLen] = '\0';
+            continue;
+        }
+        if (outLen + segLen + 2 >= (int)cap) break;
+        if (outLen) out[outLen++] = '/';
+        memcpy(out + outLen, seg, (size_t)segLen);
+        outLen += segLen;
+        out[outLen] = '\0';
+    }
+}
+
+void JpxXamlTheme_ResolveImages(JpxXamlResourceTable *table, const char *themeFilePath) {
+    if (!table) return;
+    char dir[512];
+    snprintf(dir, sizeof(dir), "%s", themeFilePath ? themeFilePath : "");
+    char *slash = strrchr(dir, '/');
+    char *bslash = strrchr(dir, '\\');
+    if (bslash > slash) slash = bslash;
+    if (slash) *slash = '\0';
+
+    for (int i = 0; i < table->count; i++) {
+        JpxXamlResource *r = &table->items[i];
+        if (r->kind != JPX_XAML_RES_IMAGE || !r->uri[0]) continue;
+        /* 已经是绝对路径（盘符或根）时不拼接。 */
+        if (r->uri[0] == '/' || r->uri[0] == '\\' ||
+            (r->uri[1] == ':' && r->uri[2] == '/')) continue;
+        char joined[512];
+        snprintf(joined, sizeof(joined), "%s/%s", dir, r->uri);
+        normalize_path(joined, r->uri, sizeof(r->uri));
+    }
+}
+
+/* 图片字节缓冲：单进程一次只服务一个主题包，串行读取即可复用。 */
+static unsigned char s_imgBuf[262144];
+
+static const char *mime_of(const char *uri) {
+    size_t n = uri ? strlen(uri) : 0;
+    if (n > 4 && (uri[n - 4] == '.')) {
+        const char *ext = uri + n - 3;
+        if (strcmp(ext, "jpg") == 0) return "image/jpeg";
+        if (strcmp(ext, "bmp") == 0) return "image/bmp";
+        if (strcmp(ext, "gif") == 0) return "image/gif";
+    }
+    return "image/png";
+}
+
+int JpxXamlTheme_ImageAt(void *userData, const char *resPackId, int index,
+                         const char **imgId, const char **mime,
+                         const char **data, size_t *size) {
+    (void)resPackId;
+    const JpxXamlResourceTable *table = (const JpxXamlResourceTable *)userData;
+    if (!table || index < 0 || !imgId || !data || !size) return 0;
+    int seen = 0;
+    for (int i = 0; i < table->count; i++) {
+        const JpxXamlResource *r = &table->items[i];
+        if (r->kind != JPX_XAML_RES_IMAGE || !r->uri[0]) continue;
+        if (seen++ != index) continue;
+        FILE *f = fopen(r->uri, "rb");
+        if (!f) return 0;
+        size_t n = fread(s_imgBuf, 1, sizeof(s_imgBuf), f);
+        fclose(f);
+        if (n == 0) return 0;
+        *imgId = r->key;
+        if (mime) *mime = mime_of(r->uri);
+        *data = (const char *)s_imgBuf;
+        *size = n;
+        return 1;
+    }
+    return 0;
+}
+
 void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
     if (!out) return;
     *out = *VmTheme_Default();
@@ -263,6 +361,9 @@ void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
     out->clockTextColor = JpxRes_Color(table, "ClockForeground", out->clockTextColor);
     out->startTextColor = JpxRes_Color(table, "StartLabel", out->startTextColor);
     out->panelHeight = (int)JpxRes_Number(table, "TaskbarHeight", out->panelHeight);
+    /* 位图皮肤：主题里有开始按钮图就用它，比手写绿色渐变更接近原版。 */
+    if (JpxRes_Find(table, "StartButtonImage")) out->startImageId = "StartButtonImage";
+    if (JpxRes_Find(table, "StartIconImage")) out->startIconId = "StartIconImage";
 }
 
 const char *JpxXamlTheme_Resolve(const JpxXamlResourceTable *table,

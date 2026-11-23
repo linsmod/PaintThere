@@ -44,6 +44,7 @@
 - **主题派生的颜色兜底**：`system` / `system-xp` / `system-vista` 这类基础主题没有 TaskbarBackground/TrayBackground/ButtonFace，派生曾落回默认主题的近黑面板色，表现为“任务栏变黑”；SystemColors 标记扩展（`{x:Static ...}`）解析不出颜色时整个资源跳过，不进表也不进 respack。修这类问题先 `/auto/apply` 逐主题扫 `panelColor`。
 - **JPX 列表选中项的颜色 token 是 `selectedColor` 不是 `accentColor`**：accent 是任务按钮渐变的代表色，玻璃主题（longhorn-aero）派生出半透明白，白底列表的选中项会整行隐形。列表行有两条绘制路径——平铺 `Jpx_ListBox` 与虚拟化 `Jpx_ListRowEx`（XAML 带 `Rows` 属性走后者），两处都要改。
 - **guest 侧观测**：`JPX_TRACE=1` 启动 `demo_jpx` 后，每次输入处理与每帧合成后打印 `[wm]` 转储：窗口集合、z 序、焦点、以及每个窗口的 `cmds / dirty(原因) / built=<frame>`。`dirty=0` 且 `built` 停在旧帧号的窗口，就是“该重建却没人重建”的对象；`over={id need "title"}` 给出超配额窗口的真实需求条数。这份数据全在 guest 内存里，不要去抓跨端帧反推。
+- **主题图片缓存必须按 id 覆盖**：主题图片的 imgId 是 XAML 资源 key（`jpx_xaml_theme.c` 的 `JpxXamlTheme_ImageAt` 用 `r->key`），跨主题同名不同内容。respack 的 resPackId 每次 apply 递增所以 pattern/style 每次都生效，但客户端图片注册若以 `imageCache.has(id)` 短路，切主题后 startIcon 会停在旧图、只有刷新页面才更新。`loadImg` / `registerImageBlob` 已改为覆盖注册（解码期间显示旧图，完成后清 tint 缓存重放）。排查这类问题先 `curl /auto/theme` 看 `startImageId`，再用 `curl '/auto/apply?name=<slug>'` 切到同名图片资源的另一主题（如 system-xp ↔ xp-classic，共用 `StartIconImage` key）复现。
 - **配额压测**：`VM_WM_LAYER_QUOTA=200` 把单窗口命令配额调小（1..1024）启动，超限窗口会整块显示纯色 + “配额超了 N 条”，用来验证告警与截断路径。
 - **窗口层内容被截断会污染后续所有窗口**：`build_one_window` 把内容写进定长层缓冲，写满时末尾的 `clipPop` 丢失；这条未闭合的裁剪会让排在后面的窗口（任务栏在置顶 pass 最后合并）整片消失。现在超配额直接整段丢弃内容、改画纯色块 + "配额超了 N 条"，前缀天然零未闭合。
 - **前端瓦片被污染不会自愈**：tile 差分按内容 hash 只发变化的块。某块曾渲染出未闭合裁剪后，只要它的命令不再变化就一直保持错误画面，必须重启或强制全量才恢复。改动渲染逻辑后先刷新页面再判断"改没改好"。

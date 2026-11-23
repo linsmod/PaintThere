@@ -40,8 +40,8 @@ BUILD = VM_DIR / "build"
 ASSETS = ROOT / "assets"
 FONT_SOURCE = Path(r"H:\github_repos\mystbfont_c\fonts\NotoSans-Regular.ttf")
 
-APP_NAME = "demo_wm"
-EXE = BUILD / "demo_wm.exe"
+APP_NAME = "demo_jpx"
+EXE = BUILD / "demo_jpx.exe"
 
 # 内置 demo 的默认端口；不在表里的 exe 一律默认 9000。
 DEFAULT_PORTS = {"demo_wm": 9000, "demo_jpx": 9050, "demo_xaml": 9060}

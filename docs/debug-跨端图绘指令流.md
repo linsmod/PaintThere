@@ -1,7 +1,7 @@
 # 跨端图绘指令流 · 调试经验
 
 最后核对：2026-11-23
-
+！注意所有含net程序的描述均为过期。
 ## 启动与验证
 
 - 主程序：`dotnet build ConsoleApp2/RemoteForm.csproj` 后运行输出目录的 `RemoteForm.exe`。

@@ -41,10 +41,10 @@ int loadFont(int fontId, const unsigned char *ttf, int len) {
     unsigned char *copy = (unsigned char *)malloc((size_t)len);
     if (!copy) return -2;
     memcpy(copy, ttf, (size_t)len);
-    /* TTC（字体集合，如 simsun.ttc）取第 0 个字体；普通 TTF 返回 0。 */
-    int offset = stbtt_GetFontOffsetForIndex(copy, 0);
-    if (offset < 0) offset = 0;
-    if (!stbtt_InitFont(&slot->info, copy, offset)) {
+    /* 与 guest 侧 vm_font.c 保持一致：单一 sfnt 直接 offset 0。
+       主题字体走 TTC 时由 tools/extract_system_font.py 先提取成 TTF，
+       这样 wasm 产物不必为 TTC 重编（本机无 emscripten）。 */
+    if (!stbtt_InitFont(&slot->info, copy, 0)) {
         free(copy);
         return -3;
     }

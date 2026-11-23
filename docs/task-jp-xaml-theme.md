@@ -280,11 +280,12 @@ Clay 的 `backgroundColor` 只吃单色，渐变填不进去。方案是给 WM �
 
 ### S7f：主题字体（宋体）（2026-11-23）
 
-- `vm_font.c` 与 `stb_font_wasm.c` 改用 `stbtt_GetFontOffsetForIndex(data, 0)`，
-  为 TTC 留出通道（普通 TTF 返回 0，行为不变）。
-- 但重量级 wasm 未重编（本机 emsdk 只有脚本、没有安装 emscripten），因此实际走
-  **TTC → TTF 提取**：`tools/extract_system_font.py` 用 fontTools 从 `simsun.ttc` 取字体 0，
-  可 `--subset` 裁到 ASCII + GB2312（实测 2.5 MB）。
+- `vm_font.c`（guest）改用 `stbtt_GetFontOffsetForIndex(data, 0)`，为 TTC 留出通道
+  （普通 TTF 返回 0，行为不变）。
+- 前端 wasm 未重编：本机 emsdk 只有脚本、没有安装 emscripten，所以 `assets/stb_font_wasm.mjs`
+  保持原样（仍按 offset 0 读取），`stb_font_wasm.c` 也保持 offset 0 —— 避免「源改了产物没重编」的不一致。
+- 因此实际走 **TTC → TTF 提取**：`tools/extract_system_font.py` 用 fontTools 从 `simsun.ttc`
+  取字体 0，可 `--subset` 裁到 ASCII + GB2312（实测 2.5 MB）。提取出的就是普通 TTF，两端都能读。
 - `VmServer_SetFontPath`：非空时 `GET /font.ttf` 直接读该路径（可指向 `temp/fonts/simsun.ttf`），
   前端与 guest 共用同一文件；静态资源上限 16 MB → 32 MB。
 - `demo_xaml --font <path>` 指定主题字体；`Jpx_Create` 把 `opt.fontPath` 转给 server。

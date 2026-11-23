@@ -297,6 +297,17 @@ int JpxXamlTheme_ImageAt(void *userData, const char *resPackId, int index,
     return 0;
 }
 
+/* 渐变资源 → 首末 stop 颜色：VmTheme 的成对 token 只接受两个颜色。 */
+static void gradient_ends(const JpxXamlResourceTable *table, const char *key,
+                          const char **from, const char **to) {
+    const JpxXamlResource *r = JpxRes_Find(table, key);
+    if (!r || r->stopCount < 2) return;
+    if (r->kind != JPX_XAML_RES_LINEAR_GRADIENT &&
+        r->kind != JPX_XAML_RES_RADIAL_GRADIENT) return;
+    *from = r->stops[0].color;
+    *to = r->stops[r->stopCount - 1].color;
+}
+
 void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
     if (!out) return;
     *out = *VmTheme_Default();
@@ -361,6 +372,12 @@ void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
     out->clockTextColor = JpxRes_Color(table, "ClockForeground", out->clockTextColor);
     out->startTextColor = JpxRes_Color(table, "StartLabel", out->startTextColor);
     out->panelHeight = (int)JpxRes_Number(table, "TaskbarHeight", out->panelHeight);
+    /* 任务栏按钮/托盘的渐变端点直接用主题里的多 stop 资源（首末 stop），
+       比代码内手写的 Luna 近似更贴近主题文件。 */
+    gradient_ends(table, "TaskButtonBackground", &out->taskButtonFrom, &out->taskButtonTo);
+    gradient_ends(table, "TaskButtonBackgroundPressed",
+                  &out->taskButtonActiveFrom, &out->taskButtonActiveTo);
+    gradient_ends(table, "TrayBackground", &out->trayFrom, &out->trayTo);
     /* 位图皮肤：主题里有开始按钮图就用它，比手写绿色渐变更接近原版。 */
     if (JpxRes_Find(table, "StartButtonImage")) out->startImageId = "StartButtonImage";
     if (JpxRes_Find(table, "StartIconImage")) out->startIconId = "StartIconImage";

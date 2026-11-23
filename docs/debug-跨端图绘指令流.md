@@ -47,6 +47,11 @@
 - **外壳 onHover 会带着旧位置回调**（根因未查明）：指针在别的窗口上时，任务栏条目的回调仍可能被触发一次（日志里 `down=0 seq=N`）。当前在 `shell_item_press` 里加了「`wm->pointerX/Y` 必须落在任务栏矩形内」的兜底挡掉；真正的触发路径还没定位，遇到类似"在 A 上按下却触发了 B 的条目"先查这里。
 - **读 guest dump 要同时看 `min / max / focused`**：只看一眼焦点容易误判。曾把"点任务栏条目后窗口被 raise"当成 bug，实际是该窗口当时处于最小化状态、走了还原分支（还原会重新聚焦并 raise）。
 - **测试里点标题栏按钮不要写死坐标**：按钮从两个变三个时，最小化按钮整体左移 20px，两条断言直接失效。按钮位置由 `chrome_button_rects` 决定，测试应跟着几何算；最大化后标题栏在 `y = 0..30`，与还原态不同。
+- **`agent-browser` 的输出流不会结束**：`agent-browser eval ... | Select-Object -Last N` 永远等不到 EOF。取尾部会挂住，改成直接输出或用 `-First`；同理 `| Out-Null` 后接后续命令是安全的。
+- **emsdk 已装在本机但不在 PATH**：`H:\github_repos\emsdk\upstream\emscripten\emcc.exe`，需要
+  `$env:EM_CONFIG='H:\github_repos\emsdk\.emscripten'` 才能找到 node/python/LLVM。
+  `where emcc` 找不到不代表没安装 —— 先看 `emsdk/upstream/emscripten`。
+- **`inspect_vm_frame.py` 的对象断言**：手工解析 SSE 时 `ops` 里可能混有非 dict 元素，`p.get('ops')` 之前要判 `isinstance(p, dict)`，否则报 `'list' object has no attribute 'get'`。
 
 ## 调试脚本
 

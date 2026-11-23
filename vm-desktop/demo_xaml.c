@@ -13,18 +13,38 @@
 
 static JpxApp *g_app;
 
-/* RetroBar 风格资源字典：暖橙主题，用于验证热切换。 */
-static const char *WARM_THEME =
+/* 内置 XP Luna 资源字典：不传 --theme 时的默认外观。
+   数值取自 RetroBar 的 Windows XP Blue.xaml（任务栏 5-stop、托盘、任务按钮、高度 30）。
+   不含位图（StartButtonImage 是外部资源），开始按钮走绿色渐变。
+   自包含：默认外观不依赖 RetroBar 仓库是否在机器上。 */
+static const char *XP_THEME =
     "<ResourceDictionary>"
-      "<SolidColorBrush x:Key='AccentColor' Color='#FFFF8C42' />"
-      "<SolidColorBrush x:Key='TaskbarBackground' Color='#FF2A1F1A' />"
-      "<SolidColorBrush x:Key='TaskTextColor' Color='#FFFFF0E0' />"
-      "<SolidColorBrush x:Key='WindowBackground' Color='#FF3A2A20' />"
-      "<SolidColorBrush x:Key='TaskButtonBackground' Color='#FFFF8C42' />"
-      "<SolidColorBrush x:Key='accentTextColor' Color='#FF2A1F1A' />"
-      "<SolidColorBrush x:Key='DesktopFrom' Color='#FF2A1F1A' />"
-      "<SolidColorBrush x:Key='DesktopTo' Color='#FF4A3020' />"
       "<system:Double x:Key='TaskbarHeight'>30</system:Double>"
+      "<LinearGradientBrush x:Key='TaskbarBackground' StartPoint='0,0' EndPoint='0,1'>"
+        "<GradientStop Color='#3888e9' Offset='0.0' />"
+        "<GradientStop Color='#4993e6' Offset='0.05' />"
+        "<GradientStop Color='#2257d5' Offset='0.18' />"
+        "<GradientStop Color='#2663e0' Offset='0.9' />"
+        "<GradientStop Color='#1941a5' Offset='1.0' />"
+      "</LinearGradientBrush>"
+      "<LinearGradientBrush x:Key='TrayBackground' StartPoint='0,0' EndPoint='0,1'>"
+        "<GradientStop Color='#16adf0' Offset='0.0' />"
+        "<GradientStop Color='#19b9f3' Offset='0.05' />"
+        "<GradientStop Color='#1290e8' Offset='0.18' />"
+        "<GradientStop Color='#0d8dea' Offset='0.6' />"
+        "<GradientStop Color='#0fa0ef' Offset='1.0' />"
+      "</LinearGradientBrush>"
+      "<LinearGradientBrush x:Key='TaskButtonBackground' StartPoint='0,0' EndPoint='0,1'>"
+        "<GradientStop Color='#4892f7' Offset='0.0' />"
+        "<GradientStop Color='#3980f4' Offset='0.17' />"
+      "</LinearGradientBrush>"
+      "<LinearGradientBrush x:Key='TaskButtonBackgroundPressed' StartPoint='0,0' EndPoint='0,1'>"
+        "<GradientStop Color='#123d94' Offset='0.0' />"
+        "<GradientStop Color='#2156b7' Offset='1.0' />"
+      "</LinearGradientBrush>"
+      "<SolidColorBrush x:Key='ButtonForeground' Color='#ffffff' />"
+      "<SolidColorBrush x:Key='ClockForeground' Color='#ffffff' />"
+      "<SolidColorBrush x:Key='ItemButtonForeground' Color='#ffffff' />"
     "</ResourceDictionary>";
 
 static JpxXamlResourceTable g_theme;
@@ -198,7 +218,7 @@ int main(int argc, char **argv) {
     JpxXamlView_On(view, "OnTheme", on_theme, NULL);
 
     char themeErr[256];
-    const char *themeXml = WARM_THEME;
+    const char *themeXml = XP_THEME;
     char *themeFile = NULL;
     if (themePath) {
         FILE *tf = fopen(themePath, "rb");
@@ -252,8 +272,8 @@ int main(int argc, char **argv) {
        资源以资源包下发，client 收 loadResPack(id) 后自己 GET /respack/<id>，
        刷新页面也会从首事件的同一个 id 恢复。 */
     if (g_theme.count > 0 && JpxXamlTheme_Apply(g_app, &g_theme)) {
-        snprintf(g_state.status, sizeof(g_state.status), "主题: %s",
-                 themePath ? "Windows XP" : "内置暖色");
+        snprintf(g_state.status, sizeof(g_state.status), "主题: XP（%s）",
+                 themePath ? "外置" : "内置");
         Jpx_Invalidate(g_app);
     }
 

@@ -280,12 +280,13 @@ Clay 的 `backgroundColor` 只吃单色，渐变填不进去。方案是给 WM �
 
 ### S7f：主题字体（宋体）（2026-11-23）
 
-- `vm_font.c`（guest）改用 `stbtt_GetFontOffsetForIndex(data, 0)`，为 TTC 留出通道
-  （普通 TTF 返回 0，行为不变）。
-- 前端 wasm 未重编：本机 emsdk 只有脚本、没有安装 emscripten，所以 `assets/stb_font_wasm.mjs`
-  保持原样（仍按 offset 0 读取），`stb_font_wasm.c` 也保持 offset 0 —— 避免「源改了产物没重编」的不一致。
-- 因此实际走 **TTC → TTF 提取**：`tools/extract_system_font.py` 用 fontTools 从 `simsun.ttc`
-  取字体 0，可 `--subset` 裁到 ASCII + GB2312（实测 2.5 MB）。提取出的就是普通 TTF，两端都能读。
+- `vm_font.c`（guest）与 `stb_font_wasm.c`（前端）都改用 `stbtt_GetFontOffsetForIndex(data, 0)`，
+  TTC 与普通 TTF 都能直读（普通 TTF 返回 0，行为不变）。
+- 前端 wasm 已用本机 emscripten 重编（7.0.0，`emsdk/upstream/emscripten/emcc.exe`，需设 `EM_CONFIG`），
+  `assets/stb_font_wasm.{mjs,wasm}` 一并提交；编译命令登记在 `tools/INDEX.md`。
+- 验证：`--font C:\Windows\Fonts\simsun.ttc`（18 MB TTC）启动后中文正常渲染，`/font.ttf` 返回 18316748 B。
+- 仍然保留 `tools/extract_system_font.py`：TTC 直读虽然可用，但 18 MB 每次刷新都要下载，
+  提取 + `--subset` 后只有 2.5 MB，适合作为默认路径。
 - `VmServer_SetFontPath`：非空时 `GET /font.ttf` 直接读该路径（可指向 `temp/fonts/simsun.ttf`），
   前端与 guest 共用同一文件；静态资源上限 16 MB → 32 MB。
 - `demo_xaml --font <path>` 指定主题字体；`Jpx_Create` 把 `opt.fontPath` 转给 server。
@@ -295,8 +296,24 @@ Clay 的 `backgroundColor` 只吃单色，渐变填不进去。方案是给 WM �
 （标题与「开始」为伪粗体）；hover 帧出现 `drawPath`（`tb_item_thumb_1`，16×16 棋盘格）；
 最大化截图确认直角、无外框、内容自适应。
 
+### S7g：默认主题改为内置 XP（2026-11-23）
+
+- `demo_xaml` 不传 `--theme` 时用内置 `XP_THEME`（C 常量字符串，8 个资源）：
+  `TaskbarBackground` 5-stop、`TrayBackground` 5-stop、`TaskButtonBackground` /
+  `TaskButtonBackgroundPressed` 两 stop、`ButtonForeground` / `ClockForeground` /
+  `ItemButtonForeground` 白、`TaskbarHeight` 30。数值抄自 RetroBar 的 XP Blue。
+- 自包含：默认外观不依赖 RetroBar 仓库是否在机器上；缺的只有开始按钮位图（走绿色渐变）。
+- `DeriveTheme` 增加 `gradient_ends()`：任务按钮与托盘的渐变端点直接取主题资源首末 stop，
+  不再是代码内手写的近似色。加载真实 XP 文件时同样生效。
+- 状态文本区分「XP（内置）」与「XP（外置）」。
+
+验证：无 `--theme` 启动，截图确认蓝色桌面、蓝渐变标题栏 + 红色关闭钮、米灰按钮、
+蓝色任务栏 + 绿色开始 + 托盘时钟、宋体中文。
+
 **剩余 gap（未做）**
 - RetroBar 的 XP 主题只有任务栏资源；窗口标题栏/边框/控件是按 Luna 惯例手写的近似值，不是从主题文件读的。
 - 任务栏缩略图只有占位底纹，没有窗口内容缩放预览。
 - 桌面无壁纸（图片资源），只用蓝天渐变近似。
-- 字体需要手动跑一次 `tools/extract_system_font.py` 并在启动时传 `--font`；未做自动探测。
+- 内置 XP 主题没有开始按钮位图（`StartButtonImage` 是 RetroBar 仓库里的 PNG），走绿色渐变；
+  传 `--theme` 加载真实文件时才有位图。
+- 默认字体仍取 `assets/font.ttf`（SimHei）：不传 `--font` 时不会自动用系统宋体。

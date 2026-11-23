@@ -154,3 +154,17 @@ python tools/start_vm_desktop.py demo_xaml
 未验证：浏览器内多 stop 渐变的实际像素效果（只验证了 descriptor 序列化与事件广播）；RetroBar 19 个主题文件的完整兼容（v1 样本为自建子集）；Style/ControlTemplate/DrawingBrush/ImageBrush（明确不做）。
 
 恢复点：继续扩展时优先补 `DeriveTheme` 的 token 覆盖（当前只映射 8 个 key），以及前端 `applyResources` 后主动触发全量重绘的机制（当前靠主题切换时的窗口置脏推新帧）。
+
+### 追加：真实 RetroBar 主题文件支持（2026-11-23）
+
+用户反馈「没看到 Windows XP 主题」——此前只用自造暖色样本，没真正加载 RetroBar 文件。补齐如下：
+
+- **容量**：`JPX_XAML_MAX_NODES` 128 → 1024（XP Blue 898 节点、Vista Aero 905）；`ATTR_VALUE_CAP` 256→512、`TEXT_CAP` 512→8192（Style/ControlTemplate 里的长文本）。大元素树改为 static 存储（`JpxXamlTheme_Parse` 的 `doc`、`test_jpx_xaml.c` 4 处），避免 600KB 栈溢出。
+- **探针**：`test_jpx_xaml_theme.exe --file <path>` 解析真实主题并打印资源摘要。实测 `Windows XP Blue.xaml`：111 资源（155 key 中 Brush/Double 类型），`TaskbarBackground` = 5 stop 线性渐变，首色 `rgba(56,136,233,1)`。
+- **demo**：`demo_xaml.exe <port> <webroot> --theme <path>` 加载真实文件；注意 PowerShell `Start-Process -ArgumentList` 给含空格路径加引号。
+- **渐变代表色**：`JpxRes_Color` 对渐变资源返回首 stop 颜色，供只能吃单色的 VmTheme token 使用（否则 XP 蓝渐变取到空串）。加断言覆盖。
+- **任务栏渐变**：`JpxXamlTheme_Apply` 把 XAML 的 `TaskbarBackground` 多 stop 渐变覆盖到 `p_panel`（`s_panel` 引用的 pattern），让任务栏显示真实 XP 蓝渐变而非单色。
+
+验证：启动 `--theme "...\Windows XP Blue.xaml"`，点切换按钮 → `resources-update` 114 条命令、29 个渐变，`p_panel` = 5-stop XP 蓝渐变；状态文本「主题已切换」进帧。六个测试套件全通过（主题测试 34 项）。
+
+未覆盖：RetroBar 主题的 Style/Setter/ControlTemplate/DrawingBrush/ImageBrush 仍跳过（v1 非目标）；任务栏按钮/文字用单色代表色，未逐元素套用各自渐变 key。

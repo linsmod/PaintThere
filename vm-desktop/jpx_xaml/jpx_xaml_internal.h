@@ -12,12 +12,15 @@
 extern "C" {
 #endif
 
-#define JPX_XAML_MAX_NODES 128
+/* RetroBar 真实主题（Windows Vista Aero 905 节点、XP Blue 898）远超 128。
+   元素树只在解析期存在，1024 节点约 600KB，调用方必须 static/malloc，
+   不要放到普通栈上。 */
+#define JPX_XAML_MAX_NODES 1024
 #define JPX_XAML_MAX_ATTRS 12
 #define JPX_XAML_TAG_CAP 32
 #define JPX_XAML_ATTR_NAME_CAP 32
-#define JPX_XAML_ATTR_VALUE_CAP 256
-#define JPX_XAML_TEXT_CAP 512
+#define JPX_XAML_ATTR_VALUE_CAP 512
+#define JPX_XAML_TEXT_CAP 8192
 #define JPX_XAML_INPUT_CAP 256
 #define JPX_XAML_MAX_ITEMS 48
 #define JPX_XAML_MAX_BINDINGS 64

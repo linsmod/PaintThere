@@ -56,7 +56,7 @@ static int parse_ok(const char *xaml, JpxXamlDoc *doc) {
 
 static void test_parse_tree(void) {
     section("parse / tree");
-    JpxXamlDoc doc;
+    static JpxXamlDoc doc;
     int ok = parse_ok(
         "<!-- head -->\n"
         "<Window Title='Demo'>\n"
@@ -86,7 +86,7 @@ static void test_parse_tree(void) {
 
 static void test_entities_and_text(void) {
     section("entities / text content");
-    JpxXamlDoc doc;
+    static JpxXamlDoc doc;
     int ok = parse_ok(
         "<Window Title=\"A &amp; B &lt;C&gt; &quot;D&quot; &apos;E&apos;\">"
         "<TextBlock>hello &amp; bye</TextBlock></Window>", &doc);
@@ -100,7 +100,7 @@ static void test_entities_and_text(void) {
 
 static void test_errors(void) {
     section("error reporting");
-    JpxXamlDoc doc;
+    static JpxXamlDoc doc;
     char err[256];
 
     expect(!JpxXamlDoc_Parse(&doc, "<Window><Button></Window>", err, sizeof(err)),
@@ -122,7 +122,7 @@ static void test_errors(void) {
 
 static void test_capacity(void) {
     section("capacity guards");
-    JpxXamlDoc doc;
+    static JpxXamlDoc doc;
     char src[16384];
     src[0] = '\0';
     for (int i = 0; i < JPX_XAML_MAX_NODES + 5; i++) {

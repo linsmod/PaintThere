@@ -148,6 +148,11 @@ int main(int argc, char **argv) {
     opt.tileH = 100;
     opt.port = argc > 1 ? (unsigned short)atoi(argv[1]) : 9060;
     opt.webRoot = argc > 2 ? argv[2] : "../assets";
+    /* 可选：--theme <path> 加载真实 ResourceDictionary 文件（如 RetroBar 的 XP Blue）。 */
+    const char *themePath = NULL;
+    for (int i = 3; i + 1 < argc; i++) {
+        if (strcmp(argv[i], "--theme") == 0) themePath = argv[i + 1];
+    }
     snprintf(fontPath, sizeof(fontPath), "%s/font.ttf", opt.webRoot);
     opt.fontPath = fontPath;
     opt.logLevel = 2;
@@ -189,9 +194,33 @@ int main(int argc, char **argv) {
     JpxXamlView_On(view, "OnTheme", on_theme, NULL);
 
     char themeErr[256];
-    if (!JpxXamlTheme_Parse(&g_theme, WARM_THEME, themeErr, sizeof(themeErr))) {
-        fprintf(stderr, "demo_xaml: theme parse failed: %s\n", themeErr);
+    const char *themeXml = WARM_THEME;
+    char *themeFile = NULL;
+    if (themePath) {
+        FILE *tf = fopen(themePath, "rb");
+        if (tf) {
+            fseek(tf, 0, SEEK_END);
+            long n = ftell(tf);
+            fseek(tf, 0, SEEK_SET);
+            themeFile = (char *)malloc((size_t)n + 1);
+            if (themeFile) {
+                if (fread(themeFile, 1, (size_t)n, tf) == (size_t)n) {
+                    themeFile[n] = '\0';
+                    themeXml = themeFile;
+                } else { free(themeFile); themeFile = NULL; }
+            }
+            fclose(tf);
+        } else {
+            fprintf(stderr, "demo_xaml: cannot open theme file: %s\n", themePath);
+        }
     }
+    if (!JpxXamlTheme_Parse(&g_theme, themeXml, themeErr, sizeof(themeErr))) {
+        fprintf(stderr, "demo_xaml: theme parse failed: %s\n", themeErr);
+    } else {
+        printf("demo_xaml: theme loaded from %s, %d resources\n",
+               themeFile ? themePath : "builtin", g_theme.count);
+    }
+    free(themeFile);
 
     JpxWindowDesc desc = {0};
     desc.title = "jp_xaml 表单";

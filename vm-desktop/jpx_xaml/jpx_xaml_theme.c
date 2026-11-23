@@ -135,7 +135,8 @@ int JpxXamlTheme_Parse(JpxXamlResourceTable *table, const char *xaml,
                        char *err, size_t errCap) {
     if (err && errCap) err[0] = '\0';
     if (!table || !xaml) return 0;
-    JpxXamlDoc doc;
+    /* 1024 节点约 600KB，栈上会溢出；主题解析串行执行，用 static 复用。 */
+    static JpxXamlDoc doc;
     if (!JpxXamlDoc_Parse(&doc, xaml, err, errCap)) return 0;
     JpxXamlTheme_Init(table);
     if (!build_resources(&doc, table, err, errCap)) {
@@ -156,7 +157,13 @@ const JpxXamlResource *JpxRes_Find(const JpxXamlResourceTable *table, const char
 const char *JpxRes_Color(const JpxXamlResourceTable *table, const char *key,
                          const char *fallback) {
     const JpxXamlResource *r = JpxRes_Find(table, key);
-    if (r && r->kind == JPX_XAML_RES_COLOR) return r->color;
+    if (!r) return fallback;
+    if (r->kind == JPX_XAML_RES_COLOR) return r->color;
+    /* 渐变也提供一个代表色（首 stop），供只能消费单色的 VmTheme token 使用。
+       RetroBar 的 TaskbarBackground 等 key 多为 LinearGradientBrush。 */
+    if ((r->kind == JPX_XAML_RES_LINEAR_GRADIENT ||
+         r->kind == JPX_XAML_RES_RADIAL_GRADIENT) && r->stopCount > 0)
+        return r->stops[0].color;
     return fallback;
 }
 

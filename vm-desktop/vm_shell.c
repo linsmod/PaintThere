@@ -32,6 +32,9 @@ static Clay_Color theme_color(const char *text, float alphaMul, Clay_Color fallb
     float a = 1.0f;
     while (*p && (*p == ',' || *p == ' ')) p++;
     if (*p && *p != ')') a = theme_float(&p);
+    /* CSS 的 0..1 alpha 要转成 Clay 的 0..255，与 Jpx__Color 保持一致。
+       漏掉这步会让 alpha≈0.63 被当成 0..255，序列化后变成 0.002（几乎全透明）。 */
+    if (a <= 1.0f) a *= 255.0f;
     return (Clay_Color){r, g, b, a * alphaMul};
 }
 

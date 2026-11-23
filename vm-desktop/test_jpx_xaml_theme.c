@@ -3,9 +3,40 @@
 */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "jpx_xaml_theme.h"
+
+/* --file <path>：解析真实主题文件并打印资源摘要（调试用）。 */
+static int probe_file(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) { printf("open failed: %s\n", path); return 1; }
+    fseek(f, 0, SEEK_END);
+    long n = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buf = (char *)malloc((size_t)n + 1);
+    if (!buf) { fclose(f); return 1; }
+    if (fread(buf, 1, (size_t)n, f) != (size_t)n) { fclose(f); free(buf); return 1; }
+    buf[n] = '\0';
+    fclose(f);
+
+    static JpxXamlResourceTable table;
+    char err[256];
+    int ok = JpxXamlTheme_Parse(&table, buf, err, sizeof(err));
+    printf("parse=%d count=%d err=%s\n", ok, table.count, err);
+    for (int i = 0; i < table.count && i < 10; i++) {
+        const JpxXamlResource *r = &table.items[i];
+        printf("  %-32s kind=%d stops=%d color=%s\n",
+               r->key, r->kind, r->stopCount, r->color);
+    }
+    const JpxXamlResource *tb = JpxRes_Find(&table, "TaskbarBackground");
+    if (tb) printf("TaskbarBackground kind=%d stops=%d first=%s dir=%s\n",
+                   tb->kind, tb->stopCount,
+                   tb->stopCount ? tb->stops[0].color : "-", tb->direction);
+    free(buf);
+    return ok ? 0 : 1;
+}
 
 static int g_failures, g_checks, g_probe;
 
@@ -95,6 +126,9 @@ static void test_resolve(void) {
                "fallback", "missing key uses fallback");
     expect_str(JpxXamlTheme_Resolve(&table, "rgba(1,2,3,1)", "fallback"),
                "fallback", "plain color is not a resource expression");
+    expect_str(JpxRes_Color(&table, "TaskButtonBackground", "none"),
+               "rgba(124,122,255,1.000)",
+               "gradient resource yields first stop as representative color");
 }
 
 static void test_derive(void) {
@@ -135,6 +169,7 @@ static void test_errors(void) {
 }
 
 int main(int argc, char **argv) {
+    if (argc > 2 && strcmp(argv[1], "--file") == 0) return probe_file(argv[2]);
     g_probe = argc > 1 && strcmp(argv[1], "--probe") == 0;
     test_parse();
     test_resolve();

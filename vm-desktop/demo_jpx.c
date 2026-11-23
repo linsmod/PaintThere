@@ -3,6 +3,7 @@
    运行：demo_jpx.exe 9000 ../assets */
 
 #include "jpx/jpx.h"
+#include "jpx_xaml/jpx_shell_settings.h"
 #include "vm_sys.h"
 #include "vm_fs.h"
 
@@ -62,6 +63,10 @@ static int g_filesWin;
 static JpxWindowDesc g_menuDesc;
 static JpxWindowDesc g_procDesc;
 static JpxWindowDesc g_filesDesc;
+
+/* 任务栏设置：配置持久化在 <webRoot>/shell.ini，任务栏右键「属性」打开。 */
+static JpxShellSettings g_shellCfg;
+static char g_webRoot[512];
 
 /* 输入框已接管可打印键与编辑键；这里只收控件未消费的键（Enter 等）。 */
 static int on_key(int winId, const char *key, const char *code, int isDown,
@@ -330,6 +335,8 @@ static void layout_e(int win, void *user) {
    正在布局的窗口不能在回调中途被销毁。 */
 static int g_pendingLaunch = -1;   /* -1 无 / 0 ProcMan / 1 Files */
 static int g_pendingCloseMenu;
+/* 任务栏右键「属性」：同样只记意图，由 launcher_tick 统一开窗。 */
+static int g_pendingSettings;
 
 static void launcher_close_menu(void) {
     if (g_menuWin) {
@@ -341,6 +348,11 @@ static void launcher_close_menu(void) {
 static void launcher_tick(void *user) {
     (void)user;
     if (!g_app) return;
+    if (g_pendingSettings) {
+        g_pendingSettings = 0;
+        JpxShellSettings_Open(g_app, g_webRoot, &g_shellCfg);
+        Jpx_Invalidate(g_app);
+    }
     if (g_pendingCloseMenu) {
         g_pendingCloseMenu = 0;
         launcher_close_menu();
@@ -428,6 +440,14 @@ static void clock_tick(void *user) {
     Jpx_ShellRefresh(g_app);
 }
 
+/* 任务栏右键「属性」：打开设置窗口。回调里只记意图，
+   由 launcher_tick 统一开窗（与开始菜单同一防重入模式）。 */
+static void on_settings_open(void *user) {
+    (void)user;
+    g_pendingSettings = 1;
+    Jpx_Invalidate(g_app);
+}
+
 int main(int argc, char **argv) {
     static char fontPath[512];
     JpxOptions opt = {0};
@@ -437,6 +457,7 @@ int main(int argc, char **argv) {
     opt.tileH = 100;
     opt.port = argc > 1 ? (unsigned short)atoi(argv[1]) : 9000;
     opt.webRoot = argc > 2 ? argv[2] : "../assets";
+    snprintf(g_webRoot, sizeof(g_webRoot), "%s", opt.webRoot);
     snprintf(fontPath, sizeof(fontPath), "%s/font.ttf", opt.webRoot);
     opt.fontPath = fontPath;
     opt.logLevel = 2;
@@ -531,6 +552,9 @@ int main(int argc, char **argv) {
         return 1;
     }
     Jpx_SetStartHandler(g_app, on_start, NULL);
+    Jpx_SetShellSettingsHandler(g_app, on_settings_open, NULL);
+    /* 启动时读 <webRoot>/shell.ini 并应用主题与任务栏开关。 */
+    JpxShellSettings_Init(g_app, g_webRoot, NULL, &g_shellCfg);
     Jpx_TimerEvery(g_app, 2000, procs_tick, &g_procs);
     Jpx_TimerEvery(g_app, 60, launcher_tick, NULL);
     Jpx_TimerEvery(g_app, 1000, clock_tick, NULL);

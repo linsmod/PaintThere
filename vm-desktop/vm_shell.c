@@ -7,6 +7,7 @@
 #include <time.h>
 
 #include "vm_font.h"
+#include "vm_menu.h"
 
 /* 任务栏 = 一个无装饰/置顶/不可拖动/不抢焦点的特殊窗口。
    内容用 VmWm_SetWindowPaint 手绘：Clay 的 backgroundColor 只吃单色，
@@ -29,8 +30,15 @@ struct VmShell {
     const VmTheme *theme;
     VmShellStartHandler startHandler;
     void *startUserData;
-    /* 已处理过的按下序号：一次按下只触发一次，与重建帧数无关。 */
+    VmShellSettingsHandler settingsHandler;
+    void *settingsUserData;
+    /* 任务栏选项（RetroBar Properties 开关子集），默认全开。 */
+    int showClock;
+    int showTrayIcon;
+    /* 已处理过的按下序号：一次按下只触发一次，与重建帧数无关。
+       左右键分开记：右键菜单打开/关闭不影响左键的按下沿。 */
     int lastDownSeq;
+    int lastRightSeq;
 };
 
 static VmShell *g_shell;
@@ -286,26 +294,28 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
         append_border(out, "tb_tray_edge", trayX, y, 1, h, 1, "rgba(0,0,0,0.22)");
     }
     {
-        /* 托盘左侧是「显示桌面」图标，时钟占剩余区域。 */
+        /* 托盘左侧是「显示桌面」图标（可由设置关掉），时钟占剩余区域。 */
         int clockLeft = trayX;
         int clockRight = x + w;
-        if (t->trayIconId) {
+        if (sh->showTrayIcon && t->trayIconId) {
             int icon = t->panelStartIconSize > 0 ? t->panelStartIconSize : bh - 8;
             append_img(out, "tb_tray_icon", trayX + L.pad, y + (h - icon) / 2, icon, icon,
                        t->trayIconId, 0);
             clockLeft = trayX + L.pad + icon;
         }
-        static char clock[16];
-        time_t now = time(NULL);
-        struct tm *tmVal = localtime(&now);
-        clock[0] = '\0';
-        if (tmVal) strftime(clock, sizeof(clock), "%H:%M", tmVal);
-        int cw = VmFont_Width(fontId, fontSize, clock, -1);
-        const char *color = t->clockTextColor ? t->clockTextColor : t->fgColor;
-        int slotW = clockRight - clockLeft;
-        append_text(out, "tb_clock", clockLeft + (slotW - cw) / 2,
-                    y + (h - lineStep) / 2, cw > 0 ? cw : slotW, lineStep,
-                    clock, fontId, fontSize, color);
+        if (sh->showClock) {
+            static char clock[16];
+            time_t now = time(NULL);
+            struct tm *tmVal = localtime(&now);
+            clock[0] = '\0';
+            if (tmVal) strftime(clock, sizeof(clock), "%H:%M", tmVal);
+            int cw = VmFont_Width(fontId, fontSize, clock, -1);
+            const char *color = t->clockTextColor ? t->clockTextColor : t->fgColor;
+            int slotW = clockRight - clockLeft;
+            append_text(out, "tb_clock", clockLeft + (slotW - cw) / 2,
+                        y + (h - lineStep) / 2, cw > 0 ? cw : slotW, lineStep,
+                        clock, fontId, fontSize, color);
+        }
     }
 }
 
@@ -326,7 +336,95 @@ static void shell_activate_window(VmShell *sh, int wid) {
     }
 }
 
-static int shell_click(int winId, int x, int y, void *userData) {
+/* ---- 右键上下文菜单（RetroBar 交互）---- */
+
+/* 条目菜单的动作表：与菜单项一一对应（分隔线占位为 0）。 */
+enum {
+    TASK_MENU_RESTORE = 1,
+    TASK_MENU_MAXIMIZE,
+    TASK_MENU_MINIMIZE,
+    TASK_MENU_CLOSE,
+    TASK_MENU_SEP
+};
+
+typedef struct {
+    VmShell *sh;
+    int wid;
+    int actions[5];   /* index → TASK_MENU_* */
+    int count;
+} TaskMenuCtx;
+
+/* 菜单单例一次一个，ctx 用静态存储保到回调触发（栈数组会悬空）。 */
+static TaskMenuCtx g_taskMenu;
+
+static void shell_task_menu_select(int index, void *userData) {
+    TaskMenuCtx *ctx = (TaskMenuCtx *)userData;
+    VmShell *sh = ctx->sh;
+    VmWindow *win = VmWm_FindWindow(sh->wm, ctx->wid);
+    if (!win) return;   /* 菜单打开期间窗口可能已被关掉 */
+    switch (ctx->actions[index]) {
+        case TASK_MENU_RESTORE:
+            if (win->maximized) VmWm_Unmaximize(sh->wm, ctx->wid);
+            else if (win->minimized) VmWm_Restore(sh->wm, ctx->wid);
+            break;
+        case TASK_MENU_MAXIMIZE:
+            VmWm_Maximize(sh->wm, ctx->wid);
+            break;
+        case TASK_MENU_MINIMIZE:
+            VmWm_Minimize(sh->wm, ctx->wid);
+            break;
+        case TASK_MENU_CLOSE:
+            /* 与装饰 × 同一条路径：只发关闭请求，真正移除由持有者决定。 */
+            if (win->closeHandler) win->closeHandler(win->id, win->closeUserData);
+            else VmWm_RemoveWindow(sh->wm, ctx->wid);
+            break;
+        default:
+            break;
+    }
+}
+
+static void shell_task_context_menu(VmShell *sh, int wid, int x, int y) {
+    VmWindow *win = VmWm_FindWindow(sh->wm, wid);
+    if (!win) return;
+    /* 菜单项按窗口状态动态生成（XP 的系统菜单语义）。 */
+    VmMenuItem items[5];
+    int *actions = g_taskMenu.actions;
+    g_taskMenu.sh = sh;
+    g_taskMenu.wid = wid;
+    g_taskMenu.count = 0;
+    if (win->maximized || win->minimized) {
+        items[g_taskMenu.count].text = win->maximized ? "还原大小" : "还原";
+        actions[g_taskMenu.count] = TASK_MENU_RESTORE;
+        g_taskMenu.count++;
+    } else {
+        items[g_taskMenu.count].text = "最大化";
+        actions[g_taskMenu.count] = TASK_MENU_MAXIMIZE;
+        g_taskMenu.count++;
+    }
+    if (!win->minimized) {
+        items[g_taskMenu.count].text = "最小化";
+        actions[g_taskMenu.count] = TASK_MENU_MINIMIZE;
+        g_taskMenu.count++;
+    }
+    items[g_taskMenu.count].text = NULL;
+    actions[g_taskMenu.count] = TASK_MENU_SEP;
+    g_taskMenu.count++;
+    items[g_taskMenu.count].text = "关闭";
+    actions[g_taskMenu.count] = TASK_MENU_CLOSE;
+    g_taskMenu.count++;
+    for (int i = 0; i < g_taskMenu.count; i++) items[i].enabled = 1;
+
+    /* 锚在按下点，越界由 VmMenu 钳制进画布。 */
+    VmMenu_Open(sh->wm, sh->theme, x, y, items, g_taskMenu.count,
+                shell_task_menu_select, &g_taskMenu);
+}
+
+static void shell_bar_menu_select(int index, void *userData) {
+    VmShell *sh = (VmShell *)userData;
+    if (index == 0 && sh->settingsHandler) sh->settingsHandler(sh->settingsUserData);
+}
+
+static int shell_click(int winId, int x, int y, int button, void *userData) {
     (void)winId;
     VmShell *sh = (VmShell *)userData;
     if (!sh) return 0;
@@ -334,9 +432,14 @@ static int shell_click(int winId, int x, int y, void *userData) {
     if (!self) return 0;
     if (x < self->x || x >= self->x + self->w ||
         y < self->y || y >= self->y + self->h) return 0;
-    /* 按下沿：同一次按下只处理一次，与后续重建帧数无关。 */
-    if (sh->wm->pointerDownSeq == sh->lastDownSeq) return 0;
-    sh->lastDownSeq = sh->wm->pointerDownSeq;
+    /* 按下沿：同一次按下只处理一次，与后续重建帧数无关。左右键分开记。 */
+    if (button == 2) {
+        if (sh->wm->pointerDownSeq == sh->lastRightSeq) return 0;
+        sh->lastRightSeq = sh->wm->pointerDownSeq;
+    } else {
+        if (sh->wm->pointerDownSeq == sh->lastDownSeq) return 0;
+        sh->lastDownSeq = sh->wm->pointerDownSeq;
+    }
 
     const int lx = x - self->x;
     ShellLayout L;
@@ -351,12 +454,20 @@ static int shell_click(int winId, int x, int y, void *userData) {
     for (int i = 0; i < L.n; i++) {
         if (!shell_item_visible(sh, L.ids[i])) continue;
         if (lx >= ix && lx < ix + L.itemW) {
-            shell_activate_window(sh, L.ids[i]);
+            if (button == 2) shell_task_context_menu(sh, L.ids[i], x, y);
+            else shell_activate_window(sh, L.ids[i]);
             return 1;
         }
         ix += L.itemW + L.gap;
     }
-    /* 点在任务栏空白处也消费，避免穿透到桌面窗口。 */
+    /* 任务栏空白处：左键只消费防穿透；右键是属性菜单（RetroBar 行为）。 */
+    if (button == 2) {
+        static const VmMenuItem kBarMenu[] = {
+            {"属性", 1},
+        };
+        /* 菜单锚在按下点上方：VmMenu 越界时自动钳制进画布。 */
+        VmMenu_Open(sh->wm, sh->theme, x, y - 1, kBarMenu, 1, shell_bar_menu_select, sh);
+    }
     return 1;
 }
 
@@ -374,6 +485,33 @@ void VmShell_SetStartHandler(VmShell *shell, VmShellStartHandler handler, void *
     shell->startUserData = userData;
 }
 
+void VmShell_SetSettingsHandler(VmShell *shell, VmShellSettingsHandler handler,
+                                void *userData) {
+    if (!shell) return;
+    shell->settingsHandler = handler;
+    shell->settingsUserData = userData;
+}
+
+void VmShell_SetShowClock(VmShell *shell, int show) {
+    if (!shell) return;
+    shell->showClock = show ? 1 : 0;
+    VmShell_Refresh(shell);
+}
+
+int VmShell_ShowClock(const VmShell *shell) {
+    return shell ? shell->showClock : 0;
+}
+
+void VmShell_SetShowTrayIcon(VmShell *shell, int show) {
+    if (!shell) return;
+    shell->showTrayIcon = show ? 1 : 0;
+    VmShell_Refresh(shell);
+}
+
+int VmShell_ShowTrayIcon(const VmShell *shell) {
+    return shell ? shell->showTrayIcon : 0;
+}
+
 VmShell *VmShell_Create(VmWm *wm, const VmTheme *theme, int height) {
     if (!wm) return NULL;
     if (height <= 0) height = VM_SHELL_DEFAULT_HEIGHT;
@@ -384,6 +522,8 @@ VmShell *VmShell_Create(VmWm *wm, const VmTheme *theme, int height) {
     sh->theme = theme ? theme : VmTheme_Default();
     sh->width = wm->width;
     sh->height = height;
+    sh->showClock = 1;
+    sh->showTrayIcon = 1;
 
     int y = wm->height - height;
     VmWindow *win = VmWm_AddWindow(wm, VM_SHELL_WINDOW_ID, "taskbar",

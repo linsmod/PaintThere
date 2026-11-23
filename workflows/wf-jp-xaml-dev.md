@@ -58,6 +58,10 @@ Stop-Process -Id $p.Id
 - **回放器不能无条件置脏**：`JpxXaml_Render` 结尾调 `Jpx_Invalidate` 会破坏空闲零帧；由 handler 在状态真变化时显式置脏。
 - **`test_jpx_xaml` 故意不链接 JPX**：纯逻辑测试只链接 parser + state；view 回放器调用 `Jpx_*`，要测它必须链接完整 JPX 依赖（用 `demo_xaml` 做端到端）。
 - **`--probe` 模式**：`test_jpx_xaml` 支持，只输出失败与汇总。
+- **绑定偏移必须相对 model 基址**：`JpxXamlView_Bind` 的 offset 是「model 指针 + offset」。绑定嵌套在 ctx 里的子结构时写 `offsetof(Ctx, sub) + offsetof(Sub, field)`；直接传 `offsetof(Sub, field)` 会把 1 字节写进 ctx 开头的指针里，点控件即段错误且无任何日志。症状特征：崩溃点在 handler 解引用 model 内指针处，stderr 干净。
+- **layout 回调里禁止同步销毁自己的窗口**：`Jpx_Button` 等 handler 在 `JpxXaml_Render`（即 build_one_window）内部执行，此时 `Jpx_WindowClose` 会 memmove/释放窗口数组，Clay 继续布局直接越界（报 `out of bounds array access` 循环刷屏）。窗口开关一律走「意图 + 定时器」（demo_jpx `launcher_tick`、`jpx_shell_settings.c` `settings_tick` 是模板）。
+- **font.ttf 没有 U+2713（✓）字形**：勾选框选中态会画成空白。用 U+221A（√），字形存在。给字体加字形前先用 fontTools 查 cmap。
+- **浏览器端到端验证右键**：`vm_renderer.js` 已 `preventDefault` 掉 canvas 的 `contextmenu`；合成右键要对 `#c` 元素 dispatch `MouseEvent('mousedown', {button: 2})`——页面上有两个 canvas（`#bg` 在前），`querySelector('canvas')` 会选错。
 
 ## 主题（ResourceDictionary）扩展要点
 

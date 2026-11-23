@@ -141,6 +141,13 @@ void Jpx_ShellRefresh(JpxApp *app);
 /* 任务栏开始按钮回调：应用只给函数指针，不接触 VmShell。 */
 typedef void (*JpxStartHandler)(void *userData);
 void Jpx_SetStartHandler(JpxApp *app, JpxStartHandler handler, void *userData);
+/* 任务栏右键菜单「属性」回调：应用据此打开设置窗口。 */
+typedef void (*JpxShellSettingsHandler)(void *userData);
+void Jpx_SetShellSettingsHandler(JpxApp *app, JpxShellSettingsHandler handler,
+                                 void *userData);
+/* 任务栏选项（RetroBar Properties 开关子集）。 */
+void Jpx_ShellSetShowClock(JpxApp *app, int show);
+void Jpx_ShellSetShowTrayIcon(JpxApp *app, int show);
 
 void Jpx_ClipboardSet(const char *utf8);
 int  Jpx_ClipboardGet(char *out, int cap);

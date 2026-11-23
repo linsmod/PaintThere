@@ -414,6 +414,8 @@ async function boot() {
   };
   cv.addEventListener('mousedown', (e) => sendImmediate('mousedown', e));
   document.addEventListener('mouseup', (e) => sendImmediate('mouseup', e));
+  // 右键是 guest 的上下文菜单输入：压掉浏览器原生菜单，让 mousedown(button=2) 落到画布。
+  cv.addEventListener('contextmenu', (e) => e.preventDefault());
 
   // 滚轮：只上报原始增量，滚动语义全在 guest。
   cv.addEventListener('wheel', (e) => {

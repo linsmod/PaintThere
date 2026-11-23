@@ -24,6 +24,7 @@ add_executable(demo_wm
     vm_font.c
     vm_theme.c
     vm_shell.c
+    vm_menu.c
     vm_clipboard.c
 )
 target_include_directories(demo_wm PRIVATE "${CLAY_DIR}" "${MSTB_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
@@ -40,6 +41,13 @@ add_executable(demo_jpx
     jpx/jpx_theme.c
     jpx/jpx_widget.c
     jpx/jpx_text_edit.c
+    jpx_xaml/jpx_xaml_parser.c
+    jpx_xaml/jpx_xaml_state.c
+    jpx_xaml/jpx_xaml_view.c
+    jpx_xaml/jpx_xaml_theme.c
+    jpx_xaml/jpx_html_theme.c
+    jpx_xaml/jpx_xaml_theme_apply.c
+    jpx_xaml/jpx_shell_settings.c
     clay_frame_adapter.c
     vm_display.c
     vm_serialize_json.c
@@ -49,6 +57,7 @@ add_executable(demo_jpx
     vm_font.c
     vm_theme.c
     vm_shell.c
+    vm_menu.c
     vm_clipboard.c
     vm_sys_win32.c
     vm_sys_stub.c
@@ -56,7 +65,8 @@ add_executable(demo_jpx
     vm_fs_stub.c
 )
 target_include_directories(demo_jpx PRIVATE "${CLAY_DIR}" "${MSTB_DIR}"
-    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx")
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx"
+    "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml")
 if(WIN32)
     target_link_libraries(demo_jpx PRIVATE ws2_32 psapi)
 endif()
@@ -85,6 +95,7 @@ add_executable(demo_xaml
     vm_font.c
     vm_theme.c
     vm_shell.c
+    vm_menu.c
     vm_clipboard.c
     vm_sys_win32.c
     vm_sys_stub.c
@@ -107,9 +118,24 @@ add_executable(test_frame
     vm_font.c
     vm_theme.c
     vm_shell.c
+    vm_menu.c
     vm_clipboard.c
 )
 target_include_directories(test_frame PRIVATE "${CLAY_DIR}" "${MSTB_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
+
+# 菜单控件断言：右键路由、popup 外点关闭、菜单命中与自动关闭（不开服务/浏览器）。
+add_executable(test_menu
+    test_menu.c
+    clay_frame_adapter.c
+    vm_display.c
+    vm_wm.c
+    vm_font.c
+    vm_theme.c
+    vm_shell.c
+    vm_menu.c
+    vm_clipboard.c
+)
+target_include_directories(test_menu PRIVATE "${CLAY_DIR}" "${MSTB_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
 
 # 文本编辑状态机断言：纯逻辑，不链接 Clay / WM / 网络，毫秒级。
 add_executable(test_text_edit

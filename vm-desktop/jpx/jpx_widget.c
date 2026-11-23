@@ -231,7 +231,9 @@ int Jpx_Checkbox(int win, const char *id, const char *label, int *checked) {
             .cornerRadius = CLAY_CORNER_RADIUS(solidSkin ? 2.0f : 3.0f),
         }) {
             if (*checked) {
-                Clay_String mark = {.length = 3, .chars = "✓"};
+                /* font.ttf 没有 U+2713（✓）字形，勾选会画成空白；
+                   U+221A（√）字形存在且形状等价。 */
+                Clay_String mark = {.length = 3, .chars = "√"};
                 jpx_text(mark, text_config(app, markColor, 1, 0));
             }
         }

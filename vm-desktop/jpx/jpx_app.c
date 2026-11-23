@@ -489,6 +489,24 @@ void Jpx_SetStartHandler(JpxApp *app, JpxStartHandler handler, void *userData) {
     VmShell_SetStartHandler(app->shell, (VmShellStartHandler)handler, userData);
 }
 
+void Jpx_SetShellSettingsHandler(JpxApp *app, JpxShellSettingsHandler handler,
+                                 void *userData) {
+    if (!app) return;
+    VmShell_SetSettingsHandler(app->shell, (VmShellSettingsHandler)handler, userData);
+}
+
+void Jpx_ShellSetShowClock(JpxApp *app, int show) {
+    if (!app) return;
+    VmShell_SetShowClock(app->shell, show);
+    app->dirty = 1;
+}
+
+void Jpx_ShellSetShowTrayIcon(JpxApp *app, int show) {
+    if (!app) return;
+    VmShell_SetShowTrayIcon(app->shell, show);
+    app->dirty = 1;
+}
+
 void Jpx_ClipboardSet(const char *utf8) {
     VmClipboard_SetText(utf8);
 }

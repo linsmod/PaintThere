@@ -111,9 +111,30 @@ static void render_listbox(JpxXamlView *view, int win, int index,
         const char *lit = JpxXamlNode_Attr(node, "SelectedIndex");
         if (lit) selected = atoi(lit);
     }
+    int rawSelected = selected;   /* -1 = 无初始选中；只有平铺 ListBox 需要钳 0 */
     if (selected < 0) selected = 0;
 
-    if (Jpx_ListBox(win, id, items, count, &selected, count)) {
+    const char *rowsAttr = JpxXamlNode_Attr(node, "Rows");
+    /* Rows 属性限制可视行数：超出部分走 Jpx_ListBegin 的可滚动变体
+       （滚轮翻页，固定行高 22 + 2 间距）。不带 Rows 时保持原行为：
+       全部条目平铺渲染。 */
+    int visibleRows = rowsAttr ? atoi(rowsAttr) : count;
+    int changed = 0;
+    if (rowsAttr && count > 0) {
+        const int rowPitch = 24;   /* 行高 22 + 2 间距 */
+        if (Jpx_ListBegin(win, id, visibleRows * rowPitch + 4, count)) {
+            for (int i = 0; i < count; i++) {
+                if (Jpx_ListRow(win, id, &items[i], NULL, 1, rawSelected == i)) {
+                    selected = rawSelected = i;
+                    changed = 1;
+                }
+            }
+            Jpx_ListEnd(win);
+        }
+    } else if (Jpx_ListBox(win, id, items, count, &selected, visibleRows)) {
+        changed = 1;
+    }
+    if (changed) {
         if (b && b->kind == JPX_XAML_BIND_INT && view->model)
             *(int *)((char *)view->model + b->offset) = selected;
         JpxXaml__Fire(view, index, "SelectionChanged");

@@ -12,7 +12,9 @@
 extern "C" {
 #endif
 
-#define VM_WM_MAX_WINDOWS 8
+/* 任务栏 + 桌面层 + 应用窗口 + 开始菜单 + 设置窗口 + 右键弹窗要能同时存在；
+   8 会正好顶格，弹窗失败比内存代价更伤。 */
+#define VM_WM_MAX_WINDOWS 10
 #define VM_WM_TITLE_HEIGHT 28
 #define VM_WM_MAX_CURSORS 16
 /* 单窗口内容缓冲的容量上限（编译期，层数组按它分配）。 */
@@ -29,8 +31,10 @@ typedef Clay_RenderCommandArray (*VmWindowLayout)(void *userData);
    用于需要渐变/图片填充这类 Clay 布局表达不了的界面（任务栏）。 */
 typedef void (*VmWindowPaint)(VmCmdBuffer *out, int x, int y, int w, int h, void *userData);
 /* 手绘窗口的点击：按下时把画布坐标交给窗口自己的命中逻辑，返回 1 表示已消费。
-   NOFOCUS 窗口（任务栏）拿不到焦点，只能走这条通道。 */
-typedef int (*VmWindowClickHandler)(int windowId, int x, int y, void *userData);
+   button 为鼠标键号（0 左键 / 2 右键），NOFOCUS 窗口（任务栏）拿不到焦点，
+   只能走这条通道。 */
+typedef int (*VmWindowClickHandler)(int windowId, int x, int y, int button,
+                                    void *userData);
 /* Guest-internal key handler: return 1 if the key was consumed. */
 typedef int (*VmWindowKeyHandler)(int windowId, const char *key, const char *code,
                                   int isDown, void *userData);
@@ -158,6 +162,12 @@ struct VmWm {
     /* 窗口列表变化通知（任务栏等界面订阅）。 */
     VmWmWindowListHandler listHandler;
     void *listUserData;
+    /* popup 菜单（右键上下文菜单等）：打开中的菜单窗口 id 与外点关闭回调。
+       mousedown 落在 popup 之外时先 dismiss 并消费本次按下。
+       popupWindowId <= 0 表示当前没有 popup。 */
+    int popupWindowId;
+    void (*popupDismiss)(void *userData);
+    void *popupUserData;
 };
 
 void VmWm_SetWindowListHandler(VmWm *wm, VmWmWindowListHandler handler, void *userData);
@@ -179,6 +189,11 @@ void VmWm_SetKeyHandler(VmWm *wm, int id, VmWindowKeyHandler handler, void *user
 void VmWm_SetWindowPaint(VmWm *wm, int id, VmWindowPaint paint, void *userData);
 void VmWm_SetWindowClickHandler(VmWm *wm, int id, VmWindowClickHandler handler,
                                 void *userData);
+/* 注册 popup 菜单窗口（右键上下文菜单）：mousedown 落在它之外时先调 dismiss
+   并消费本次按下（Windows 行为：外点只关菜单，不穿透）。关闭菜单后要清掉
+   （popupWindowId 传 <= 0）。vm_menu 是它的第一个使用者。 */
+void VmWm_SetPopup(VmWm *wm, int windowId,
+                   void (*dismiss)(void *userData), void *userData);
 /* 最近一次键盘事件的修饰键；keyHandler 内部调用即得该次事件的修饰键。 */
 void VmWm_KeyModifiers(VmWm *wm, int *ctrl, int *shift, int *alt);
 void VmWm_SetWheelHandler(VmWm *wm, int id, VmWindowWheelHandler handler, void *userData);

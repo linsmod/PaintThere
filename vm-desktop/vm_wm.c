@@ -503,6 +503,14 @@ void VmWm_SetWindowClickHandler(VmWm *wm, int id, VmWindowClickHandler handler,
     win->clickUserData = userData;
 }
 
+void VmWm_SetPopup(VmWm *wm, int windowId,
+                   void (*dismiss)(void *userData), void *userData) {
+    if (!wm) return;
+    wm->popupWindowId = windowId;
+    wm->popupDismiss = dismiss;
+    wm->popupUserData = userData;
+}
+
 /* --- tiny JSON field extractors (input events are simple flat objects) --- */
 static const char *find_key(const char *json, const char *key) {
     static char scratch[128];
@@ -670,9 +678,19 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
         }
     }
 
-    /* 手绘窗口（任务栏）没有焦点，按下即交给它自己的命中逻辑，命中就消费掉。 */
-    if (ownsFocus && isDown && button == 0 && hit && hit->clickHandler) {
-        if (hit->clickHandler(hit->id, x, y, hit->clickUserData)) {
+    /* popup（右键菜单等）开着时，落在它之外的按下只用于关闭菜单：
+       消费掉，不再触发装饰按钮、焦点与拖动（Windows 行为）。 */
+    if (isDown && wm->popupWindowId > 0 &&
+        (!hit || hit->id != wm->popupWindowId) && wm->popupDismiss) {
+        wm->popupDismiss(wm->popupUserData);
+        sync_pointer_state(wm);
+        return 1;
+    }
+
+    /* 手绘窗口（任务栏）没有焦点，按下即交给它自己的命中逻辑，命中就消费掉。
+       左键与右键（上下文菜单）都走这条通道。 */
+    if (ownsFocus && isDown && (button == 0 || button == 2) && hit && hit->clickHandler) {
+        if (hit->clickHandler(hit->id, x, y, button, hit->clickUserData)) {
             sync_pointer_state(wm);
             return 1;
         }

@@ -17,7 +17,8 @@ extern "C" {
    不要放到普通栈上。 */
 #define JPX_XAML_MAX_NODES 1024
 #define JPX_XAML_MAX_ATTRS 12
-#define JPX_XAML_TAG_CAP 32
+/* ResourceDictionary.MergedDictionaries 是 38 字符，32 会截断标签名。 */
+#define JPX_XAML_TAG_CAP 48
 #define JPX_XAML_ATTR_NAME_CAP 32
 #define JPX_XAML_ATTR_VALUE_CAP 512
 #define JPX_XAML_TEXT_CAP 8192

@@ -15,13 +15,18 @@ extern "C" {
 
 #define JPX_XAML_MAX_RESOURCES 256
 
+/* 资源种类即预编译二进制的元素标记 id（xalm.bin 的 tagId），数值冻结：
+   1=SOLID_COLOR 2=LINEAR_GRADIENT 3=RADIAL_GRADIENT 4=NUMBER
+   5=STRING 6=PATH；IMAGE 只存在于 resid2path.bin（7 仅运行时使用）。 */
 typedef enum {
     JPX_XAML_RES_NONE = 0,
-    JPX_XAML_RES_COLOR,
-    JPX_XAML_RES_LINEAR_GRADIENT,
-    JPX_XAML_RES_RADIAL_GRADIENT,
-    JPX_XAML_RES_NUMBER,
-    JPX_XAML_RES_IMAGE      /* BitmapImage / ImageBrush：uri 是图片路径 */
+    JPX_XAML_RES_COLOR = 1,           /* SolidColorBrush（含 <Key>.Brush 派生色） */
+    JPX_XAML_RES_LINEAR_GRADIENT = 2, /* LinearGradientBrush */
+    JPX_XAML_RES_RADIAL_GRADIENT = 3, /* RadialGradientBrush */
+    JPX_XAML_RES_NUMBER = 4,          /* system:Double + Style 尺寸 Setter */
+    JPX_XAML_RES_STRING = 5,          /* FontFamily / system:String */
+    JPX_XAML_RES_PATH = 6,            /* DrawingBrush 的几何（归一化 0..1） */
+    JPX_XAML_RES_IMAGE = 7            /* BitmapImage / ImageBrush：resid2path */
 } JpxXamlResKind;
 
 typedef struct {
@@ -34,6 +39,10 @@ typedef struct {
     int stopCount;
     char direction[VM_DISPLAY_MAX_STR];  /* 线性端点或径向 cx,cy,r */
     double number;
+    /* STRING / PATH 的值：字符串值或归一化 path data（前端 drawPath 上限 192）。 */
+    char value[192];
+    /* PATH：bbox 是原始坐标包围盒（宽高比用）。 */
+    float bbox[4];  /* x0,y0,x1,y1；非 PATH 全 0 */
     /* 图片资源：xaml 里写的相对路径，解析可执行目录后为绝对路径。 */
     char uri[256];
 } JpxXamlResource;
@@ -47,6 +56,25 @@ typedef struct {
 int  JpxXamlTheme_Parse(JpxXamlResourceTable *table, const char *xaml,
                         char *err, size_t errCap);
 void JpxXamlTheme_Init(JpxXamlResourceTable *table);
+
+/* 加载真实主题文件，并递归合并 ResourceDictionary.MergedDictionaries。
+   WPF 优先级语义：本文件条目 > 后合并的字典 > 先合并的字典（逆序合并实现）。
+   Source 相对当前文件目录解析；深度上限 8（防环）。失败返回 0 并写 err。
+   返回 1 时 table 持有合并后的全部资源，调用方长期持有。 */
+int  JpxXamlTheme_LoadFile(JpxXamlResourceTable *table, const char *path,
+                           char *err, size_t errCap);
+
+/* 预编译写出：把（已合并、图片已 ResolveImages 绝对化的）资源表写入 dir：
+   xalm.bin + strings.bin + resid2path.bin，并把图片按 <资源id>.<扩展名> 复制进 dir。
+   dir 不存在时创建。失败返回 0 并写 err。 */
+int  JpxXamlTheme_WritePrecompiled(const JpxXamlResourceTable *table, const char *dir,
+                                   char *err, size_t errCap);
+
+/* 预编译读入：dir 里的三件套 → 资源表。图片资源 uri 是 dir 内相对路径，
+   调用方随后用 JpxXamlTheme_ResolveImages(table, dir) 绝对化。
+   与 LoadFile 等价（同一 DeriveTheme/Apply 链路），但不再解析 XAML 文本。 */
+int  JpxXamlTheme_LoadPrecompiled(JpxXamlResourceTable *table, const char *dir,
+                                  char *err, size_t errCap);
 
 /* 按 key 查询；返回 NULL 表示不存在。 */
 const JpxXamlResource *JpxRes_Find(const JpxXamlResourceTable *table, const char *key);

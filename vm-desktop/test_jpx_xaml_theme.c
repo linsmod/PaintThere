@@ -1,30 +1,22 @@
-/* jp_xaml ResourceDictionary 主题断言：解析、资源查找、渐变、派生主题、序列化。
+/* jp_xaml ResourceDictionary 主题断言：解析、合并、资源查找、渐变、派生主题、序列化。
    不链接 Clay/WM/网络。Run: test_jpx_xaml_theme.exe [--probe]
+   调试探针：--file <theme.xaml> 单文件；--dir <themesDir> 扫目录全部 .xaml。
 */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <windows.h>
+#include <direct.h>
 
 #include "jpx_xaml_theme.h"
 #include "vm_serialize_json.h"
 
-/* --file <path>：解析真实主题文件并打印资源摘要（调试用）。 */
+/* --file <path>：加载真实主题文件（含合并）并打印资源摘要（调试用）。 */
 static int probe_file(const char *path) {
-    FILE *f = fopen(path, "rb");
-    if (!f) { printf("open failed: %s\n", path); return 1; }
-    fseek(f, 0, SEEK_END);
-    long n = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    char *buf = (char *)malloc((size_t)n + 1);
-    if (!buf) { fclose(f); return 1; }
-    if (fread(buf, 1, (size_t)n, f) != (size_t)n) { fclose(f); free(buf); return 1; }
-    buf[n] = '\0';
-    fclose(f);
-
     static JpxXamlResourceTable table;
     char err[256];
-    int ok = JpxXamlTheme_Parse(&table, buf, err, sizeof(err));
+    int ok = JpxXamlTheme_LoadFile(&table, path, err, sizeof(err));
     printf("parse=%d count=%d err=%s\n", ok, table.count, err);
     for (int i = 0; i < table.count && i < 10; i++) {
         const JpxXamlResource *r = &table.items[i];
@@ -35,8 +27,78 @@ static int probe_file(const char *path) {
     if (tb) printf("TaskbarBackground kind=%d stops=%d first=%s dir=%s\n",
                    tb->kind, tb->stopCount,
                    tb->stopCount ? tb->stops[0].color : "-", tb->direction);
-    free(buf);
     return ok ? 0 : 1;
+}
+
+/* --precompile <theme.xaml> <outDir>：合并 → 图片绝对化 → 预编译写出（编排脚本调用）。 */
+static int precompile(const char *themePath, const char *outDir) {
+    static JpxXamlResourceTable table;
+    char err[256];
+    if (!JpxXamlTheme_LoadFile(&table, themePath, err, sizeof(err))) {
+        printf("precompile: load failed: %s\n", err);
+        return 1;
+    }
+    /* 图片相对路径以主题文件所在目录为基准。 */
+    char base[512];
+    snprintf(base, sizeof(base), "%s", themePath);
+    char *slash = strrchr(base, '/');
+    char *bslash = strrchr(base, '\\');
+    if (bslash > slash) slash = bslash;
+    if (slash) *slash = '\0';
+    JpxXamlTheme_ResolveImages(&table, base);
+    if (!JpxXamlTheme_WritePrecompiled(&table, outDir, err, sizeof(err))) {
+        printf("precompile: write failed: %s\n", err);
+        return 1;
+    }
+    printf("precompiled %s -> %s (%d resources)\n", themePath, outDir, table.count);
+    return 0;
+}
+
+/* --dir <themesDir>：加载目录下全部 .xaml，报资源数与失败（适配验收用）。 */
+static int probe_dir(const char *dirPath) {
+    static const char *keys[] = {
+        "TaskbarBackground", "TaskButtonBackground", "TrayBackground",
+        "TaskbarHeight", "ButtonFace", "StartButtonImage", "StartLabel",
+        "ButtonForeground", "ClockForeground"
+    };
+    static JpxXamlResourceTable table;
+    char pattern[512];
+    snprintf(pattern, sizeof(pattern), "%s/*.xaml", dirPath);
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) { printf("no .xaml in %s\n", dirPath); return 1; }
+    int files = 0, fails = 0;
+    do {
+        char full[512];
+        snprintf(full, sizeof(full), "%s/%s", dirPath, fd.cFileName);
+        char err[256];
+        int ok = JpxXamlTheme_LoadFile(&table, full, err, sizeof(err));
+        files++;
+        if (!ok) fails++;
+        printf("%-40s ok=%d res=%3d %s\n", fd.cFileName, ok, ok ? table.count : 0,
+               ok ? "" : err);
+        if (ok) {
+            printf("    ");
+            for (int k = 0; k < (int)(sizeof(keys) / sizeof(keys[0])); k++) {
+                const JpxXamlResource *r = JpxRes_Find(&table, keys[k]);
+                printf("%s=%s ", keys[k],
+                       r ? (r->kind == JPX_XAML_RES_IMAGE
+                                ? (r->uri[0] ? "img" : "dyn") : "yes") : "-");
+            }
+            printf("\n");
+        }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    printf("%d files, %d failures\n", files, fails);
+    return fails ? 1 : 0;
+}
+
+/* 测试数据目录（独立于其他测试；temp/ 不受 Git 管理，重复运行覆盖写）。 */
+static void write_file(const char *path, const char *content) {
+    FILE *f = fopen(path, "wb");
+    if (!f) { printf("FAIL  cannot write %s\n", path); exit(1); }
+    fwrite(content, 1, strlen(content), f);
+    fclose(f);
 }
 
 static int g_failures, g_checks, g_probe;
@@ -217,14 +279,253 @@ static void test_errors(void) {
         err, sizeof(err)), "resource without x:Key yields no resources");
 }
 
+/* MergedDictionaries 递归合并：WPF 语义 = 本地 > 后合并 > 先合并。 */
+static void test_merge(void) {
+    section("merged dictionaries");
+    const char *dir = "temp/test_theme_merge";
+    _mkdir("temp");
+    _mkdir(dir);
+    char path[256];
+    char err[256];
+    static JpxXamlResourceTable table;
+
+    /* 链式：top -> mid -> base，本地覆盖基座。 */
+    write_file("temp/test_theme_merge/base.xaml",
+        "<ResourceDictionary>"
+        "<SolidColorBrush x:Key='BaseColor' Color='#FF101010' />"
+        "<SolidColorBrush x:Key='Shared' Color='#FF0000FF' />"
+        "</ResourceDictionary>");
+    write_file("temp/test_theme_merge/mid.xaml",
+        "<ResourceDictionary>"
+        "<ResourceDictionary.MergedDictionaries>"
+        "<ResourceDictionary Source='base.xaml' />"
+        "</ResourceDictionary.MergedDictionaries>"
+        "<SolidColorBrush x:Key='Shared' Color='#FF00FF00' />"
+        "<SolidColorBrush x:Key='MidColor' Color='#FF202020' />"
+        "</ResourceDictionary>");
+    write_file("temp/test_theme_merge/top.xaml",
+        "<ResourceDictionary>"
+        "<ResourceDictionary.MergedDictionaries>"
+        "<ResourceDictionary Source='mid.xaml' />"
+        "</ResourceDictionary.MergedDictionaries>"
+        "<SolidColorBrush x:Key='TopColor' Color='#FF303030' />"
+        "</ResourceDictionary>");
+    snprintf(path, sizeof(path), "%s/top.xaml", dir);
+    expect(JpxXamlTheme_LoadFile(&table, path, err, sizeof(err)), "chain merge loads");
+    if (!table.count) { printf("  err=%s\n", err); return; }
+    expect_str(JpxRes_Color(&table, "Shared", NULL), "rgba(0,255,0,1.000)",
+               "local entry overrides merged base");
+    expect_str(JpxRes_Color(&table, "BaseColor", NULL), "rgba(16,16,16,1.000)",
+               "base key reachable through chain");
+    expect_str(JpxRes_Color(&table, "MidColor", NULL), "rgba(32,32,32,1.000)",
+               "mid key reachable");
+    expect_str(JpxRes_Color(&table, "TopColor", NULL), "rgba(48,48,48,1.000)",
+               "top key reachable");
+
+    /* 兄弟字典：后合并者优先（WPF 逆序查找）。 */
+    write_file("temp/test_theme_merge/first.xaml",
+        "<ResourceDictionary><SolidColorBrush x:Key='Sib' Color='#FF111111' /></ResourceDictionary>");
+    write_file("temp/test_theme_merge/second.xaml",
+        "<ResourceDictionary><SolidColorBrush x:Key='Sib' Color='#FF222222' /></ResourceDictionary>");
+    write_file("temp/test_theme_merge/two.xaml",
+        "<ResourceDictionary>"
+        "<ResourceDictionary.MergedDictionaries>"
+        "<ResourceDictionary Source='first.xaml' />"
+        "<ResourceDictionary Source='second.xaml' />"
+        "</ResourceDictionary.MergedDictionaries>"
+        "</ResourceDictionary>");
+    snprintf(path, sizeof(path), "%s/two.xaml", dir);
+    expect(JpxXamlTheme_LoadFile(&table, path, err, sizeof(err)), "sibling merge loads");
+    expect_str(JpxRes_Color(&table, "Sib", NULL), "rgba(34,34,34,1.000)",
+               "later merged dictionary wins");
+
+    /* 纯转发主题（Vista Classic 形态）：本地 0 资源也解析成功。 */
+    write_file("temp/test_theme_merge/forward.xaml",
+        "<ResourceDictionary>"
+        "<ResourceDictionary.MergedDictionaries>"
+        "<ResourceDictionary Source='base.xaml' />"
+        "</ResourceDictionary.MergedDictionaries>"
+        "</ResourceDictionary>");
+    snprintf(path, sizeof(path), "%s/forward.xaml", dir);
+    expect(JpxXamlTheme_LoadFile(&table, path, err, sizeof(err)), "forward-only theme loads");
+    expect_str(JpxRes_Color(&table, "BaseColor", NULL), "rgba(16,16,16,1.000)",
+               "forward-only theme inherits base resources");
+
+    /* 防环：自引用在深度上限处报错。 */
+    write_file("temp/test_theme_merge/self.xaml",
+        "<ResourceDictionary>"
+        "<ResourceDictionary.MergedDictionaries>"
+        "<ResourceDictionary Source='self.xaml' />"
+        "</ResourceDictionary.MergedDictionaries>"
+        "</ResourceDictionary>");
+    snprintf(path, sizeof(path), "%s/self.xaml", dir);
+    expect(!JpxXamlTheme_LoadFile(&table, path, err, sizeof(err)),
+           "self reference rejected");
+    expect(strstr(err, "depth") != NULL, "cycle reported via depth limit");
+
+    /* 缺失 source 报错。 */
+    write_file("temp/test_theme_merge/missing.xaml",
+        "<ResourceDictionary>"
+        "<ResourceDictionary.MergedDictionaries>"
+        "<ResourceDictionary Source='nope.xaml' />"
+        "</ResourceDictionary.MergedDictionaries>"
+        "</ResourceDictionary>");
+    snprintf(path, sizeof(path), "%s/missing.xaml", dir);
+    expect(!JpxXamlTheme_LoadFile(&table, path, err, sizeof(err)),
+           "missing merged source rejected");
+}
+
+/* 预编译往返：写 xalm.bin/strings.bin/resid2path.bin → 读回，断言等价。
+   覆盖：合并链、Style 尺寸、STRING、PATH（归一化+bbox）、图片复制与 resid2path。 */
+static void test_precompiled(void) {
+    section("precompiled roundtrip");
+    const char *dir = "temp/test_theme_pre";
+    _mkdir("temp");
+    _mkdir(dir);
+    char err[256];
+    static JpxXamlResourceTable table;
+
+    /* 数据目录：一张假图片（内容不重要，只走复制链路）。 */
+    write_file("temp/test_theme_pre_src.png", "PNGDATA");
+
+    /* 基座 + 子主题（本地覆盖 + 各类资源）。 */
+    write_file("temp/test_theme_merge/pre_base.xaml",
+        "<ResourceDictionary>"
+        "<LinearGradientBrush x:Key='TaskbarBackground' StartPoint='0,0' EndPoint='0,1'>"
+        "<GradientStop Color='#FF3888E9' Offset='0.0' />"
+        "<GradientStop Color='#FF1941A5' Offset='1.0' />"
+        "</LinearGradientBrush>"
+        "</ResourceDictionary>");
+    write_file("temp/test_theme_merge/pre_top.xaml",
+        "<ResourceDictionary>"
+        "<ResourceDictionary.MergedDictionaries>"
+        "<ResourceDictionary Source='pre_base.xaml' />"
+        "</ResourceDictionary.MergedDictionaries>"
+        "<system:Double x:Key='TaskbarHeight'>30</system:Double>"
+        "<Style x:Key='StartButton' TargetType='Button'>"
+        "<Setter Property='Height' Value='32' />"
+        "</Style>"
+        "<FontFamily x:Key='GlobalFontFamily'>Tahoma</FontFamily>"
+        "<DrawingBrush x:Key='TaskButtonThumbnail'>"
+        "<DrawingBrush.Drawing>"
+        "<GeometryDrawing Geometry='M1,1 L1,3 L3,3 L3,1 Z' Brush='#FF808080' />"
+        "</DrawingBrush.Drawing>"
+        "</DrawingBrush>"
+        "<BitmapImage x:Key='StartIconImage' UriSource='../test_theme_pre_src.png' />"
+        "</ResourceDictionary>");
+    expect(JpxXamlTheme_LoadFile(&table, "temp/test_theme_merge/pre_top.xaml",
+                                 err, sizeof(err)), "merged theme loads for precompile");
+    JpxXamlTheme_ResolveImages(&table, "temp/test_theme_merge");
+    expect(JpxXamlTheme_WritePrecompiled(&table, dir, err, sizeof(err)),
+           "write precompiled");
+    if (!table.count) { printf("  err=%s\n", err); return; }
+
+    static JpxXamlResourceTable back;
+    expect(JpxXamlTheme_LoadPrecompiled(&back, dir, err, sizeof(err)),
+           "load precompiled");
+    if (!back.count) { printf("  err=%s\n", err); return; }
+
+    /* 数值与合并链。 */
+    expect(JpxRes_Number(&back, "TaskbarHeight", 0) == 30, "number survives");
+    expect(JpxRes_Number(&back, "StartButton.Height", 0) == 32,
+           "style metric survives as id");
+    /* 渐变：stops 与方向。 */
+    const JpxXamlResource *tb = JpxRes_Find(&back, "TaskbarBackground");
+    expect(tb && tb->kind == JPX_XAML_RES_LINEAR_GRADIENT, "gradient kind survives");
+    expect(tb && tb->stopCount == 2, "gradient stop count survives");
+    expect(tb && strcmp(tb->stops[1].color, "rgba(25,65,165,1.000)") == 0,
+           "gradient stop color survives");
+    /* 字符串资源。 */
+    const JpxXamlResource *ff = JpxRes_Find(&back, "GlobalFontFamily");
+    expect(ff && ff->kind == JPX_XAML_RES_STRING, "string kind survives");
+    expect(ff && strcmp(ff->value, "Tahoma") == 0, "string value survives");
+    /* PATH：归一化 0..1 + bbox 记录原始包围盒；<Key>.Brush 派生色。 */
+    const JpxXamlResource *pth = JpxRes_Find(&back, "TaskButtonThumbnail");
+    expect(pth && pth->kind == JPX_XAML_RES_PATH, "path kind survives");
+    expect(pth && strcmp(pth->value, "M0,0 L0,1 L1,1 L1,0 Z") == 0,
+           "path normalized to 0..1");
+    expect(pth && pth->bbox[0] == 1.0f && pth->bbox[2] == 3.0f &&
+           pth->bbox[3] == 3.0f, "path bbox recorded");
+    const JpxXamlResource *pb = JpxRes_Find(&back, "TaskButtonThumbnail.Brush");
+    expect(pb && pb->kind == JPX_XAML_RES_COLOR &&
+           strcmp(pb->color, "rgba(128,128,128,1.000)") == 0,
+           "drawing brush color survives as <Key>.Brush");
+    /* 图片：resid2path → IMAGE 资源，uri 是主题目录内相对路径。 */
+    const JpxXamlResource *img = JpxRes_Find(&back, "StartIconImage");
+    expect(img && img->kind == JPX_XAML_RES_IMAGE, "image kind survives via resid2path");
+    expect(img && strcmp(img->uri, "StartIconImage.png") == 0,
+           "image renamed to <id>.png");
+    /* 复制的图片文件存在。 */
+    FILE *f = fopen("temp/test_theme_pre/StartIconImage.png", "rb");
+    expect(f != NULL, "image file copied into theme dir");
+    if (f) fclose(f);
+
+    /* 绝对化后查询路径与写前一致（同一 ResolveImages 语义）。 */
+    JpxXamlTheme_ResolveImages(&back, dir);
+    img = JpxRes_Find(&back, "StartIconImage");
+    expect(img && strstr(img->uri, "test_theme_pre") != NULL,
+           "image path resolves against precompiled dir");
+}
+
+/* PATH 归一化边界：相对命令等不支持的几何跳过，不影响整个主题解析。 */
+static void test_path_limits(void) {
+    section("path limits");
+    JpxXamlResourceTable table;
+    char err[256];
+    expect(JpxXamlTheme_Parse(&table,
+        "<ResourceDictionary>"
+        "<SolidColorBrush x:Key='Anchor' Color='#FF000000' />"
+        "<DrawingBrush x:Key='RelPath'><DrawingBrush.Drawing>"
+        "<GeometryDrawing Geometry='M1,1 l2,2 Z' />"
+        "</DrawingBrush.Drawing></DrawingBrush>"
+        "</ResourceDictionary>", err, sizeof(err)),
+        "relative-command theme still parses");
+    expect(JpxRes_Find(&table, "RelPath") == NULL,
+           "relative-command geometry skipped");
+}
+static void test_classic_derive(void) {
+    section("classic theme degrade");
+    static const char *CLASSIC =
+        "<ResourceDictionary>"
+        "<SolidColorBrush x:Key='ButtonFace' Color='#FFC0C0C0' />"
+        "<SolidColorBrush x:Key='ButtonHighlight' Color='#FFFFFFFF' />"
+        "<SolidColorBrush x:Key='ButtonShadow' Color='#FF808080' />"
+        "<SolidColorBrush x:Key='ButtonForeground' Color='#FF000000' />"
+        "<SolidColorBrush x:Key='ClockForeground' Color='#FF000000' />"
+        "</ResourceDictionary>";
+    JpxXamlResourceTable table;
+    char err[256];
+    expect(JpxXamlTheme_Parse(&table, CLASSIC, err, sizeof(err)),
+           "classic key set parses");
+    VmTheme theme;
+    JpxXamlTheme_DeriveTheme(&table, &theme);
+    expect_str(theme.panelColor, "rgba(192,192,192,1.000)",
+               "panel falls back to ButtonFace");
+    expect_str(theme.taskButtonFrom, "rgba(192,192,192,1.000)",
+               "task buttons fall back to ButtonFace flat");
+    expect_str(theme.trayFrom, "rgba(192,192,192,1.000)",
+               "tray matches taskbar gray");
+    expect_str(theme.startFrom, "rgba(192,192,192,1.000)",
+               "classic start button is gray");
+    expect_str(theme.accentTextColor, "rgba(0,0,0,1.000)",
+               "classic text is black");
+}
+
 int main(int argc, char **argv) {
+    if (argc > 3 && strcmp(argv[1], "--precompile") == 0)
+        return precompile(argv[2], argv[3]);
     if (argc > 2 && strcmp(argv[1], "--file") == 0) return probe_file(argv[2]);
+    if (argc > 2 && strcmp(argv[1], "--dir") == 0) return probe_dir(argv[2]);
     g_probe = argc > 1 && strcmp(argv[1], "--probe") == 0;
     test_parse();
     test_resolve();
     test_derive();
     test_patterns();
     test_images();
+    test_merge();
+    test_precompiled();
+    test_path_limits();
+    test_classic_derive();
     test_respack_command();
     test_errors();
     printf("%d checks, %d failures\n", g_checks, g_failures);

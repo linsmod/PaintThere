@@ -186,12 +186,15 @@ int main(int argc, char **argv) {
     opt.tileH = 100;
     opt.port = argc > 1 ? (unsigned short)atoi(argv[1]) : 9060;
     opt.webRoot = argc > 2 ? argv[2] : "../assets";
-    /* 可选：--theme <path> 加载真实 ResourceDictionary 文件（如 RetroBar 的 XP Blue）；
+    /* 可选：--theme <path> 加载真实 ResourceDictionary 文本（开发调试用）；
+       --preset <name> 加载预编译主题 assets/themes/<name>（启动路径）；
        --font <path> 指定主题字体（可指向系统字体，前端与 guest 共用同一文件）。 */
     const char *themePath = NULL;
+    const char *presetName = NULL;
     const char *fontOverride = NULL;
     for (int i = 3; i + 1 < argc; i++) {
         if (strcmp(argv[i], "--theme") == 0) themePath = argv[i + 1];
+        else if (strcmp(argv[i], "--preset") == 0) presetName = argv[i + 1];
         else if (strcmp(argv[i], "--font") == 0) fontOverride = argv[i + 1];
     }
     if (fontOverride) snprintf(fontPath, sizeof(fontPath), "%s", fontOverride);
@@ -236,46 +239,42 @@ int main(int argc, char **argv) {
     JpxXamlView_On(view, "OnTheme", on_theme, NULL);
 
     char themeErr[256];
-    const char *themeXml = XP_THEME;
-    char *themeFile = NULL;
+    int themeLoaded = 0;
+    char presetDir[512];
     if (themePath) {
-        FILE *tf = fopen(themePath, "rb");
-        if (tf) {
-            fseek(tf, 0, SEEK_END);
-            long n = ftell(tf);
-            fseek(tf, 0, SEEK_SET);
-            themeFile = (char *)malloc((size_t)n + 1);
-            if (themeFile) {
-                if (fread(themeFile, 1, (size_t)n, tf) == (size_t)n) {
-                    themeFile[n] = '\0';
-                    themeXml = themeFile;
-                } else { free(themeFile); themeFile = NULL; }
-            }
-            fclose(tf);
-        } else {
-            fprintf(stderr, "demo_xaml: cannot open theme file: %s\n", themePath);
-        }
-    }
-    if (!JpxXamlTheme_Parse(&g_theme, themeXml, themeErr, sizeof(themeErr))) {
-        fprintf(stderr, "demo_xaml: theme parse failed: %s\n", themeErr);
+        /* LoadFile 递归合并 MergedDictionaries（XP 家族二级继承等），开发调试用。 */
+        themeLoaded = JpxXamlTheme_LoadFile(&g_theme, themePath, themeErr, sizeof(themeErr));
+        if (!themeLoaded) fprintf(stderr, "demo_xaml: theme load failed: %s\n", themeErr);
+    } else if (presetName) {
+        /* 预编译主题：assets/themes/<name>（xalm.bin + strings.bin + resid2path.bin + 图片）。 */
+        snprintf(presetDir, sizeof(presetDir), "%s/themes/%s", opt.webRoot, presetName);
+        themeLoaded = JpxXamlTheme_LoadPrecompiled(&g_theme, presetDir, themeErr, sizeof(themeErr));
+        if (!themeLoaded) fprintf(stderr, "demo_xaml: preset load failed: %s\n", themeErr);
     } else {
-        /* 图片相对路径基准：外置主题取主题目录，内置主题取 Web 资源根目录。 */
+        themeLoaded = JpxXamlTheme_Parse(&g_theme, XP_THEME, themeErr, sizeof(themeErr));
+        if (!themeLoaded) fprintf(stderr, "demo_xaml: builtin theme parse failed: %s\n", themeErr);
+    }
+    if (themeLoaded) {
+        /* 图片相对路径基准：预编译主题取其目录；.xaml 主题取主题目录
+           （RetroBar 全部主题同目录，"../Resources/.." 都能落到正确位置）；
+           内置主题取 Web 资源根目录。 */
         char imgBase[512];
         snprintf(imgBase, sizeof(imgBase), "%s", opt.webRoot);
-        if (themeFile) {
+        if (themePath) {
             snprintf(imgBase, sizeof(imgBase), "%s", themePath);
             char *slash = strrchr(imgBase, '/');
             char *bslash = strrchr(imgBase, '\\');
             if (bslash > slash) slash = bslash;
             if (slash) *slash = '\0';
+        } else if (presetName) {
+            snprintf(imgBase, sizeof(imgBase), "%s", presetDir);
         }
         JpxXamlTheme_ResolveImages(&g_theme, imgBase);
         printf("demo_xaml: theme loaded from %s, %d resources\n",
-               themeFile ? themePath : "builtin", g_theme.count);
+               themePath ? themePath : (presetName ? presetName : "builtin"), g_theme.count);
         /* 图片由资源包打包下发：client 一次 GET 拿「命令数组 + 全部图片」。 */
         Jpx_ResPack_SetImageProvider(g_app, JpxXamlTheme_ImageAt, &g_theme);
     }
-    free(themeFile);
 
     JpxWindowDesc desc = {0};
     desc.title = "jp_xaml 表单";
@@ -300,7 +299,7 @@ int main(int argc, char **argv) {
        刷新页面也会从首事件的同一个 id 恢复。 */
     if (g_theme.count > 0 && JpxXamlTheme_Apply(g_app, &g_theme)) {
         snprintf(g_state.status, sizeof(g_state.status), "主题: XP（%s）",
-                 themePath ? "外置" : "内置");
+                 themePath ? "外置" : (presetName ? "预编译" : "内置"));
         Jpx_Invalidate(g_app);
     }
 

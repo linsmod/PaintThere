@@ -4,7 +4,12 @@
 日常用法：
     python tools/start_vm_desktop.py             # demo_wm，原样
     python tools/start_vm_desktop.py demo_jpx    # JPX 应用外壳：开始菜单 / ProcMan / Files
-    python tools/start_vm_desktop.py demo_xaml   # jp_xaml 声明式表单
+    python start_vm_desktop.py demo_xaml --port 9061 --theme "<theme.xaml>" --font <font.ttf>
+
+第一个位置参数选择程序：内置 demo_wm / demo_jpx / demo_xaml 有默认端口映射；
+其他值按 build/<名字>.exe 的构建产物运行（默认端口 9000，建议显式 --port）。
+`--port N` 指定端口（优先于 VM_DESKTOP_PORT）；`--no-browser` 不自动开浏览器；
+其余参数原样透传给 exe（如 demo_xaml 的 --theme / --font）。
 
 脚本自行定位仓库根、共享资源和 exe，显式传入 webRoot 绝对路径，
 因此从任何目录调用都不依赖工作目录或 exe 的默认参数。
@@ -31,11 +36,15 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 VM_DIR = ROOT / "vm-desktop"
+BUILD = VM_DIR / "build"
 ASSETS = ROOT / "assets"
 FONT_SOURCE = Path(r"H:\github_repos\mystbfont_c\fonts\NotoSans-Regular.ttf")
 
 APP_NAME = "demo_wm"
-EXE = VM_DIR / "build" / "demo_wm.exe"
+EXE = BUILD / "demo_wm.exe"
+
+# 内置 demo 的默认端口；不在表里的 exe 一律默认 9000。
+DEFAULT_PORTS = {"demo_wm": 9000, "demo_jpx": 9050, "demo_xaml": 9060}
 
 REQUIRED_ASSETS = (
     "app.js",
@@ -99,21 +108,67 @@ def wait_ready(port, timeout=8.0):
     raise RuntimeError(f"服务未在 {timeout:g}s 内就绪: {url}")
 
 
+def parse_args(argv):
+    """解析控制参数，返回 (app, port_override, no_browser, exe_args)。
+
+    app 是第一个不以 - 开头的参数；--port/--no-browser 是脚本自己的控制参数；
+    其余参数原样透传给 exe。exe 的 --theme/--font 是路径参数：exe 以 vm-desktop
+    为工作目录启动，相对路径会落错位置，这里按调用者的 CWD 转成绝对路径。"""
+    app = None
+    port_override = None
+    no_browser = False
+    exe_args = []
+    path_flags = ("--theme", "--font")
+    expect_path = False
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--port":
+            if i + 1 >= len(argv):
+                raise ValueError("--port 需要端口号")
+            port_override = int(argv[i + 1])
+            i += 2
+            expect_path = False
+        elif a == "--no-browser":
+            no_browser = True
+            i += 1
+            expect_path = False
+        elif a.startswith("-"):
+            if app is None:
+                raise ValueError(f"未知参数: {a}（可用 --port N / --no-browser）")
+            # 程序名之后的未知旗标属于 exe 自己（如 --theme / --font），透传。
+            exe_args.append(a)
+            expect_path = a in path_flags
+            i += 1
+        elif app is None:
+            app = a
+            i += 1
+        else:
+            if expect_path and not os.path.isabs(a) and not a.startswith("/"):
+                a = os.path.abspath(a)
+            exe_args.append(a)
+            expect_path = False
+            i += 1
+    return app, port_override, no_browser, exe_args
+
+
 def main():
     global APP_NAME, EXE
-    arg = None
-    if len(sys.argv) > 1 and not sys.argv[1].startswith("-"):
-        arg = sys.argv[1]
-    if arg is None:
-        arg = os.environ.get("VM_DESKTOP_APP", "demo_wm")
-    if arg not in ("demo_wm", "demo_jpx", "demo_xaml"):
-        print(f"[start] 未知程序: {arg}（可用 demo_wm / demo_jpx / demo_xaml）", file=sys.stderr)
+    try:
+        app, port_override, no_browser, exe_args = parse_args(sys.argv[1:])
+    except ValueError as exc:
+        print(f"[start] {exc}", file=sys.stderr)
         return 1
-    APP_NAME = arg
-    EXE = VM_DIR / "build" / f"{arg}.exe"
-    # demo 默认端口分开，可以同时开着对比。
-    default_port = {"demo_wm": 9000, "demo_jpx": 9050, "demo_xaml": 9060}[arg]
-    port = int(os.environ.get("VM_DESKTOP_PORT", str(default_port)))
+    if app is None:
+        app = os.environ.get("VM_DESKTOP_APP", "demo_wm")
+    APP_NAME = app
+    EXE = BUILD / f"{app}.exe"
+    # demo 默认端口分开，可以同时开着对比；未知 exe 默认 9000。
+    default_port = DEFAULT_PORTS.get(app, 9000)
+    if port_override is not None:
+        port = port_override
+    else:
+        port = int(os.environ.get("VM_DESKTOP_PORT", str(default_port)))
 
     try:
         ensure_assets()
@@ -123,7 +178,9 @@ def main():
         print(f"[start] 失败: {exc}", file=sys.stderr)
         return 1
 
-    proc = subprocess.Popen([str(EXE), str(port), str(ASSETS)], cwd=VM_DIR)
+    proc = subprocess.Popen(
+        [str(EXE), str(port), str(ASSETS)] + exe_args, cwd=VM_DIR
+    )
     time.sleep(0.3)
     if proc.poll() is not None:
         print(f"[start] 失败: {APP_NAME}.exe 退出码 {proc.returncode}，端口 {port} 可能被其他进程占用", file=sys.stderr)
@@ -134,7 +191,7 @@ def main():
         print(f"[start] {APP_NAME}.exe 已启动 PID={proc.pid}")
         print(f"[start] {url}")
         print("[start] 保持运行，按 Ctrl+C 停止")
-        if os.environ.get("VM_DESKTOP_NO_BROWSER") != "1":
+        if os.environ.get("VM_DESKTOP_NO_BROWSER") != "1" and not no_browser:
             webbrowser.open(url)
         proc.wait()
     except KeyboardInterrupt:

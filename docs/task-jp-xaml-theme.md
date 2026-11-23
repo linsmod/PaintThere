@@ -344,3 +344,107 @@ Clay 的 `backgroundColor` 只吃单色，渐变填不进去。方案是给 WM �
 - 任务栏缩略图只有占位底纹，没有窗口内容缩放预览。
 - 桌面无壁纸（图片资源），只用蓝天渐变近似。
 - 默认字体仍取 `assets/font.ttf`（SimHei）：不传 `--font` 时不会自动用系统宋体。
+
+## 9. S8：RetroBar 全主题适配（2026-11-23 立项）
+
+### 背景结论（已调查，2026-11-23）
+
+RetroBar 的主题是**抽象好的**（key 契约 + MergedDictionaries 分层覆盖），不需要逐个迁移：
+
+- 20 个主题、315 个不同 key，无任何 key 全覆盖——小主题只覆盖差异（Vista Classic 388 字节纯转发）。
+- 继承树：XP 家族以 `Windows XP Blue.xaml`（155 key）为基座，Olive/Royale/Silver 直接继承，
+  Zune/Noir/Embedded 二级继承；Vista Basic 继承 Aero；Me/XP Classic/Vista Classic 继承 2000 + 壳；
+  独立：95-98、Watercolor、System.xaml。
+- 我们只消费 Brush/Double/Style 尺寸，不执行 Style/ControlTemplate。
+- 缺口只有一个机制：**MergedDictionaries 递归合并**。做完即可覆盖 15+/20 个主题。
+
+WPF 优先级语义：本地条目 > 后合并的字典 > 先合并的字典（合并字典按加入的逆序查找）。
+
+关键事实（决定降级设计）：
+- 经典主题（95-98/2000）**没有** `TaskbarBackground`/`TrayBackground`/`TaskbarHeight`，
+  只有 `ButtonFace/ButtonHighlight/ButtonShadow/ButtonForeground/ClockForeground` 等字面量 hex 纯色；
+  `Tray`/`Taskbar`/`StartButton` 是 Style（模板宿主）不是 Brush。
+- Watercolor 有 `TrayBackground`/`StartButtonBackground`/`TaskButton(Active)` 纯色。
+- Vista Aero 的开始按钮是 `{DynamicResource StartButtonImage}`（无直接 uri，解析器留空），
+  且原图为 top/bottom 两段拼接——先按「无位图→从 TaskbarBackground 派生蓝色」降级，
+  多段开始按钮单独登记为问题。
+
+### 阶段
+
+- **S8a 合并机制**：`JpxXamlTheme_LoadFile(table, path, err)`——读文件、解析、
+  递归合并 `MergedDictionaries`（Source 相对当前文件目录、`..` 归一化、深度上限 8 防环；
+  本文件资源先入表，source 从后往前 add-if-missing）。
+  `demo_xaml --theme` 改走 LoadFile；`JpxXamlTheme_Parse` 保留给内置主题。
+  验收：Zune（二级继承）资源数 > XP Blue 单文件；纯转发主题（Vista Classic）解析成功。
+- **S8b 缺 key 降级**：`DeriveTheme` 改为分级 fallback——
+  panel: `TaskbarBackground → TrayBackground → ButtonFace`；
+  任务按钮: `TaskButtonBackground → TaskButton(Active) → ButtonFace`（扁平）；
+  托盘: `TrayBackground → Tray? → ButtonFace`；开始按钮: 位图 → `StartButtonBackground → TaskbarBackground 端点 → ButtonFace`；
+  文字: `ButtonForeground`/`ClockForeground` 已有。位图资源 uri 为空（DynamicResource 形式）视为不存在。
+  验收：95-98 / 2000 / Me / Vista Classic 启动为灰色经典外观，不再落回 Luna 蓝绿。
+- **S8c 全量探针 + 单测**：`test_jpx_xaml_theme --dir <themesDir>` 扫全部主题报资源数/错误；
+  单测补合并语义断言（覆盖、链式、兄弟顺序、纯转发、防环、缺 source 报错）。
+- **S8d 视觉验证**：Olive Green / Zune / Vista Aero / 95-98 / Watercolor 启动截图对比。
+- **S8e 收尾**：文档（design/arch/INDEX/test-timing）、登记遗留问题（Aero 多段开始按钮等）、提交。
+
+### 进度
+
+- [x] S8a：LoadFile 递归合并 + TAG_CAP 32→48（MergedDictionaries 标签 38 字符截断）+
+  add_res 先到先得（修复后加载覆盖先加载的优先级反转）+ demo 改走 LoadFile（2026-11-23）
+- [x] S8b：DeriveTheme 分级降级（TaskbarBackground→TrayBackground→ButtonFace；
+  位图空 uri 守卫；shade_css 激活/hover 派生）（2026-11-23）
+- [x] S8c：test_jpx_xaml_theme 66 项断言（合并链/兄弟顺序/纯转发/防环/经典降级）+
+  `--dir` 探针扫 19 个主题 0 失败（2026-11-23；RetroBar Themes 目录实为 19 个 .xaml）
+- [ ] S8d：多主题启动截图对比（Olive Green / Zune / Vista Aero / 95-98 / Watercolor）
+- [ ] S8e：文档收尾 + 提交
+
+## 10. S9：主题预编译（xalm.bin，2026-11-23 立项）
+
+用户需求：把 theme 预处理为结构体二进制（相当于预编译），运行时不再解析 XAML 文本；
+Style 等一切能 id 查表的都 id 化；元素标记在二进制里用预定义枚举 id，不存字符串。
+
+### 格式（冻结，小端）
+
+- `assets/themes/<slug>/strings.bin`：NUL 结尾 UTF-8 字符串池，u32 offset 引用；offset 0 = 空串。
+- `assets/themes/<slug>/xalm.bin`：
+  `magic "XALM" | u32 version=1 | u32 resCount | u32 stringsSize |`
+  `resCount × { u8 tagId, u8 stopCount, u16 res, f32 stopOffset[8], u32 stopColorOff[8],`
+  `u32 keyOff, u32 valueOff, f32 bbox[4], f64 number }`（record 定长 100B）。
+  预定义元素标记：`1=SOLID_COLOR 2=LINEAR_GRADIENT 3=RADIAL_GRADIENT 4=NUMBER`
+  `5=STRING(FontFamily/system:String) 6=PATH(DrawingBrush 几何，归一化 0..1，bbox 记录原始包围盒)`。
+  Style 的尺寸 Setter 解析期展开为 `<StyleKey>.<Property>` 的 NUMBER；DrawingBrush 的填充色
+  展开为 `<Key>.Brush` 的 SOLID_COLOR。图片不进 xalm.bin（走 resid2path）。
+- `assets/themes/<slug>/resid2path.bin`：
+  `magic "R2PP" | u32 count | u32 stringsSize | count × { u32 keyOff, u32 pathOff }`；
+  pathOff 是主题目录内相对路径，图片按 `<资源id>.<原扩展名>` 复制（id 命名免碰撞）。
+- 运行时 `JpxXamlTheme_LoadPrecompiled(table, dir)` 读三件套 → 现有 DeriveTheme/Apply 链路不变；
+  `JpxXamlTheme_WritePrecompiled(table, dir)` 由 C 侧统一写出（合并/归一化逻辑单一来源），
+  Python 只做编排（`tools/precompile_themes.py` 逐主题调 `test_jpx_xaml_theme.exe --precompile`）。
+- demo_xaml 加 `--preset <name>`：读 `assets/themes/<name>`（优先级 `--theme` > `--preset` > 内置）。
+
+### 步骤
+
+- S9a 解析扩展：STRING/PATH 资源收集 + 几何归一化（M/L/H/V/C/S/Q/Z/T 绝对坐标，
+  相对命令/弧不支持则跳过）+ `<Key>.Brush` 派生色。
+- S9b 写出/读入：WritePrecompiled / LoadPrecompiled（显式小端读写，不依赖结构体内存布局）。
+- S9c 测试：预编译往返断言（合并链 + Style 尺寸 + string + path bbox + 图片复制）。
+- S9d 编排脚本 `tools/precompile_themes.py` 扫 RetroBar 全主题 → `assets/themes/*`。
+- S9e demo `--preset` 启动验证 + 文档收尾。
+
+### 进度
+
+- [x] S9a：STRING（FontFamily/system:String）与 PATH（DrawingBrush 几何，
+  geom_walk 两遍走查：bbox + 归一化 0..1；相对命令/弧/多组坐标跳过资源）+
+  `<Key>.Brush` 派生色（字面量或查当前表）（2026-11-23）
+- [x] S9b：WritePrecompiled / LoadPrecompiled（显式小端；record 100B 定长；
+  strings.bin 池 offset 0 保留空串；图片 `<资源id>.<扩展名>` 复制）（2026-11-23）
+- [x] S9c：预编译往返断言（合并链/Style 尺寸/STRING/PATH bbox/图片改名与复制）+
+  PATH 边界（相对命令跳过不炸整体）；`--precompile <xaml> <outDir>` 工具模式；
+  主题套件 86 项全通过（2026-11-23）
+- [x] S9d：`tools/precompile_themes.py`（编排：slug 命名 + 产物核对）；
+  RetroBar 19 个主题全量预编译 19 ok 0 failed → `assets/themes/*`
+  （xp-blue 全目录 ~22KB，源 xaml 143KB）（2026-11-23）
+- [x] S9e：demo `--preset` 启动验证：xp-blue 预编译 SSE 首事件 theme-1、
+  respack 42026B（含 4 图），浏览器截图外观与实时解析一致；
+  95-98 预编译验证经典灰降级（ButtonFace/Light/Shadow 色系）；
+  全量回归六套件通过；提交（2026-11-23）

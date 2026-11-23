@@ -37,6 +37,10 @@
 
 ### VM 桌面（guest 侧）
 
+- **调试自动化 HTTP 接口**（demo_jpx）：`GET /auto/<op>?query`，绕开浏览器合成输入直接调 shell/主题接口。op：`themes`（列主题）、`apply?name=<slug>`（加载+应用预编译主题，与设置窗口同一条路径）、`theme`（当前主题关键 token + respackId + selectedColor/accentColor）、`settings`（打开设置窗口）。回调注册在 `VmServer_SetAutoHandler`，op 实现在 `demo_jpx.c auto_handler`。排查主题切换类问题先打这套接口，别一上来就开浏览器。
+- **主题切换链路的排查顺序**：`/auto/theme` 看 guest 生效 token → `curl /respack/<respackId>`（id 从 theme 响应里拿）核对下发的 pattern → 都对再看客户端。主题资源包是 `loadResPack(id)` 命令 + client 主动 GET，每次 apply 递增 id；**C 渲染器宿主没有 fetch，respack 会被静默跳过**（`app.js loadResPack` 的 `typeof fetch !== 'function'` 分支），C 渲染器侧主题热切换当前不可用。
+- **主题派生的颜色兜底**：`system` / `system-xp` / `system-vista` 这类基础主题没有 TaskbarBackground/TrayBackground/ButtonFace，派生曾落回默认主题的近黑面板色，表现为“任务栏变黑”；SystemColors 标记扩展（`{x:Static ...}`）解析不出颜色时整个资源跳过，不进表也不进 respack。修这类问题先 `/auto/apply` 逐主题扫 `panelColor`。
+- **JPX 列表选中项的颜色 token 是 `selectedColor` 不是 `accentColor`**：accent 是任务按钮渐变的代表色，玻璃主题（longhorn-aero）派生出半透明白，白底列表的选中项会整行隐形。列表行有两条绘制路径——平铺 `Jpx_ListBox` 与虚拟化 `Jpx_ListRowEx`（XAML 带 `Rows` 属性走后者），两处都要改。
 - **guest 侧观测**：`JPX_TRACE=1` 启动 `demo_jpx` 后，每次输入处理与每帧合成后打印 `[wm]` 转储：窗口集合、z 序、焦点、以及每个窗口的 `cmds / dirty(原因) / built=<frame>`。`dirty=0` 且 `built` 停在旧帧号的窗口，就是“该重建却没人重建”的对象；`over={id need "title"}` 给出超配额窗口的真实需求条数。这份数据全在 guest 内存里，不要去抓跨端帧反推。
 - **配额压测**：`VM_WM_LAYER_QUOTA=200` 把单窗口命令配额调小（1..1024）启动，超限窗口会整块显示纯色 + “配额超了 N 条”，用来验证告警与截断路径。
 - **窗口层内容被截断会污染后续所有窗口**：`build_one_window` 把内容写进定长层缓冲，写满时末尾的 `clipPop` 丢失；这条未闭合的裁剪会让排在后面的窗口（任务栏在置顶 pass 最后合并）整片消失。现在超配额直接整段丢弃内容、改画纯色块 + "配额超了 N 条"，前缀天然零未闭合。

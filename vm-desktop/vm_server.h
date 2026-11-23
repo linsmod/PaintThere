@@ -49,6 +49,12 @@ void VmServer_SetResPackImageProvider(VmServer *server, VmResPackImageAt provide
 void VmServer_SetFontPath(VmServer *server, const char *path);
 void VmServer_SetFullFrameProvider(VmServer *server, VmFullFrameProvider provider, void *userData);
 void VmServer_SetTickHandler(VmServer *server, int intervalMs, VmTickHandler handler, void *userData);
+/* 调试自动化：GET /auto/<op>?query → handler 把 JSON 应答写进 out（超 cap 截断）。
+   极简约定：无鉴权、无 JSON 解析，op 与 query 是原始字符串，由 handler 自己分发。
+   op 只收 [A-Za-z0-9_-]，query 上限 127 字符。handler 未设置时 /auto/* 返回 404。 */
+typedef void (*VmAutoHandler)(void *userData, const char *op, const char *query,
+                              char *out, size_t cap);
+void VmServer_SetAutoHandler(VmServer *server, VmAutoHandler handler, void *userData);
 /* 向所有已连接客户端广播一次 resources-update 事件（覆盖 defineStyle/Pattern 缓存）。
    调用方持有 json 字符串；本函数会立即复制，返回后即可释放。
    可从任意线程调用，广播在 server 主循环中完成。 */

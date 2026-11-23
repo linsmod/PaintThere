@@ -4,6 +4,8 @@
 
 #include "jpx/jpx.h"
 #include "jpx_xaml/jpx_shell_settings.h"
+#include "jpx_xaml/jpx_xaml_theme.h"
+#include "vm_server.h"
 #include "vm_sys.h"
 #include "vm_fs.h"
 #include "crash_report.h"
@@ -68,6 +70,113 @@ static JpxWindowDesc g_filesDesc;
 /* 任务栏设置：配置持久化在 <webRoot>/shell.ini，任务栏右键「属性」打开。 */
 static JpxShellSettings g_shellCfg;
 static char g_webRoot[512];
+
+/* ---- 调试自动化（GET /auto/<op>，见 vm_server.h）：绕开浏览器合成输入，
+   直接调 shell/主题接口做调试复现。op 用 strcmp 分发，无框架。 ---- */
+
+static JpxXamlResourceTable g_autoTheme;
+
+static void auto_query_param(const char *query, const char *key,
+                             char *out, size_t cap) {
+    out[0] = '\0';
+    size_t klen = strlen(key);
+    const char *p = query;
+    while (p && *p) {
+        if (strncmp(p, key, klen) == 0 && p[klen] == '=') {
+            const char *v = p + klen + 1;
+            const char *end = strchr(v, '&');
+            size_t n = end ? (size_t)(end - v) : strlen(v);
+            if (n >= cap) n = cap - 1;
+            memcpy(out, v, n);
+            out[n] = '\0';
+            return;
+        }
+        p = strchr(p, '&');
+        if (p) p++;
+    }
+}
+
+static void auto_op_themes(char *out, size_t cap) {
+    char root[512];
+    snprintf(root, sizeof(root), "%s/themes", g_webRoot);
+    VmFsEntry entries[64];
+    int total = 0;
+    int n = VmFs_ListDir(root, entries, 64, &total);
+    int off = snprintf(out, cap, "{\"ok\":true,\"themes\":[");
+    for (int i = 0; i < n && off < (int)cap; i++) {
+        if (!entries[i].isDir) continue;
+        off += snprintf(out + off, (size_t)cap - off, "%s\"%s\"",
+                        i ? "," : "", entries[i].name);
+    }
+    snprintf(out + off, (size_t)cap - off, "],\"count\":%d}", total);
+}
+
+static void auto_op_apply(const char *query, char *out, size_t cap) {
+    char name[64], dir[512], err[256];
+    auto_query_param(query, "name", name, sizeof(name));
+    if (!name[0]) {
+        snprintf(out, cap, "{\"ok\":false,\"error\":\"missing ?name=\"}");
+        return;
+    }
+    /* 镜像 jpx_shell_settings 的 apply_settings：同一张表 + 同一条
+       LoadPrecompiled/ResolveImages/Apply 路径（含静态池复用），保证调试
+       复现的动态与设置窗口一致。 */
+    snprintf(dir, sizeof(dir), "%s/themes/%s", g_webRoot, name);
+    if (!JpxXamlTheme_LoadPrecompiled(&g_autoTheme, dir, err, sizeof(err))) {
+        snprintf(out, cap, "{\"ok\":false,\"error\":\"load: %s\"}", err);
+        return;
+    }
+    JpxXamlTheme_ResolveImages(&g_autoTheme, dir);
+    if (!JpxXamlTheme_Apply(g_app, &g_autoTheme)) {
+        snprintf(out, cap, "{\"ok\":false,\"error\":\"apply\"}");
+        return;
+    }
+    Jpx_ResPack_SetImageProvider(g_app, JpxXamlTheme_ImageAt, &g_autoTheme);
+    snprintf(g_shellCfg.theme, sizeof(g_shellCfg.theme), "%s", name);
+    Jpx_Invalidate(g_app);
+    snprintf(out, cap, "{\"ok\":true,\"theme\":\"%s\",\"resources\":%d}",
+             name, g_autoTheme.count);
+}
+
+static void auto_op_theme(char *out, size_t cap) {
+    const VmTheme *t = Jpx_VmTheme(g_app);
+    const JpxTheme *ct = Jpx_Theme(g_app);
+    /* 关键 token 原样输出（borrowed 指针指向当前池内容，恰好用于核对
+       「指针借用 + 静态池复用」下的实际生效值）。 */
+    snprintf(out, cap,
+             "{\"ok\":true,\"configTheme\":\"%s\",\"respackId\":\"%s\","
+             "\"panelColor\":\"%s\","
+             "\"panelStyleId\":\"%s\",\"panelHeight\":%d,"
+             "\"taskButtonFrom\":\"%s\",\"taskButtonActiveFrom\":\"%s\","
+             "\"desktopFrom\":\"%s\",\"trayFrom\":\"%s\","
+             "\"startFrom\":\"%s\",\"startImageId\":\"%s\","
+             "\"selectedColor\":\"%s\",\"accentColor\":\"%s\"}",
+             g_shellCfg.theme, Jpx_ResPack_CurrentId(g_app),
+             t->panelColor ? t->panelColor : "", t->panelStyleId ? t->panelStyleId : "",
+             t->panelHeight,
+             t->taskButtonFrom ? t->taskButtonFrom : "",
+             t->taskButtonActiveFrom ? t->taskButtonActiveFrom : "",
+             t->desktopFrom ? t->desktopFrom : "",
+             t->trayFrom ? t->trayFrom : "",
+             t->startFrom ? t->startFrom : "",
+             t->startImageId ? t->startImageId : "",
+             ct->selectedColor ? ct->selectedColor : "",
+             ct->accentColor ? ct->accentColor : "");
+}
+
+static void auto_handler(void *userData, const char *op, const char *query,
+                         char *out, size_t cap) {
+    (void)userData;
+    if (strcmp(op, "themes") == 0) auto_op_themes(out, cap);
+    else if (strcmp(op, "apply") == 0) auto_op_apply(query, out, cap);
+    else if (strcmp(op, "theme") == 0) auto_op_theme(out, cap);
+    else if (strcmp(op, "settings") == 0) {
+        int winId = JpxShellSettings_Open(g_app, g_webRoot, &g_shellCfg);
+        Jpx_Invalidate(g_app);
+        snprintf(out, cap, "{\"ok\":true,\"winId\":%d}", winId);
+    }
+    /* 未知 op 留空：服务端回 unknown op。 */
+}
 
 /* 输入框已接管可打印键与编辑键；这里只收控件未消费的键（Enter 等）。 */
 static int on_key(int winId, const char *key, const char *code, int isDown,
@@ -557,6 +666,7 @@ int main(int argc, char **argv) {
     Jpx_SetShellSettingsHandler(g_app, on_settings_open, NULL);
     /* 启动时读 <webRoot>/shell.ini 并应用主题与任务栏开关。 */
     JpxShellSettings_Init(g_app, g_webRoot, NULL, &g_shellCfg);
+    VmServer_SetAutoHandler(Jpx_Server(g_app), auto_handler, NULL);
     Jpx_TimerEvery(g_app, 2000, procs_tick, &g_procs);
     Jpx_TimerEvery(g_app, 60, launcher_tick, NULL);
     Jpx_TimerEvery(g_app, 1000, clock_tick, NULL);

@@ -107,11 +107,19 @@ const JpxTheme *Jpx_Theme(JpxApp *app);
 /* XAML 资源字典派生出的完整主题：同时置 WM 装饰、shell 任务栏与控件主题。
    颜色指针借自调用方，需保证生命周期长于 app。 */
 void    Jpx_SetVmTheme(JpxApp *app, const VmTheme *theme);
+/* 当前生效的 VmTheme（SetVmTheme 存的副本）；未设置过时返回默认主题。
+   颜色指针仍借自资源表，只读。 */
+const VmTheme *Jpx_VmTheme(JpxApp *app);
+/* 内部 HTTP 服务（调试自动化挂 VmServer_SetAutoHandler 用）。 */
+struct VmServer;
+struct VmServer *Jpx_Server(JpxApp *app);
 /* 资源包：资源本体不进 SSE。注册后服务端只向 client 下发 loadResPack(id)，
    client 自己 GET /respack/<id> 拉取命令数组并覆盖缓存。
    同一时刻只保留最近一次注册的包（旧包不再提供服务）。
    已连接客户端会立即收到 loadResPack，新连接从 events 首事件拿到同一个 id。 */
 int     Jpx_ResPack_Register(JpxApp *app, const char *resPackId, const char *json);
+/* 当前注册的资源包 id（未注册返回空串）；调试自动化用。 */
+const char *Jpx_ResPack_CurrentId(JpxApp *app);
 /* 资源包里的图片：注册后 /respack/<id> 一次返回「命令数组 + 全部图片」的打包容器。
    provider 按 index 从 0 枚举，返回 1 表示有效（签名见 vm_server.h）。
    不设则容器里 imgCount=0，client 只解析命令数组。 */

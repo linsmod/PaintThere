@@ -377,15 +377,18 @@ int Jpx_ListBox(int win, const char *id, const char *const *items, int count,
                     .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0)},
                     .padding = {6, 6, 4, 4},
                 },
-                .backgroundColor = isSel ? accent(app)
+                /* 选中项用 selectedColor（主题的选中蓝），不用 accentColor：
+                   accent 是任务按钮渐变的代表色，玻璃主题（longhorn-aero）
+                   是半透明白，白底列表上选中项会整行白掉、文字也看不清。 */
+                .backgroundColor = isSel ? Jpx__Color(app->theme.selectedColor,
+                                                      (Clay_Color){49, 106, 197, 255})
                                          : (Clay_Hovered()
                                                 ? mix(border(app), (Clay_Color){255, 255, 255, 255}, 0.5f)
                                                 : (Clay_Color){0, 0, 0, 0}),
                 .cornerRadius = CLAY_CORNER_RADIUS(2),
             }) {
                 rowHovered = Clay_Hovered();
-                Clay_Color rowColor = isSel ? Jpx__Color(app->theme.accentTextColor,
-                                                         (Clay_Color){255, 255, 255, 255})
+                Clay_Color rowColor = isSel ? (Clay_Color){255, 255, 255, 255}
                                             : fg(app);
                 Clay_TextElementConfig rowCfg = text_config(app, rowColor, 0, 0);
                 jpx_text(Jpx__Str(items[i]), rowCfg);
@@ -494,15 +497,18 @@ int Jpx_ListRowEx(int win, const char *id, const char *const *cols, const int *w
             .childGap = 8,
             .childAlignment = {CLAY_ALIGN_X_LEFT, CLAY_ALIGN_Y_CENTER},
         },
-        .backgroundColor = selected ? accent(app)
+        /* 选中项用 selectedColor（主题的选中蓝），不用 accentColor：
+           accent 是任务按钮渐变的代表色，玻璃主题（longhorn-aero）
+           是半透明白，白底列表上选中项会整行白掉、文字也看不清。 */
+        .backgroundColor = selected ? Jpx__Color(app->theme.selectedColor,
+                                                 (Clay_Color){49, 106, 197, 255})
                                    : (Clay_Hovered()
                                           ? mix(border(app), (Clay_Color){255, 255, 255, 255}, 0.28f)
                                           : zebra),
     }) {
         hovered = Clay_Hovered();
         Clay_Color rowColor = selected
-                                  ? Jpx__Color(app->theme.accentTextColor,
-                                               (Clay_Color){255, 255, 255, 255})
+                                  ? (Clay_Color){255, 255, 255, 255}
                                   : fg(app);
         Clay_TextElementConfig cfg = text_config(app, rowColor, 0, 0);
 

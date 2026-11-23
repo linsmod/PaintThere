@@ -21,6 +21,9 @@ void JpxXamlTheme_Init(JpxXamlResourceTable *table) {
 /* RetroBar 主题用 #AARRGGBB / #RRGGBB；前端用 rgba()。 */
 static void color_to_css(const char *src, char *out, size_t cap) {
     if (!src || !*src) { if (cap) out[0] = '\0'; return; }
+    /* 标记扩展（{x:Static SystemColors...} / {DynamicResource ...}）不是颜色：
+       写空串让调用方跳过，避免脏串混进 pattern 被前端画成黑块。 */
+    if (src[0] == '{') { if (cap) out[0] = '\0'; return; }
     if (src[0] != '#' || cap < 24) {
         snprintf(out, cap, "%s", src);
         return;
@@ -85,6 +88,7 @@ static int collect_stops(const JpxXamlDoc *doc, int parent, JpxXamlResource *r) 
         if (n >= VM_PATTERN_MAX_STOPS) break;
         color_to_css(JpxXamlNode_Attr(node, "Color"),
                      r->stops[n].color, sizeof(r->stops[n].color));
+        if (!r->stops[n].color[0]) continue;   /* SystemColors 等脏色：跳过该 stop */
         r->stops[n].offset = (float)attr_double(node, "Offset", (double)n);
         n++;
     }
@@ -376,10 +380,15 @@ static int build_resources(const JpxXamlDoc *doc, JpxXamlResourceTable *table,
         const char *key = JpxXamlNode_Attr(node, "x:Key");
         if (!key) continue;
         if (strcmp(node->tag, "SolidColorBrush") == 0) {
+            /* Color 是标记扩展（{x:Static SystemColors...} 等）时解析不出颜色：
+               整个资源跳过，别让脏串进表（JpxRes_Color 会原样返回它）。 */
+            char col[VM_DISPLAY_MAX_COLOR];
+            color_to_css(JpxXamlNode_Attr(node, "Color"), col, sizeof(col));
+            if (!col[0]) continue;
             int fresh = 0;
             JpxXamlResource *r = add_res(table, key, JPX_XAML_RES_COLOR, err, errCap, &fresh);
             if (!r) return 0;
-            if (fresh) color_to_css(JpxXamlNode_Attr(node, "Color"), r->color, sizeof(r->color));
+            if (fresh) snprintf(r->color, sizeof(r->color), "%s", col);
         } else if (strcmp(node->tag, "LinearGradientBrush") == 0) {
             int fresh = 0;
             JpxXamlResource *r = add_res(table, key, JPX_XAML_RES_LINEAR_GRADIENT, err, errCap, &fresh);
@@ -1028,6 +1037,10 @@ int JpxXamlTheme_AppendPatterns(const JpxXamlResourceTable *table, VmDisplayList
         else if (r->kind == JPX_XAML_RES_LINEAR_GRADIENT) type = VM_PATTERN_GRADIENT;
         else if (r->kind == JPX_XAML_RES_RADIAL_GRADIENT) type = VM_PATTERN_RADIAL;
         else continue;
+        /* 渐变全是脏 stop（SystemColors 引用）时 stopCount<2：不下发，
+           否则前端拿到空渐变画不出东西。 */
+        if (type != VM_PATTERN_SOLID && r->stopCount < 2) continue;
+        if (type == VM_PATTERN_SOLID && !r->color[0]) continue;
         VmResourceCommand *c = VmDisplay_AppendResource(list, VM_CMD_DEFINE_PATTERN, r->key);
         if (!c) break;
         VmDefinePatternArgs *p = &c->args.definePattern;
@@ -1167,7 +1180,9 @@ void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
     out->borderColor = "rgba(0,84,227,1)";
     out->inputBgColor = "rgba(255,255,255,1)";
     out->disabledColor = "rgba(128,128,128,1)";
-    out->selectedColor = "rgba(49,106,197,0.35)";
+    /* Luna 的 ListBox 选中项是不透明蓝（白字）；半透明会让玻璃主题下
+       白底列表的选中项整个消失。 */
+    out->selectedColor = "rgba(49,106,197,1)";
     out->radius = 3;
     out->padding = 6;
     out->gap = 6;
@@ -1214,11 +1229,14 @@ void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
     if (!table) return;
     /* 任务栏分级 fallback：主题真实 key（渐变取首末 stop）→ 经典主题灰色系
        （95-98/2000 没有 TaskbarBackground/TrayBackground/TaskbarHeight，
-       只有 ButtonFace 一族纯色）→ 保持 Luna 默认。 */
+       只有 ButtonFace 一族纯色）→ 经典 ButtonFace 灰。最后一级不能落
+       默认主题的近黑：System/System XP/System Vista 这类只有 30 来个
+       key 的基础主题没有任何面板 key，落默认会让任务栏整条变黑。 */
     const char *panel = JpxRes_Color(table, "TaskbarBackground", NULL);
     if (!panel) panel = JpxRes_Color(table, "TrayBackground", NULL);
     if (!panel) panel = JpxRes_Color(table, "ButtonFace", NULL);
-    if (panel) out->panelColor = panel;
+    if (!panel) panel = "rgba(212,208,200,1)";
+    out->panelColor = panel;
 
     /* 文字色：StartLabel 在 95-98 里不存在，退到 ButtonForeground（黑）。 */
     out->accentTextColor = JpxRes_Color(table, "ButtonForeground", out->accentTextColor);

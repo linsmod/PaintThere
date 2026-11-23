@@ -102,6 +102,10 @@ int Jpx_ResPack_Register(JpxApp *app, const char *resPackId, const char *json) {
     return app->resPackJson && strcmp(app->resPackId, resPackId) == 0;
 }
 
+const char *Jpx_ResPack_CurrentId(JpxApp *app) {
+    return app && app->resPackId[0] ? app->resPackId : "";
+}
+
 void Jpx_ResPack_SetImageProvider(JpxApp *app,
                                   int (*provider)(void *userData, const char *resPackId,
                                                   int index, const char **imgId,
@@ -407,6 +411,15 @@ void Jpx_SetVmTheme(JpxApp *app, const VmTheme *theme) {
 
 const JpxTheme *Jpx_Theme(JpxApp *app) {
     return app ? &app->theme : Jpx__DefaultTheme();
+}
+
+const VmTheme *Jpx_VmTheme(JpxApp *app) {
+    if (app && app->hasVmTheme) return &app->vmTheme;
+    return VmTheme_Default();
+}
+
+struct VmServer *Jpx_Server(JpxApp *app) {
+    return app ? (struct VmServer *)app->server : NULL;
 }
 
 int Jpx_WindowOpen(JpxApp *app, const JpxWindowDesc *desc) {

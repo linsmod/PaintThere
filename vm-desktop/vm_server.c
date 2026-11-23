@@ -65,6 +65,9 @@ struct VmServer {
     void *tickUserData;
     int tickIntervalMs;
     unsigned long long lastTickMs;
+    /* 调试自动化：GET /auto/<op>?query → handler 写 JSON 应答。 */
+    VmAutoHandler autoHandler;
+    void *autoUserData;
     /* 资源热更新：调用方拷入 JSON，主循环消费后广播 resources-update。 */
     char *pendingResources;
     int stop;
@@ -660,6 +663,40 @@ static void vm_handle_request(VmServer *s, VmClient *client) {
         return;
     }
 
+    /* 调试自动化：/auto/<op>?query。handler 自行解释 op 与 query，
+       应答文本写回后由服务端按 application/json 发出。 */
+    if (strcmp(method, "GET") == 0 && strncmp(path, "/auto/", 6) == 0) {
+        char op[32] = {0}, query[128] = {0};
+        const char *opStart = path + 6;
+        const char *q = strchr(opStart, '?');
+        size_t opLen = q ? (size_t)(q - opStart) : strlen(opStart);
+        int opValid = opLen > 0 && opLen < sizeof(op);
+        for (size_t i = 0; opValid && i < opLen; i++) {
+            char ch = opStart[i];
+            if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                  (ch >= '0' && ch <= '9') || ch == '-' || ch == '_')) opValid = 0;
+        }
+        if (!opValid) {
+            vm_send_response(client->fd, 400, "Bad Request", "text/plain", "bad op", 6);
+        } else if (!s->autoHandler) {
+            vm_send_response(client->fd, 404, "Not Found", "text/plain", "no auto", 7);
+        } else {
+            static char autoOut[8192];
+            memcpy(op, opStart, opLen);
+            op[opLen] = '\0';
+            if (q && q[1]) snprintf(query, sizeof(query), "%s", q + 1);
+            autoOut[0] = '\0';
+            s->autoHandler(s->autoUserData, op, query, autoOut, sizeof(autoOut));
+            if (!autoOut[0])
+                snprintf(autoOut, sizeof(autoOut), "{\"ok\":false,\"error\":\"unknown op\"}");
+            vm_send_response(client->fd, 200, "OK", "application/json",
+                             autoOut, strlen(autoOut));
+        }
+        VM_CLOSE(client->fd);
+        client->fd = VM_INVALID;
+        return;
+    }
+
     if (strcmp(method, "GET") == 0) {
         vm_serve_static(s, client->fd, path);
         VM_CLOSE(client->fd);
@@ -803,6 +840,12 @@ void VmServer_SetTickHandler(VmServer *s, int intervalMs, VmTickHandler handler,
     s->tickUserData = userData;
     s->tickIntervalMs = intervalMs;
     s->lastTickMs = 0;
+}
+
+void VmServer_SetAutoHandler(VmServer *s, VmAutoHandler handler, void *userData) {
+    if (!s) return;
+    s->autoHandler = handler;
+    s->autoUserData = userData;
 }
 
 void VmServer_BroadcastResources(VmServer *s, const char *json) {

@@ -6,6 +6,7 @@
 #include "jpx_xaml/jpx_shell_settings.h"
 #include "vm_sys.h"
 #include "vm_fs.h"
+#include "crash_report.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -449,6 +450,7 @@ static void on_settings_open(void *user) {
 }
 
 int main(int argc, char **argv) {
+    CrashReport_Install(NULL);
     static char fontPath[512];
     JpxOptions opt = {0};
     opt.width = 800;

@@ -109,7 +109,7 @@ def main():
     configure = [
         str(CMAKE), "-S", str(VM_DIR), "-B", str(BUILD),
         "-G", "MinGW Makefiles",
-        "-DCMAKE_BUILD_TYPE=Release",
+        "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
         f"-DCMAKE_C_COMPILER={GCC}",
         f"-DCMAKE_CXX_COMPILER={GXX}",
         # 本机 mingw64/x86_64-w64-mingw32/bin/as.exe 启动即 0xC0000139

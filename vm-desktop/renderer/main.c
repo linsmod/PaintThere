@@ -1,4 +1,5 @@
 #include <canvas/canvas.h>
+#include "crash_report.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +24,7 @@ static void on_frame(canvas_instance *app, int frame_index, void *user) {
 }
 
 int main(int argc, char **argv) {
+    CrashReport_Install(NULL);
     if (argc < 3) {
         fprintf(stderr, "usage: vm_renderer <page.js> <assets_dir> [width] [height] [max_frames]\n");
         return 2;

@@ -7,6 +7,7 @@
 #include "jpx_xaml.h"
 #include "jpx_xaml_theme.h"
 #include "jpx_html_theme.h"
+#include "crash_report.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -179,6 +180,7 @@ static void on_close(int winId, void *user) {
 }
 
 int main(int argc, char **argv) {
+    CrashReport_Install(NULL);
     static char fontPath[512];
     JpxOptions opt = {0};
     opt.width = 800;

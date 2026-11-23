@@ -11,6 +11,7 @@
 #include "vm_server.h"
 #include "vm_font.h"
 #include "vm_shell.h"
+#include "crash_report.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -249,6 +250,7 @@ static void OnWindowClose(int windowId, void *userData) {
 }
 
 int main(int argc, char **argv) {
+    CrashReport_Install(NULL);
     unsigned short port = argc > 1 ? (unsigned short)atoi(argv[1]) : 9000;
     const char *webRoot = argc > 2 ? argv[2] : "../assets";
 

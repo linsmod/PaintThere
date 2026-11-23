@@ -12,6 +12,18 @@ set(MSTB_DIR "H:/github_repos/mystbfont_c" CACHE PATH "mystbfont_c checkout cont
 
 add_subdirectory("${CANVAS_SOURCE}" "${CMAKE_BINARY_DIR}/canvas-cpp" EXCLUDE_FROM_ALL)
 
+# 崩溃钩子静态库：exe 链接后，在 main 第一行调用 CrashReport_Install(NULL)。
+# 崩溃时向 stderr 打印符号化堆栈，并写 minidump / .rpt（见 crash_report.h）。
+add_library(crash_report STATIC crash_report.c)
+if(WIN32)
+    target_link_libraries(crash_report PUBLIC dbghelp)
+endif()
+
+# 崩溃钩子探针：运行即打印当前堆栈并触发一次真实崩溃，验证钩子本身可用。
+add_executable(crash_probe crash_probe.c)
+target_include_directories(crash_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(crash_probe PRIVATE crash_report)
+
 # 桌面服务端：窗口管理、remote tiles 切分与 SSE 服务，全部在 guest 侧。
 add_executable(demo_wm
     demo_wm.c
@@ -29,7 +41,7 @@ add_executable(demo_wm
 )
 target_include_directories(demo_wm PRIVATE "${CLAY_DIR}" "${MSTB_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
 if(WIN32)
-    target_link_libraries(demo_wm PRIVATE ws2_32)
+    target_link_libraries(demo_wm PRIVATE ws2_32 crash_report)
 endif()
 
 # JPX 宿主示例：应用代码只 include jpx.h，Clay 实现单独放一个 TU。
@@ -68,7 +80,7 @@ target_include_directories(demo_jpx PRIVATE "${CLAY_DIR}" "${MSTB_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx"
     "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml")
 if(WIN32)
-    target_link_libraries(demo_jpx PRIVATE ws2_32 psapi)
+    target_link_libraries(demo_jpx PRIVATE ws2_32 psapi crash_report)
 endif()
 
 # jp_xaml 表单示例：应用源码只 include jpx.h 与 jpx_xaml.h。
@@ -106,7 +118,7 @@ target_include_directories(demo_xaml PRIVATE "${CLAY_DIR}" "${MSTB_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx"
     "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml")
 if(WIN32)
-    target_link_libraries(demo_xaml PRIVATE ws2_32 psapi)
+    target_link_libraries(demo_xaml PRIVATE ws2_32 psapi crash_report)
 endif()
 
 # 帧断言测试：不开服务、不开浏览器，直接断言度量/装饰/裁剪/脏标记/输入路由。
@@ -190,7 +202,8 @@ target_include_directories(test_fs PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 # C 版渲染宿主：复用 canvas-cpp / ant 引擎执行前端脚本。
 add_executable(vm_renderer renderer/main.c)
-target_link_libraries(vm_renderer PRIVATE canvas)
+target_include_directories(vm_renderer PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(vm_renderer PRIVATE canvas crash_report)
 
 set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"

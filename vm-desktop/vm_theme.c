@@ -35,6 +35,15 @@ static const VmTheme kDefaultTheme = {
     .fontId = 0,
     .fontSize = 14,
     .panelHeight = 36,
+    .panelPad = 6,
+    .panelStartWidth = 72,
+    .panelButtonHeight = 28,
+    .panelItemWidth = 110,
+    .panelItemGap = 6,
+    .panelTrayWidth = 56,
+    .panelRadius = 5,
+    .panelStartIconSize = 0,
+    .boldChromeText = 0,
 };
 
 const VmTheme *VmTheme_Default(void) {
@@ -117,6 +126,7 @@ void VmTheme_AppendResources(VmDisplayList *out, const VmTheme *theme) {
     append_gradient_pair(out, "title_idle", t->titleIdleFrom, t->titleIdleTo);
     append_gradient_pair(out, "start", t->startFrom, t->startTo);
     append_gradient_pair(out, "task", t->taskButtonFrom, t->taskButtonTo);
+    append_gradient_pair(out, "task_hover", t->taskButtonHoverFrom, t->taskButtonHoverTo);
     append_gradient_pair(out, "task_active", t->taskButtonActiveFrom, t->taskButtonActiveTo);
     append_gradient_pair(out, "tray", t->trayFrom, t->trayTo);
     /* 标题栏三个按钮：最小化/最大化浅蓝，关闭红。Luna 的按钮是竖直渐变。 */

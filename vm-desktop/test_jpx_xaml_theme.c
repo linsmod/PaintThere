@@ -201,7 +201,7 @@ static void test_images(void) {
     const JpxXamlResource *r = JpxRes_Find(&table, "Ico");
     expect(r != NULL && r->kind == JPX_XAML_RES_IMAGE, "image kind recorded");
     expect(r && strcmp(r->uri, "../Resources/a.png") == 0, "uri kept raw before resolve");
-    JpxXamlTheme_ResolveImages(&table, "H:/themes/xp/Blue.xaml");
+    JpxXamlTheme_ResolveImages(&table, "H:/themes/xp");
     r = JpxRes_Find(&table, "Ico");
     expect(r && strcmp(r->uri, "H:/themes/Resources/a.png") == 0,
            "relative uri resolved against theme dir");

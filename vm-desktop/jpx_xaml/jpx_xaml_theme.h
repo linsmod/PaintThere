@@ -59,8 +59,9 @@ double JpxRes_Number(const JpxXamlResourceTable *table, const char *key,
    返回追加数量。 */
 int JpxXamlTheme_AppendPatterns(const JpxXamlResourceTable *table, VmDisplayList *list);
 
-/* 图片资源的相对路径以主题文件目录为基准：解析后写回 uri（绝对路径）。 */
-void JpxXamlTheme_ResolveImages(JpxXamlResourceTable *table, const char *themeFilePath);
+/* 图片资源的相对路径解析基准：baseDir 是**目录**（不是文件）。
+   外置主题传主题文件所在目录；内置主题传资源根目录（如 assets）。 */
+void JpxXamlTheme_ResolveImages(JpxXamlResourceTable *table, const char *baseDir);
 
 /* VmResPackImageAt 的实现：userData 是资源表，按 index 枚举图片资源并读文件。
    mime 按扩展名给（png/jpg/bmp/gif），未知一律 image/png。

@@ -20,6 +20,10 @@ static JpxApp *g_app;
 static const char *XP_THEME =
     "<ResourceDictionary>"
       "<system:Double x:Key='TaskbarHeight'>30</system:Double>"
+      "<Style x:Key='StartButton' TargetType='Button'>"
+        "<Setter Property='MinWidth' Value='99' />"
+        "<Setter Property='Height' Value='32' />"
+      "</Style>"
       "<LinearGradientBrush x:Key='TaskbarBackground' StartPoint='0,0' EndPoint='0,1'>"
         "<GradientStop Color='#3888e9' Offset='0.0' />"
         "<GradientStop Color='#4993e6' Offset='0.05' />"
@@ -42,9 +46,23 @@ static const char *XP_THEME =
         "<GradientStop Color='#123d94' Offset='0.0' />"
         "<GradientStop Color='#2156b7' Offset='1.0' />"
       "</LinearGradientBrush>"
+      "<LinearGradientBrush x:Key='TaskButtonBackgroundHover' StartPoint='0,0' EndPoint='0,1'>"
+        "<GradientStop Color='#8bc0ff' Offset='0.0' />"
+        "<GradientStop Color='#59a4ff' Offset='0.05' />"
+        "<GradientStop Color='#569fff' Offset='0.9' />"
+        "<GradientStop Color='#2a81ff' Offset='1.0' />"
+      "</LinearGradientBrush>"
+      "<SolidColorBrush x:Key='TaskButtonTopBorder' Color='#3172da' />"
+      "<SolidColorBrush x:Key='TaskButtonBottomBorder' Color='#2652bc' />"
+      "<SolidColorBrush x:Key='TaskButtonLeftBorder' Color='#3067dd' />"
+      "<SolidColorBrush x:Key='TaskButtonRightBorder' Color='#264fad' />"
+      "<SolidColorBrush x:Key='TaskbarBorder' Color='#3168d5' />"
       "<SolidColorBrush x:Key='ButtonForeground' Color='#ffffff' />"
       "<SolidColorBrush x:Key='ClockForeground' Color='#ffffff' />"
       "<SolidColorBrush x:Key='ItemButtonForeground' Color='#ffffff' />"
+      "<BitmapImage x:Key='StartButtonImage' UriSource='xp/startxpbluebutton.png' />"
+      "<BitmapImage x:Key='StartIconImage' UriSource='xp/startxpblue.png' />"
+      "<BitmapImage x:Key='ShowDesktopIconImageSmall' UriSource='xp/desktopxp-sm.png' />"
     "</ResourceDictionary>";
 
 static JpxXamlResourceTable g_theme;
@@ -241,8 +259,17 @@ int main(int argc, char **argv) {
     if (!JpxXamlTheme_Parse(&g_theme, themeXml, themeErr, sizeof(themeErr))) {
         fprintf(stderr, "demo_xaml: theme parse failed: %s\n", themeErr);
     } else {
-        /* 图片相对路径以主题文件目录为基准；内置主题没有图片资源。 */
-        if (themeFile) JpxXamlTheme_ResolveImages(&g_theme, themePath);
+        /* 图片相对路径基准：外置主题取主题目录，内置主题取 Web 资源根目录。 */
+        char imgBase[512];
+        snprintf(imgBase, sizeof(imgBase), "%s", opt.webRoot);
+        if (themeFile) {
+            snprintf(imgBase, sizeof(imgBase), "%s", themePath);
+            char *slash = strrchr(imgBase, '/');
+            char *bslash = strrchr(imgBase, '\\');
+            if (bslash > slash) slash = bslash;
+            if (slash) *slash = '\0';
+        }
+        JpxXamlTheme_ResolveImages(&g_theme, imgBase);
         printf("demo_xaml: theme loaded from %s, %d resources\n",
                themeFile ? themePath : "builtin", g_theme.count);
         /* 图片由资源包打包下发：client 一次 GET 拿「命令数组 + 全部图片」。 */

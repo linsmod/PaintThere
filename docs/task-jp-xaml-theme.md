@@ -310,10 +310,37 @@ Clay 的 `backgroundColor` 只吃单色，渐变填不进去。方案是给 WM �
 验证：无 `--theme` 启动，截图确认蓝色桌面、蓝渐变标题栏 + 红色关闭钮、米灰按钮、
 蓝色任务栏 + 绿色开始 + 托盘时钟、宋体中文。
 
+### S7h：样式全部交给主题（2026-11-23）
+
+用户要求「不准硬控，让主题决定样式」。此前 shell 里写死了一堆像素常量（开始按钮宽 96、
+按钮高 22、条目宽 110、托盘 76、圆角 3/4、伪粗体、假缩略图棋盘格）——全部清掉：
+
+- **解析器**：`<Style x:Key="X">` 的直接子 `<Setter>` 里，单值尺寸属性
+  （Height/Width/MinWidth/MaxWidth/FontSize）收成数值资源 `X.Property`
+  （如 `StartButton.Height` = 32）。Margin/Padding 是多值，暂不收。
+- **VmTheme** 新增 `panelPad / panelStartWidth / panelButtonHeight / panelItemWidth /
+  panelItemGap / panelTrayWidth / panelRadius / panelStartIconSize / boldChromeText`，
+  另有 `taskButtonHoverFrom/To`、`taskBorderTopColor/BottomColor`、`trayIconId`。
+  默认现代主题给现代值（pad 6 / start 72 / gap 6 / tray 56 / radius 5 / 不粗体），
+  XP 皮肤给 Luna 值（pad 3 / start 从 `StartButton.MinWidth` 读、按钮高从
+  `StartButton.Height` 读、radius 3 / 粗体）。
+- **shell**：删除全部几何宏（SHELL_START_W 等），只留「主题没给值时防止负尺寸」的
+  fallback；绘制与命中共用 `shell_geometry`，点击测试的中心公式也改为从
+  `VmTheme_Default()` 的 token 计算。
+- **开始按钮三态**：`StartButtonImage` 竖排雪碧三段 viewbox（0 / 0.3333 / 0.6666）按
+  hover/pressed 切换；`StartIconImage` 徽标、`ShowDesktopIconImageSmall` 托盘图标
+  都由主题的 `BitmapImage` 决定，位图随资源包容器下发。
+- **移除假缩略图**：之前在 hover 时画的棋盘格占位是硬编码假功能，删掉；
+  `drawPath` 原语保留，等真实缩略图（窗口内容缩放）实现时再用。
+- **位图入库**：`assets/xp/{startxpbluebutton,startxpblue,desktopxp-sm}.png`（约 13 KB）
+  来自 RetroBar（Apache-2.0），内置主题通过 `BitmapImage UriSource='xp/...'` 引用，
+  相对路径以 Web 资源根目录解析。
+
+验证：内置主题 19 个资源；截图确认位图开始按钮 + 徽标 + 托盘图标 + 主题驱动几何；
+六套件全通过。
+
 **剩余 gap（未做）**
 - RetroBar 的 XP 主题只有任务栏资源；窗口标题栏/边框/控件是按 Luna 惯例手写的近似值，不是从主题文件读的。
 - 任务栏缩略图只有占位底纹，没有窗口内容缩放预览。
 - 桌面无壁纸（图片资源），只用蓝天渐变近似。
-- 内置 XP 主题没有开始按钮位图（`StartButtonImage` 是 RetroBar 仓库里的 PNG），走绿色渐变；
-  传 `--theme` 加载真实文件时才有位图。
 - 默认字体仍取 `assets/font.ttf`（SimHei）：不传 `--font` 时不会自动用系统宋体。

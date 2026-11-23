@@ -11,12 +11,17 @@
 /* 任务栏 = 一个无装饰/置顶/不可拖动/不抢焦点的特殊窗口。
    内容用 VmWm_SetWindowPaint 手绘：Clay 的 backgroundColor 只吃单色，
    XP 任务栏需要多 stop 渐变与位图填充。命中用 VmWm_SetWindowClickHandler
-   （NOFOCUS 窗口拿不到焦点，只能走按下通道）。 */
+   （NOFOCUS 窗口拿不到焦点，只能走按下通道）。
 
-#define SHELL_START_W 78
-#define SHELL_ITEM_W 110
-#define SHELL_TRAY_W 76
-#define SHELL_PAD 3
+   几何与样式全部来自 VmTheme 的 panel* token（由主题资源/Style 派生），
+   这里不写死像素；token 为 0 时才用最小兜底值。 */
+
+/* 主题没给值时的兜底：只保证「不会画出负尺寸」，不代表任何主题观感。 */
+#define SHELL_FALLBACK_PAD 3
+#define SHELL_FALLBACK_START_W 72
+#define SHELL_FALLBACK_ITEM_W 110
+#define SHELL_FALLBACK_TRAY_W 56
+#define SHELL_FALLBACK_RADIUS 4
 
 struct VmShell {
     VmWm *wm;
@@ -105,18 +110,39 @@ static void truncate_utf8(int fontId, int px, const char *text, int maxW,
 
 /* 绘制与命中共用的几何：开始按钮固定宽，条目按创建序排列。 */
 typedef struct {
+    int pad;
     int startX, startW;
-    int itemsX;
+    int itemsX, itemW, gap;
+    int trayW;
     int n;
     int ids[VM_WM_MAX_WINDOWS];
 } ShellLayout;
 
 static void shell_geometry(VmShell *sh, ShellLayout *L) {
     memset(L, 0, sizeof(*L));
-    L->startX = SHELL_PAD;
-    L->startW = SHELL_START_W;
-    L->itemsX = L->startX + L->startW + SHELL_PAD;
+    const VmTheme *t = sh->theme;
+    L->pad = t->panelPad > 0 ? t->panelPad : SHELL_FALLBACK_PAD;
+    L->startW = t->panelStartWidth > 0 ? t->panelStartWidth : SHELL_FALLBACK_START_W;
+    L->startX = L->pad;
+    L->gap = t->panelItemGap > 0 ? t->panelItemGap : SHELL_FALLBACK_PAD;
+    L->itemW = t->panelItemWidth > 0 ? t->panelItemWidth : SHELL_FALLBACK_ITEM_W;
+    L->trayW = t->panelTrayWidth > 0 ? t->panelTrayWidth : SHELL_FALLBACK_TRAY_W;
+    L->itemsX = L->startX + L->startW + L->gap;
     L->n = VmWm_EnumerateCreated(sh->wm, L->ids, VM_WM_MAX_WINDOWS);
+}
+
+/* 按钮高度由主题给；超出任务栏时允许上下各溢一点（XP 就是 32 高放在 30 里）。 */
+static int shell_button_height(VmShell *sh) {
+    const int h = sh->height;
+    int bh = sh->theme->panelButtonHeight > 0 ? sh->theme->panelButtonHeight : h - 8;
+    if (bh > h) bh = h;
+    if (bh < 8) bh = h - 4;
+    return bh;
+}
+
+static float shell_radius(VmShell *sh) {
+    return sh->theme->panelRadius > 0 ? (float)sh->theme->panelRadius
+                                      : (float)SHELL_FALLBACK_RADIUS;
 }
 
 static int shell_item_visible(VmShell *sh, int id) {
@@ -138,18 +164,29 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
     ShellLayout L;
     shell_geometry(sh, &L);
 
-    /* 开始按钮：有位图皮肤优先用位图（XP 的竖排三态取上 1/3），
+    /* 几何全部来自主题：高度、圆角、间距、图标尺寸都不在这里写死。 */
+    const int bh = shell_button_height(sh);
+    const int by = y + (h - bh) / 2;
+    const float radius = shell_radius(sh);
+
+    /* 开始按钮：有位图皮肤就用位图三态（XP 的竖排雪碧取不同 1/3），
        其次是渐变（s_start），最后退回强调色单色。 */
-    const int by = y + 2;
-    const int bh = h - 4;
+    int overStart = 0;
+    if (sh->wm->pointerValid) {
+        int px = sh->wm->pointerX, py = sh->wm->pointerY;
+        overStart = px >= x + L.startX && px < x + L.startX + L.startW &&
+                    py >= by && py < by + bh;
+    }
     if (t->startImageId) {
+        const char *seg = overStart
+            ? (sh->wm->pointerDown ? "0,0.6666,1,0.3333" : "0,0.3333,1,0.3333")
+            : "0,0,1,0.3333";
         char imgRef[160];
-        snprintf(imgRef, sizeof(imgRef), "%s#0,0,1,0.3333", t->startImageId);
-        append_img(out, "tb_start", x + L.startX, by, L.startW, bh, imgRef, 4);
+        snprintf(imgRef, sizeof(imgRef), "%s#%s", t->startImageId, seg);
+        append_img(out, "tb_start", x + L.startX, by, L.startW, bh, imgRef, (int)radius);
     } else {
         const char *startPaint = t->startFrom ? "s_start" : t->accentColor;
-        append_rect(out, "tb_start", x + L.startX, by, L.startW, bh, startPaint,
-                    t->startFrom ? 4.0f : 6.0f);
+        append_rect(out, "tb_start", x + L.startX, by, L.startW, bh, startPaint, radius);
     }
     {
         const char *label = "开始";
@@ -158,15 +195,14 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
         int labelX = x + L.startX + (L.startW - tw) / 2;
         /* 有徽标时文字右移，给图标留出位置（XP 的徽标在左、文字在右）。 */
         if (t->startIconId) {
-            int icon = bh - 8;
-            append_img(out, "tb_start_icon", x + L.startX + 6, by + (bh - icon) / 2,
+            int icon = t->panelStartIconSize > 0 ? t->panelStartIconSize : bh - 8;
+            append_img(out, "tb_start_icon", x + L.startX + L.pad, by + (bh - icon) / 2,
                        icon, icon, t->startIconId, 0);
-            labelX = x + L.startX + 6 + icon + 4;
+            labelX = x + L.startX + L.pad + icon + L.pad;
         }
         append_text(out, "tb_start_label", labelX, by + (bh - lineStep) / 2,
                     tw > 0 ? tw : L.startW, lineStep, label, fontId, fontSize, color);
-        /* XP 的「开始」是粗体：同色偏移 1px 再画一次近似（stb 不做合成粗体）。 */
-        if (t->startFrom || t->startImageId) {
+        if (t->boldChromeText) {
             append_text(out, "tb_start_label_b", labelX + 1, by + (bh - lineStep) / 2,
                         tw > 0 ? tw : L.startW, lineStep, label, fontId, fontSize, color);
         }
@@ -185,49 +221,61 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
 
         char idbuf[48];
         snprintf(idbuf, sizeof(idbuf), "tb_item_%d", win->id);
-        append_rect(out, idbuf, ix, by, SHELL_ITEM_W, bh, paint, 3.0f);
+        append_rect(out, idbuf, ix, by, L.itemW, bh, paint, radius);
 
-        /* hover：条目提亮；XP 的缩略图占位底纹用矢量棋盘格（DrawingBrush 转 path），
-           真实内容缩略图未做，这里只表达「有预览入口」。 */
+        /* 悬停：主题给了悬停渐变就用它，否则只在原底色上叠一层提亮。 */
         int hovered = 0;
         if (sh->wm->pointerValid) {
             int px = sh->wm->pointerX, py = sh->wm->pointerY;
-            hovered = px >= ix && px < ix + SHELL_ITEM_W && py >= by && py < by + bh;
+            hovered = px >= ix && px < ix + L.itemW && py >= by && py < by + bh;
         }
-        if (hovered) {
+        if (hovered && !win->focused) {
             snprintf(idbuf, sizeof(idbuf), "tb_item_hover_%d", win->id);
-            append_rect(out, idbuf, ix, by, SHELL_ITEM_W, bh, "rgba(255,255,255,0.14)", 3.0f);
-            int gs = bh - 10;
-            if (gs > 6) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_thumb_%d", win->id);
-                append_path(out, idbuf, ix + SHELL_ITEM_W - gs - 5, by + 5, gs, gs,
-                            "M0 0h0.5v0.5H0z M0.5 0.5h0.5v0.5H0.5z",
-                            "rgba(255,255,255,0.55)");
+            if (t->taskButtonHoverFrom) {
+                append_rect(out, idbuf, ix, by, L.itemW, bh, "s_task_hover", radius);
+            } else {
+                append_rect(out, idbuf, ix, by, L.itemW, bh,
+                            "rgba(255,255,255,0.14)", radius);
             }
         }
 
-        /* XP 条目有 1px 深色内边 + 亮色内线；没有皮肤时留空。 */
-        if (t->taskButtonFrom) {
-            snprintf(idbuf, sizeof(idbuf), "tb_item_edge_%d", win->id);
-            append_border(out, idbuf, ix, by, SHELL_ITEM_W, bh, 1, "rgba(0,0,0,0.28)");
+        /* 条目的上/下内边是不同颜色（上浅下深），颜色来自主题边框资源。 */
+        if (t->taskBorderTopColor) {
+            snprintf(idbuf, sizeof(idbuf), "tb_item_top_%d", win->id);
+            append_rect(out, idbuf, ix, by, L.itemW, 1, t->taskBorderTopColor, 0.0f);
+        }
+        if (t->taskBorderBottomColor) {
+            snprintf(idbuf, sizeof(idbuf), "tb_item_bottom_%d", win->id);
+            append_rect(out, idbuf, ix, by + bh - 1, L.itemW, 1,
+                        t->taskBorderBottomColor, 0.0f);
         }
 
         char label[128];
-        truncate_utf8(fontId, fontSize, win->title, SHELL_ITEM_W - 14, label, sizeof(label));
+        truncate_utf8(fontId, fontSize, win->title, L.itemW - 2 * L.pad - 4, label,
+                      sizeof(label));
         snprintf(idbuf, sizeof(idbuf), "tb_item_text_%d", win->id);
         const char *color = t->taskButtonTextColor ? t->taskButtonTextColor : t->accentTextColor;
-        append_text(out, idbuf, ix + 7, by + (bh - lineStep) / 2,
-                    SHELL_ITEM_W - 14, lineStep, label, fontId, fontSize, color);
-        ix += SHELL_ITEM_W + SHELL_PAD;
+        append_text(out, idbuf, ix + L.pad + 4, by + (bh - lineStep) / 2,
+                    L.itemW - 2 * L.pad - 4, lineStep, label, fontId, fontSize, color);
+        ix += L.itemW + L.gap;
     }
 
-    /* 右侧托盘：XP 有独立浅色区，时钟落在其中。 */
-    int trayX = x + w - SHELL_TRAY_W;
+    /* 右侧托盘：XP 有独立浅色区，图标与时钟落在其中。 */
+    int trayX = x + w - L.trayW;
     if (t->trayFrom) {
-        append_rect(out, "tb_tray", trayX, y, SHELL_TRAY_W, h, "s_tray", 0.0f);
+        append_rect(out, "tb_tray", trayX, y, L.trayW, h, "s_tray", 0.0f);
         append_border(out, "tb_tray_edge", trayX, y, 1, h, 1, "rgba(0,0,0,0.22)");
     }
     {
+        /* 托盘左侧是「显示桌面」图标，时钟占剩余区域。 */
+        int clockLeft = trayX;
+        int clockRight = x + w;
+        if (t->trayIconId) {
+            int icon = t->panelStartIconSize > 0 ? t->panelStartIconSize : bh - 8;
+            append_img(out, "tb_tray_icon", trayX + L.pad, y + (h - icon) / 2, icon, icon,
+                       t->trayIconId, 0);
+            clockLeft = trayX + L.pad + icon;
+        }
         static char clock[16];
         time_t now = time(NULL);
         struct tm *tmVal = localtime(&now);
@@ -235,8 +283,9 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
         if (tmVal) strftime(clock, sizeof(clock), "%H:%M", tmVal);
         int cw = VmFont_Width(fontId, fontSize, clock, -1);
         const char *color = t->clockTextColor ? t->clockTextColor : t->fgColor;
-        append_text(out, "tb_clock", trayX + (SHELL_TRAY_W - cw) / 2,
-                    y + (h - lineStep) / 2, cw > 0 ? cw : SHELL_TRAY_W, lineStep,
+        int slotW = clockRight - clockLeft;
+        append_text(out, "tb_clock", clockLeft + (slotW - cw) / 2,
+                    y + (h - lineStep) / 2, cw > 0 ? cw : slotW, lineStep,
                     clock, fontId, fontSize, color);
     }
 }
@@ -282,11 +331,11 @@ static int shell_click(int winId, int x, int y, void *userData) {
     int ix = L.itemsX;
     for (int i = 0; i < L.n; i++) {
         if (!shell_item_visible(sh, L.ids[i])) continue;
-        if (lx >= ix && lx < ix + SHELL_ITEM_W) {
+        if (lx >= ix && lx < ix + L.itemW) {
             shell_activate_window(sh, L.ids[i]);
             return 1;
         }
-        ix += SHELL_ITEM_W + SHELL_PAD;
+        ix += L.itemW + L.gap;
     }
     /* 点在任务栏空白处也消费，避免穿透到桌面窗口。 */
     return 1;

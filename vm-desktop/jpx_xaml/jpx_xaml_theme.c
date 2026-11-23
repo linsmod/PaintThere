@@ -102,6 +102,13 @@ static void parse_direction(const JpxXamlNode *node, JpxXamlResource *r, int rad
     }
 }
 
+/* 只收单值尺寸属性：Margin/Padding 是多值，需要时再单独解析。 */
+static int metric_prop(const char *prop) {
+    return strcmp(prop, "Height") == 0 || strcmp(prop, "Width") == 0 ||
+           strcmp(prop, "MinWidth") == 0 || strcmp(prop, "MaxWidth") == 0 ||
+           strcmp(prop, "FontSize") == 0;
+}
+
 static int build_resources(const JpxXamlDoc *doc, JpxXamlResourceTable *table,
                            char *err, size_t errCap) {
     for (int i = 0; i < doc->count; i++) {
@@ -135,6 +142,22 @@ static int build_resources(const JpxXamlDoc *doc, JpxXamlResourceTable *table,
             const char *src = JpxXamlNode_Attr(node, "UriSource");
             if (!src) src = JpxXamlNode_Attr(node, "ImageSource");
             if (src && src[0] != '{') snprintf(r->uri, sizeof(r->uri), "%s", src);
+        } else if (strcmp(node->tag, "Style") == 0) {
+            /* Style/模板不执行，但尺寸要由主题决定：把直接子 Setter 里
+               的单值尺寸收成 "<StyleKey>.<Property>" 数值资源。 */
+            for (int c = node->firstChild; c >= 0; c = doc->nodes[c].nextSibling) {
+                const JpxXamlNode *setter = &doc->nodes[c];
+                if (strcmp(setter->tag, "Setter") != 0) continue;
+                const char *prop = JpxXamlNode_Attr(setter, "Property");
+                const char *val = JpxXamlNode_Attr(setter, "Value");
+                if (!prop || !val || val[0] == '{') continue;
+                if (!metric_prop(prop)) continue;
+                char mk[96];
+                snprintf(mk, sizeof(mk), "%s.%s", key, prop);
+                JpxXamlResource *r = add_res(table, mk, JPX_XAML_RES_NUMBER, err, errCap);
+                if (!r) return 0;
+                r->number = atof(val);
+            }
         }
     }
     return 1;
@@ -237,15 +260,8 @@ static void normalize_path(const char *src, char *out, size_t cap) {
     }
 }
 
-void JpxXamlTheme_ResolveImages(JpxXamlResourceTable *table, const char *themeFilePath) {
-    if (!table) return;
-    char dir[512];
-    snprintf(dir, sizeof(dir), "%s", themeFilePath ? themeFilePath : "");
-    char *slash = strrchr(dir, '/');
-    char *bslash = strrchr(dir, '\\');
-    if (bslash > slash) slash = bslash;
-    if (slash) *slash = '\0';
-
+void JpxXamlTheme_ResolveImages(JpxXamlResourceTable *table, const char *baseDir) {
+    if (!table || !baseDir) return;
     for (int i = 0; i < table->count; i++) {
         JpxXamlResource *r = &table->items[i];
         if (r->kind != JPX_XAML_RES_IMAGE || !r->uri[0]) continue;
@@ -253,7 +269,7 @@ void JpxXamlTheme_ResolveImages(JpxXamlResourceTable *table, const char *themeFi
         if (r->uri[0] == '/' || r->uri[0] == '\\' ||
             (r->uri[1] == ':' && r->uri[2] == '/')) continue;
         char joined[512];
-        snprintf(joined, sizeof(joined), "%s/%s", dir, r->uri);
+        snprintf(joined, sizeof(joined), "%s/%s", baseDir, r->uri);
         normalize_path(joined, r->uri, sizeof(r->uri));
     }
 }
@@ -372,15 +388,35 @@ void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
     out->clockTextColor = JpxRes_Color(table, "ClockForeground", out->clockTextColor);
     out->startTextColor = JpxRes_Color(table, "StartLabel", out->startTextColor);
     out->panelHeight = (int)JpxRes_Number(table, "TaskbarHeight", out->panelHeight);
+    /* 任务栏几何：优先取主题 Style 里的尺寸（StartButton.Height/MinWidth 等），
+       主题没写的才落回 Luna 的观感值。shell 只消费这些 token。 */
+    out->panelPad = 3;
+    out->panelStartWidth = (int)JpxRes_Number(table, "StartButton.MinWidth", 99);
+    out->panelButtonHeight = (int)JpxRes_Number(table, "StartButton.Height", 32);
+    out->panelItemWidth = (int)JpxRes_Number(table, "TaskButton.Width", 110);
+    out->panelItemGap = 3;
+    out->panelTrayWidth = (int)JpxRes_Number(table, "Tray.Width", 76);
+    out->panelRadius = 3;
+    out->panelStartIconSize = 22;
+    out->boldChromeText = 1;
+    out->chrome.boldTitle = 1;
     /* 任务栏按钮/托盘的渐变端点直接用主题里的多 stop 资源（首末 stop），
        比代码内手写的 Luna 近似更贴近主题文件。 */
     gradient_ends(table, "TaskButtonBackground", &out->taskButtonFrom, &out->taskButtonTo);
+    gradient_ends(table, "TaskButtonBackgroundHover",
+                  &out->taskButtonHoverFrom, &out->taskButtonHoverTo);
     gradient_ends(table, "TaskButtonBackgroundPressed",
                   &out->taskButtonActiveFrom, &out->taskButtonActiveTo);
     gradient_ends(table, "TrayBackground", &out->trayFrom, &out->trayTo);
+    out->taskBorderTopColor =
+        JpxRes_Color(table, "TaskButtonTopBorder", out->taskBorderTopColor);
+    out->taskBorderBottomColor =
+        JpxRes_Color(table, "TaskButtonBottomBorder", out->taskBorderBottomColor);
     /* 位图皮肤：主题里有开始按钮图就用它，比手写绿色渐变更接近原版。 */
     if (JpxRes_Find(table, "StartButtonImage")) out->startImageId = "StartButtonImage";
     if (JpxRes_Find(table, "StartIconImage")) out->startIconId = "StartIconImage";
+    if (JpxRes_Find(table, "ShowDesktopIconImageSmall"))
+        out->trayIconId = "ShowDesktopIconImageSmall";
 }
 
 const char *JpxXamlTheme_Resolve(const JpxXamlResourceTable *table,

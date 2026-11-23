@@ -1,24 +1,22 @@
 # PAINT-THERE
 一种绘制协议，用于控制远端渲染器如何绘制内容。
 
-
 # WM
-vm-desktop 是基于PAINT-THERE协议实现的一种桌面环境。
-窗口管理器管理CLIENT的渲染资源，协议控制远端渲染器如何绘制。
-支持运行基于JPX的窗口程序。
+vm-desktop 是基于PAINT-THERE协议实现的一种桌面环境。管理窗口的DisplayList和用于远端渲染的资源。
 
 
 # 设计准则
 - 协议不得显式暴露桌面结构与窗口的业务逻辑。
 - 用单向协议提交`绘制`相关的一切事务，渲染器只是执行器。
-- SSE下发，WS回传，各自独立通道。
+- SSE下发，WS回传输入事件，各自独立通道。
 
-# 录屏（todo）
-- 录屏录的是带时间戳的指令序列，不是画面。
-- 存档后可以用ptplayer播放。
+# JPX
+Just Paint Things, 用于开发支持远端渲染的库
+本地Layout，生成DisplayList，提交到任何远端执行。
 
-# JPX（todo）
-Just Paint Things, 用于开发支持PT协议的GUI程序的库
+
+# 三方库
+- Luja 一个能运行java子集的VM。基于Lua，作为脚本引擎。
 
 
 

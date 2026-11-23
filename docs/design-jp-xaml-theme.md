@@ -99,6 +99,10 @@ typedef struct {
 
 ### 4.3 资源热更新
 
+> 本节已被 2026-11-23 的资源包方案取代：SSE 只发 `loadResPack(resPackId)`，资源本体由 client
+> `GET /respack/<id>` 拉取并缓存。现状与验证见 `docs/task-jp-xaml-theme.md` 的「续作」一节。
+> 以下为当时的原始决策，保留作对照。
+
 新增 SSE 事件：
 
 ```text

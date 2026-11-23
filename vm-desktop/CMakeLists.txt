@@ -145,6 +145,7 @@ add_executable(test_jpx_xaml_theme
     jpx_xaml/jpx_xaml_parser.c
     jpx_xaml/jpx_xaml_theme.c
     vm_display.c
+    vm_serialize_json.c
     vm_theme.c
 )
 target_include_directories(test_jpx_xaml_theme PRIVATE

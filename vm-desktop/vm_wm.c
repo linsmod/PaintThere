@@ -820,13 +820,19 @@ static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
     int bodyX = (int)body.x, bodyY = (int)body.y;
     int bodyW = (int)body.w, bodyH = (int)body.h;
 
-    snprintf(idbuf, sizeof(idbuf), "w%d_shadow", win->id);
-    append_rect_cmd(out, idbuf, win->x - 6, win->y - 4,
-                    win->w + 12, win->h + 12, "rgba(0,0,0,0.42)", 10);
+    if (ch->showShadow) {
+        snprintf(idbuf, sizeof(idbuf), "w%d_shadow", win->id);
+        append_rect_cmd(out, idbuf, win->x - 6, win->y - 4,
+                        win->w + 12, win->h + 12, "rgba(0,0,0,0.42)", 10);
+    }
+
+    /* 现代主题是圆角卡片；XP 窗口是直角，只保留标题栏顶部一点圆角。 */
+    const int bodyRadius = ch->showShadow ? 8 : 0;
+    const int titleRadius = ch->showShadow ? 7 : 4;
 
     snprintf(idbuf, sizeof(idbuf), "w%d_body", win->id);
     append_rect_cmd(out, idbuf, bodyX, bodyY, bodyW, bodyH,
-                    win->bodyStyleId ? win->bodyStyleId : ch->windowStyleId, 8);
+                    win->bodyStyleId ? win->bodyStyleId : ch->windowStyleId, bodyRadius);
 
     if (!(win->flags & VM_WIN_UNDECORATED)) {
         const int bw = ch->borderWidth;
@@ -835,11 +841,14 @@ static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
         snprintf(idbuf, sizeof(idbuf), "w%d_title", win->id);
         append_rect_cmd(out, idbuf, win->x + bw, win->y + bw,
                         win->w - 2 * bw, th - bw,
-                        win->focused ? ch->titleFocusColor : ch->titleIdleColor, 7);
+                        win->focused ? ch->titleFocusColor : ch->titleIdleColor, titleRadius);
 
         snprintf(idbuf, sizeof(idbuf), "w%d_ttext", win->id);
+        /* 主题给了标题文字色就统一用它（XP 失焦也是白字）；否则沿用现代深浅两色。 */
         append_title_cmd(out, idbuf, win->x, win->y, win->w, ch, win->title,
-                         win->focused ? "rgba(255,255,255,1)" : "rgba(202,208,224,1)");
+                         ch->titleTextColor ? ch->titleTextColor
+                             : (win->focused ? "rgba(255,255,255,1)"
+                                             : "rgba(202,208,224,1)"));
 
         VmRect closeRect, maxRect, minRect;
         int size = 0;
@@ -851,6 +860,18 @@ static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
                           rect_contains(maxRect, wm->pointerX, wm->pointerY);
             int overClose = wm->pointerValid &&
                             rect_contains(closeRect, wm->pointerX, wm->pointerY);
+            /* XP 的标题按钮是常驻实心色块（关闭红）；现代主题只在 hover 时提示。 */
+            if (!ch->showShadow) {
+                snprintf(idbuf, sizeof(idbuf), "w%d_btn_min_bg", win->id);
+                append_rect_cmd(out, idbuf, (int)minRect.x, (int)minRect.y, size, size,
+                                "rgba(70,132,228,0.90)", 3);
+                snprintf(idbuf, sizeof(idbuf), "w%d_btn_max_bg", win->id);
+                append_rect_cmd(out, idbuf, (int)maxRect.x, (int)maxRect.y, size, size,
+                                "rgba(70,132,228,0.90)", 3);
+                snprintf(idbuf, sizeof(idbuf), "w%d_btn_close_bg", win->id);
+                append_rect_cmd(out, idbuf, (int)closeRect.x, (int)closeRect.y, size, size,
+                                "rgba(226,84,60,0.95)", 3);
+            }
             if (overMin) {
                 snprintf(idbuf, sizeof(idbuf), "w%d_min_hover", win->id);
                 append_rect_cmd(out, idbuf, (int)minRect.x, (int)minRect.y,

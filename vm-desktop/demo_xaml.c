@@ -240,6 +240,15 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    /* 启动即应用主题：打开就是主题外观，不需要先点「切换主题」。
+       资源以资源包下发，client 收 loadResPack(id) 后自己 GET /respack/<id>，
+       刷新页面也会从首事件的同一个 id 恢复。 */
+    if (g_theme.count > 0 && JpxXamlTheme_Apply(g_app, &g_theme)) {
+        snprintf(g_state.status, sizeof(g_state.status), "主题: %s",
+                 themePath ? "Windows XP" : "内置暖色");
+        Jpx_Invalidate(g_app);
+    }
+
     int rc = Jpx_Run(g_app);
     JpxXamlView_Destroy(view);
     Jpx_Destroy(g_app);

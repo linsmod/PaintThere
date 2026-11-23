@@ -53,6 +53,8 @@ struct VmServer {
     void *inputUserData;
     VmResourceProvider resourceProvider;
     void *resourceUserData;
+    VmResPackProvider resPackProvider;
+    void *resPackUserData;
     VmFullFrameProvider fullFrameProvider;
     void *fullFrameUserData;
     VmTickHandler tickHandler;
@@ -540,6 +542,30 @@ static void vm_handle_request(VmServer *s, VmClient *client) {
         return;
     }
 
+    /* 资源包：client 收到 loadResPack(id) 后自己来取。
+       id 只允许 [A-Za-z0-9_-]，防止拼出越界路径或目录穿越。 */
+    if (strcmp(method, "GET") == 0 && strncmp(path, "/respack/", 9) == 0) {
+        const char *id = path + 9;
+        size_t idLen = strlen(id);
+        int valid = idLen > 0 && idLen < 64;
+        for (size_t i = 0; valid && i < idLen; i++) {
+            char ch = id[i];
+            if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                  (ch >= '0' && ch <= '9') || ch == '-' || ch == '_')) valid = 0;
+        }
+        const char *json = (valid && s->resPackProvider)
+                               ? s->resPackProvider(id, s->resPackUserData) : NULL;
+        if (json) {
+            vm_send_response(client->fd, 200, "OK", "application/json; charset=utf-8",
+                             json, strlen(json));
+        } else {
+            vm_send_response(client->fd, 404, "Not Found", "text/plain", "no respack", 10);
+        }
+        VM_CLOSE(client->fd);
+        client->fd = VM_INVALID;
+        return;
+    }
+
     if (strcmp(method, "GET") == 0) {
         vm_serve_static(s, client->fd, path);
         VM_CLOSE(client->fd);
@@ -652,6 +678,12 @@ void VmServer_SetResourceProvider(VmServer *s, VmResourceProvider provider, void
     if (!s) return;
     s->resourceProvider = provider;
     s->resourceUserData = userData;
+}
+
+void VmServer_SetResPackProvider(VmServer *s, VmResPackProvider provider, void *userData) {
+    if (!s) return;
+    s->resPackProvider = provider;
+    s->resPackUserData = userData;
 }
 
 void VmServer_SetFullFrameProvider(VmServer *s, VmFullFrameProvider provider, void *userData) {

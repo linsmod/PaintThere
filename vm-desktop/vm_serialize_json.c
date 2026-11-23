@@ -229,6 +229,11 @@ static void emit_resource(StrBuf *b, const VmResourceCommand *r) {
             }
             break;
         }
+        case VM_CMD_LOAD_RES_PACK: {
+            puts_(b, "loadResPack\",\"args\":[");
+            json_string(b, r->args.loadResPack.resPackId);
+            break;
+        }
         case VM_CMD_NONE:
         default:
             puts_(b, "none\",\"args\":[");

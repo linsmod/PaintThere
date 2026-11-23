@@ -97,6 +97,44 @@ function defineStyle(styleId, config) {
     if (config && typeof config === 'object') styleCache.set(styleId, config);
 }
 
+/* 资源包：guest 只下发 id（loadResPack），资源本体由 client 自己 GET 拉取并按 id 缓存。
+   刷新页面后重新拉同一个 id 即可恢复主题；同一 id 只解码一次。 */
+const resPackCache = new Map();
+let resPackApplied = null;
+function setResPackApplied(cb) { resPackApplied = cb; }
+
+function applyResPackCommands(list) {
+    if (!Array.isArray(list)) return;
+    for (const c of list) {
+        const fn = commandHandlers[c.cmd];
+        if (fn) {
+            try { fn(...c.args); } catch (e) { console.error('respack cmd failed:', c.cmd, e); }
+        }
+    }
+    replayBackgroundPrograms();
+    /* 已画出的 tile 用的是旧颜色：通知渲染层按新缓存重放。 */
+    if (resPackApplied) resPackApplied();
+}
+
+function loadResPack(resPackId) {
+    if (!resPackId) return;
+    const cached = resPackCache.get(resPackId);
+    if (cached) { applyResPackCommands(cached); return; }
+    if (typeof fetch !== 'function') return;   // 无网络原语的宿主跳过
+    const base = (typeof location !== 'undefined' && location.protocol !== 'file:')
+        ? location.origin : '';
+    fetch(base + '/respack/' + encodeURIComponent(resPackId), { cache: 'no-store' })
+        .then((r) => {
+            if (!r.ok) throw new Error('respack ' + r.status);
+            return r.json();
+        })
+        .then((list) => {
+            resPackCache.set(resPackId, list);
+            applyResPackCommands(list);
+        })
+        .catch((e) => console.error('loadResPack failed:', resPackId, e));
+}
+
 function defineDrawProgram(programId, commands, layerId) {
     programCache.set(programId, {
         commands: Array.isArray(commands) ? commands : [],
@@ -742,6 +780,7 @@ const commandHandlers = {
     setLayerCanvas,
     definePattern,
     defineStyle,
+    loadResPack,
     defineDrawProgram,
     startDrawProgram,
     pauseDrawProgram,
@@ -778,6 +817,8 @@ export {
     setLayerCanvas,
     definePattern,
     defineStyle,
+    loadResPack,
+    setResPackApplied,
     defineDrawProgram,
     startDrawProgram,
     pauseDrawProgram,

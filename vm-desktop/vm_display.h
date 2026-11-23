@@ -38,7 +38,10 @@ typedef enum {
     VM_CMD_DEFINE_DRAW_PROGRAM,
     VM_CMD_START_PROGRAM,
     VM_CMD_PAUSE_PROGRAM,
-    VM_CMD_RESUME_PROGRAM
+    VM_CMD_RESUME_PROGRAM,
+    /* 只下发资源包 id：client 自己 GET /respack/<id> 拉取完整资源命令数组。
+       主题切换与刷新重连都只传这一条命令，SSE 不再携带上百条资源。 */
+    VM_CMD_LOAD_RES_PACK
 } VmCmdType;
 
 typedef struct {
@@ -121,6 +124,11 @@ typedef struct {
     char mode[32];       /* "once" / "loop" */
 } VmProgramControlArgs;
 
+/* 资源包引用：id 只允许 [A-Za-z0-9_-]，由 client 拼成 /respack/<id> 拉取。 */
+typedef struct {
+    char resPackId[VM_DISPLAY_MAX_ID];
+} VmLoadResPackArgs;
+
 typedef struct {
     VmCmdType type;
     char id[VM_DISPLAY_MAX_ID];
@@ -148,6 +156,7 @@ typedef struct {
         VmDefineStyleArgs defineStyle;
         VmDefineProgramArgs defineProgram;
         VmProgramControlArgs programControl;
+        VmLoadResPackArgs loadResPack;
     } args;
 } VmResourceCommand;
 

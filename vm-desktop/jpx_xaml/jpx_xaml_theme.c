@@ -196,26 +196,72 @@ int JpxXamlTheme_AppendPatterns(const JpxXamlResourceTable *table, VmDisplayList
     return added;
 }
 
+/* RetroBar 的主题只描述任务栏（155 个 key 全是 Taskbar/Tray/TaskButton/StartButton/Clock），
+   没有窗口边框、标题栏与控件资源。窗口侧按 Luna 惯例给固定值，任务栏侧才查表。
+   用静态字面量：VmTheme 只持有指针，调用方（资源表）生命期之外的值必须常驻。 */
 void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
     if (!out) return;
     *out = *VmTheme_Default();
+
+    /* 窗口与控件：Luna 白底蓝框；字号按 9pt 中文界面（≈12px）。 */
+    out->bgColor = "rgba(255,255,255,1)";
+    out->fgColor = "rgba(0,0,0,1)";
+    out->borderColor = "rgba(0,84,227,1)";
+    out->inputBgColor = "rgba(255,255,255,1)";
+    out->disabledColor = "rgba(128,128,128,1)";
+    out->selectedColor = "rgba(49,106,197,0.35)";
+    out->radius = 3;
+    out->padding = 6;
+    out->gap = 6;
+    out->fontSize = 12;
+    /* 桌面：RetroBar 不含壁纸，用 XP 默认的蓝天渐变近似。 */
+    out->desktopFrom = "rgba(30,111,217,1)";
+    out->desktopTo = "rgba(111,168,232,1)";
+
+    /* 标题栏：Luna 竖直渐变（上方亮蓝、下方深蓝），失焦转灰蓝。 */
+    out->titleActiveFrom = "rgba(0,88,238,1)";
+    out->titleActiveTo = "rgba(61,149,240,1)";
+    out->titleIdleFrom = "rgba(123,162,231,1)";
+    out->titleIdleTo = "rgba(107,143,214,1)";
+
+    /* 开始按钮：Luna 绿，文字白色加粗观感由字号与颜色近似。 */
+    out->startFrom = "rgba(63,154,63,1)";
+    out->startTo = "rgba(45,122,45,1)";
+    out->startTextColor = "rgba(255,255,255,1)";
+
+    /* 任务按钮：未激活浅蓝、激活深蓝（按下态）。 */
+    out->taskButtonFrom = "rgba(59,142,232,1)";
+    out->taskButtonTo = "rgba(28,95,192,1)";
+    out->taskButtonActiveFrom = "rgba(28,95,192,1)";
+    out->taskButtonActiveTo = "rgba(15,74,158,1)";
+    out->taskButtonTextColor = "rgba(255,255,255,1)";
+
+    /* 托盘区与时钟。 */
+    out->trayFrom = "rgba(29,126,232,1)";
+    out->trayTo = "rgba(11,100,207,1)";
+    out->clockTextColor = "rgba(255,255,255,1)";
+
+    /* WM 装饰：paint 填 style id 才会命中前端的 styleCache 走渐变；
+       边框必须是纯色（drawBorder 不查 style）。 */
+    out->chrome.titleHeight = 30;
+    out->chrome.borderWidth = 3;
+    out->chrome.titleFontSize = 12;
+    out->chrome.titleFocusColor = "s_title_active";
+    out->chrome.titleIdleColor = "s_title_idle";
+    out->chrome.titleTextColor = "rgba(255,255,255,1)";
+    out->chrome.borderFocusColor = out->borderColor;
+    out->chrome.borderIdleColor = out->borderColor;
+    out->chrome.showShadow = 0;
+
     if (!table) return;
-    const char *accent = JpxRes_Color(table, "AccentColor", out->accentColor);
-    const char *panel = JpxRes_Color(table, "TaskbarBackground", out->panelColor);
-    const char *fg = JpxRes_Color(table, "TaskTextColor", out->fgColor);
-    const char *bg = JpxRes_Color(table, "WindowBackground", out->bgColor);
-    const char *title = JpxRes_Color(table, "TaskButtonBackground", accent);
-    const char *idle = JpxRes_Color(table, "TaskbarBackground", out->chrome.titleIdleColor);
-    out->accentColor = accent;
-    out->accentTextColor = JpxRes_Color(table, "accentTextColor", out->accentTextColor);
-    out->panelColor = panel;
-    out->fgColor = fg;
-    out->bgColor = bg;
-    out->desktopFrom = JpxRes_Color(table, "DesktopFrom", out->desktopFrom);
-    out->desktopTo = JpxRes_Color(table, "DesktopTo", out->desktopTo);
-    out->chrome.titleFocusColor = title;
-    out->chrome.titleIdleColor = idle;
-    out->chrome.borderFocusColor = accent;
+    /* 任务栏：用主题里真实存在的 key 覆盖（此前查的 6 个 key 在 XP 里并不存在）。 */
+    out->panelColor = JpxRes_Color(table, "TaskbarBackground", out->panelColor);
+    out->accentColor = JpxRes_Color(table, "TaskButtonBackground", out->accentColor);
+    out->accentTextColor = JpxRes_Color(table, "ButtonForeground", out->accentTextColor);
+    out->taskButtonTextColor =
+        JpxRes_Color(table, "ButtonForeground", out->taskButtonTextColor);
+    out->clockTextColor = JpxRes_Color(table, "ClockForeground", out->clockTextColor);
+    out->startTextColor = JpxRes_Color(table, "StartLabel", out->startTextColor);
 }
 
 const char *JpxXamlTheme_Resolve(const JpxXamlResourceTable *table,

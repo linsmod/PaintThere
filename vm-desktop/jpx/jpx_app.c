@@ -69,6 +69,39 @@ static int json_int_flag(const char *body, size_t len, const char *key) {
     return 0;
 }
 
+/* 首连接一次性事件的内容：只有一条 loadResPack，资源本体走 HTTP。 */
+static void rebuild_resources_event(JpxApp *app) {
+    static VmDisplayList ev;
+    VmDisplay_Init(&ev);
+    VmResourceCommand *c = VmDisplay_AppendResource(&ev, VM_CMD_LOAD_RES_PACK, "respack");
+    if (c) {
+        VmDisplay_CopyStr(c->args.loadResPack.resPackId,
+                          sizeof(c->args.loadResPack.resPackId), app->resPackId);
+    }
+    free(app->resJson);
+    app->resJson = VmSerialize_CommandArrayJson(&ev);
+}
+
+static void set_res_pack(JpxApp *app, const char *id, const char *json, int broadcast) {
+    if (!app || !id || !*id || !json) return;
+    char *copy = (char *)malloc(strlen(json) + 1);
+    if (!copy) return;
+    strcpy(copy, json);
+    free(app->resPackJson);
+    app->resPackJson = copy;
+    snprintf(app->resPackId, sizeof(app->resPackId), "%s", id);
+    rebuild_resources_event(app);
+    /* 广播同样是那条 loadResPack：已连接的 client 自己重新拉取，SSE 不传资源本体。 */
+    if (broadcast && app->server && app->resJson)
+        VmServer_BroadcastResources(app->server, app->resJson);
+}
+
+int Jpx_ResPack_Register(JpxApp *app, const char *resPackId, const char *json) {
+    if (!app || !resPackId || !*resPackId || !json) return 0;
+    set_res_pack(app, resPackId, json, 1);
+    return app->resPackJson && strcmp(app->resPackId, resPackId) == 0;
+}
+
 static void build_resources(JpxApp *app) {
     static VmDisplayList res;
     VmDisplay_Init(&res);
@@ -107,13 +140,24 @@ static void build_resources(JpxApp *app) {
                           VmWm_CursorDataUrl());
     }
 
-    free(app->resJson);
-    app->resJson = VmSerialize_CommandArrayJson(&res);
+    char *json = VmSerialize_CommandArrayJson(&res);
+    if (json) {
+        set_res_pack(app, "default", json, 0);
+        free(json);
+    }
 }
 
 static const char *resource_provider(void *userData) {
     JpxApp *app = (JpxApp *)userData;
     return app->resJson ? app->resJson : "[]";
+}
+
+/* client 带 id 来取资源包本体。只提供当前这一个：旧主题包留着没有消费者。 */
+static const char *respack_provider(const char *resPackId, void *userData) {
+    JpxApp *app = (JpxApp *)userData;
+    if (!app || !app->resPackJson || !resPackId) return NULL;
+    if (strcmp(resPackId, app->resPackId) != 0) return NULL;
+    return app->resPackJson;
 }
 
 static const char *resolve_font(uint16_t fontId) {
@@ -255,6 +299,7 @@ JpxApp *Jpx_Create(const JpxOptions *opt) {
         return NULL;
     }
     VmServer_SetResourceProvider(app->server, resource_provider, app);
+    VmServer_SetResPackProvider(app->server, respack_provider, app);
     VmServer_SetFrameProvider(app->server, frame_provider, app);
     VmServer_SetFullFrameProvider(app->server, full_frame_provider, app);
     VmServer_SetInputHandler(app->server, input_handler, app);
@@ -275,6 +320,7 @@ void Jpx_Destroy(JpxApp *app) {
     if (app->wm) VmWm_Free(app->wm);
     for (int i = 0; i < VM_WM_MAX_WINDOWS; i++) free(app->windows[i].arenaMem);
     free(app->resJson);
+    free(app->resPackJson);
     free(app->tilesJson);
     free(app->fullJson);
     free(app);
@@ -301,11 +347,6 @@ void Jpx_SetTheme(JpxApp *app, const JpxTheme *theme) {
     Jpx__Invalidate(app);
 }
 
-void Jpx_BroadcastResources(JpxApp *app, const char *json) {
-    if (!app || !app->server) return;
-    VmServer_BroadcastResources(app->server, json);
-}
-
 void Jpx_SetVmTheme(JpxApp *app, const VmTheme *theme) {
     if (!app) return;
     if (!theme) {
@@ -326,6 +367,11 @@ void Jpx_SetVmTheme(JpxApp *app, const VmTheme *theme) {
     t.inputBgColor = theme->inputBgColor;
     t.disabledColor = theme->disabledColor;
     t.selectedColor = theme->selectedColor;
+    /* startFrom 是 XP 皮肤的标记：按钮换成 Luna 米灰实体块，文字转黑。 */
+    if (theme->startFrom) {
+        t.buttonBgColor = "rgba(236,233,216,1)";
+        t.buttonTextColor = "rgba(0,0,0,1)";
+    }
     t.fontId = theme->fontId;
     t.fontSize = theme->fontSize;
     t.radius = theme->radius;

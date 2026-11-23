@@ -1,5 +1,6 @@
 #include "vm_theme.h"
 
+#include <stdio.h>
 #include <string.h>
 
 /* 现代深色主题：蓝紫强调 + 冷灰层次。切换主题只需替换这一份表。 */
@@ -14,6 +15,7 @@ static const VmTheme kDefaultTheme = {
         .borderIdleColor = "rgba(58,64,84,1)",
         .titleFontId = 0,
         .titleFontSize = 14,
+        .showShadow = 1,
     },
     .desktopFrom = "rgba(13,15,24,1)",
     .desktopTo = "rgba(26,30,46,1)",
@@ -61,6 +63,24 @@ static VmResourceCommand *append_style(VmDisplayList *out, const char *defId, co
     return c;
 }
 
+/* 一组竖直渐变：pattern p_<name> + style s_<name>（style 只做画布引用的别名）。
+   前端 drawRect 的 paint 命中 styleCache 时才会走渐变，因此调用方填 style id。 */
+static void append_gradient_pair(VmDisplayList *out, const char *name,
+                                 const char *from, const char *to) {
+    if (!from || !to) return;
+    char pid[64], sid[64], did[80];
+    snprintf(pid, sizeof(pid), "p_%s", name);
+    snprintf(sid, sizeof(sid), "s_%s", name);
+    snprintf(did, sizeof(did), "def_%s", pid);
+    VmResourceCommand *p = append_pattern(out, did, pid, VM_PATTERN_GRADIENT);
+    if (!p) return;
+    VmDisplay_CopyStr(p->args.definePattern.from, sizeof(p->args.definePattern.from), from);
+    VmDisplay_CopyStr(p->args.definePattern.to, sizeof(p->args.definePattern.to), to);
+    VmDisplay_CopyStr(p->args.definePattern.direction,
+                      sizeof(p->args.definePattern.direction), "0,0,0,1");
+    append_style(out, sid, sid, pid);
+}
+
 void VmTheme_AppendResources(VmDisplayList *out, const VmTheme *theme) {
     if (!out) return;
     const VmTheme *t = theme ? theme : &kDefaultTheme;
@@ -90,4 +110,12 @@ void VmTheme_AppendResources(VmDisplayList *out, const VmTheme *theme) {
     append_style(out, "def_s_desktop", "s_desktop", "p_desktop");
     append_style(out, "def_s_window", t->chrome.windowStyleId, "p_window");
     append_style(out, "def_s_panel", t->panelStyleId, "p_panel");
+
+    /* XP 皮肤：成对颜色非空才生成，默认深色主题不产出这些资源。 */
+    append_gradient_pair(out, "title_active", t->titleActiveFrom, t->titleActiveTo);
+    append_gradient_pair(out, "title_idle", t->titleIdleFrom, t->titleIdleTo);
+    append_gradient_pair(out, "start", t->startFrom, t->startTo);
+    append_gradient_pair(out, "task", t->taskButtonFrom, t->taskButtonTo);
+    append_gradient_pair(out, "task_active", t->taskButtonActiveFrom, t->taskButtonActiveTo);
+    append_gradient_pair(out, "tray", t->trayFrom, t->trayTo);
 }

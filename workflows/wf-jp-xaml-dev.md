@@ -65,9 +65,21 @@ Stop-Process -Id $p.Id
 - **测试 TU 隔离**：`jpx_xaml_theme.c`（纯解析）与 `jpx_xaml_theme_apply.c`（需 JPX/server 依赖）分开，纯测试只链接前者，避免为了一个 Apply 函数拖入整条 JPX 依赖链。
 - **主题色生命周期**：`VmTheme`/`JpxTheme` 的颜色是 `const char *`，DeriveTheme 只搬指针、不拷贝。资源表必须比 JpxApp 活得久（demo 用 static）。
 - **shell 不上提 Jpx__Color**：vm 层不能依赖 Clay，shell 直接本地解析 rgba 字符串（`theme_color()`）。
-- **热更新验证**：点主题按钮后抓 SSE 流，确认 `event: resources-update` 且 descriptor 含新颜色；只断言画面文本不够，要直接看事件 payload。
-- **DeriveTheme 要映射完整**：v1 只映射 8 个 key（accent/panel/fg/bg/title/desktop），其余 token 保持默认；新增主题 key 时记得补映射，否则广播里会出现「新颜色 + 旧颜色」混合。
+- **资源包协议（现行）**：资源本体不进 SSE。服务端只发 `loadResPack(id)`，client 自己 `GET /respack/<id>` 并按 id 缓存。
+  验证顺序：`curl /respack/<id>` 看命令数组 → 抓 SSE 首事件确认 `resources` 里只有一条 loadResPack →
+  抓帧看 `w1_title` 的 paint 是 style id（`s_title_active`）而不是 rgba。
+- **热更新验证**：点主题按钮后抓 SSE 流，确认 `event: resources-update` 里只有 `loadResPack("theme-N")`；
+  新 id 递增说明注册生效。只断言画面文本不够，要直接看事件 payload。
+- **DeriveTheme 映射要对着真实主题**：RetroBar `Windows XP Blue.xaml` 只有任务栏资源（155 key 全是
+  Taskbar/Tray/TaskButton/StartButton/Clock）；`AccentColor`/`WindowBackground`/`TaskTextColor`/`DesktopFrom`
+  这些「看起来合理」的 key 在里面**并不存在**，`Select-String 'x:Key="AccentColor"'` 计数为 0 即可证实。
+  新增映射前先确认 key 存在，否则整份 token 静默 fallback 回默认暗色。
+- **渐变的两个通道**：`drawRect`/`drawBorder` 的 paint 命中 `styleCache` 才走渐变，所以 WM 的 chrome 颜色字段
+  要填 `s_*` style id；Clay 布局的 shell 只支持单色 `backgroundColor`，渐变填不进去。
+- **主题要能在刷新后恢复**：旧实现把资源写在首连接的 `resources` 事件里，主题切换后新连接拿不到；
+  现行用 respack id + HTTP 拉取，刷新即恢复。改动资源路径后必须刷新页面复验一次。
 
 ## 退出条件
 
-五个测试套件（`test_jpx_xaml` / `test_frame` / `test_text_edit` / `test_sys` / `test_fs`）全通过、`demo_xaml` 端到端验证四类交互（输入/勾选/列表/按钮）、文档与索引更新后，停止本任务启动的 demo 进程。
+六个测试套件（`test_jpx_xaml` / `test_jpx_xaml_theme` / `test_frame` / `test_text_edit` / `test_sys` / `test_fs`，
+全部从仓库根运行）全通过、`demo_xaml` 端到端验证四类交互（输入/勾选/列表/按钮）与刷新后主题恢复、文档与索引更新后，停止本任务启动的 demo 进程。

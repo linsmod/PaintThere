@@ -2,10 +2,14 @@
 #include "jpx_xaml_internal.h"
 #include "vm_serialize_json.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* 一步应用主题：需要 JPX 完整依赖，单独成 TU，便于纯解析测试独立链接。 */
+
+/* 资源包 id 只要求进程内唯一且 URL 安全；每次应用递增，client 缓存自然不会串包。 */
+static int s_themeSerial;
 
 int JpxXamlTheme_Apply(JpxApp *app, const JpxXamlResourceTable *table) {
     if (!app || !table) return 0;
@@ -39,9 +43,12 @@ int JpxXamlTheme_Apply(JpxApp *app, const JpxXamlResourceTable *table) {
     }
 
     char *json = VmSerialize_CommandArrayJson(&resList);
+    int ok = 0;
     if (json) {
-        Jpx_BroadcastResources(app, json);
+        char resPackId[32];
+        snprintf(resPackId, sizeof(resPackId), "theme-%d", ++s_themeSerial);
+        ok = Jpx_ResPack_Register(app, resPackId, json);
         free(json);
     }
-    return 1;
+    return ok;
 }

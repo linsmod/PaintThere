@@ -166,18 +166,23 @@ static int pressed_this_frame(JpxApp *app, int win, int hovered) {
 int Jpx_Button(int win, const char *id, const char *text) {
     JpxApp *app = Jpx__App();
     if (!app) return 0;
-    Clay_Color base = accent(app);
-    Clay_Color hover = mix(base, (Clay_Color){255, 255, 255, 255}, 0.2f);
+    /* buttonBgColor 非空 = 实体按钮皮肤（XP）：底色与文字都走实体色，
+       提亮/压暗幅度也收窄，保持「平面灰块 + 深边」的观感。 */
+    const int solid = app->theme.buttonBgColor != NULL;
+    Clay_Color base = solid ? Jpx__Color(app->theme.buttonBgColor, accent(app)) : accent(app);
+    Clay_Color hover = mix(base, (Clay_Color){255, 255, 255, 255}, solid ? 0.10f : 0.2f);
     if (app->theme.hoverColor) hover = Jpx__Color(app->theme.hoverColor, hover);
-    Clay_Color pressedColor = mix(base, (Clay_Color){0, 0, 0, 255}, 0.28f);
+    Clay_Color pressedColor = mix(base, (Clay_Color){0, 0, 0, 255}, solid ? 0.12f : 0.28f);
     int down = app->wm && app->wm->pointerDown;
     int hovered = 0;
-    Clay_TextElementConfig cfg = text_config(
-        app, Jpx__Color(app->theme.accentTextColor, (Clay_Color){255, 255, 255, 255}), 1, 0);
+    Clay_Color textColor = solid
+        ? Jpx__Color(app->theme.buttonTextColor, (Clay_Color){0, 0, 0, 255})
+        : Jpx__Color(app->theme.accentTextColor, (Clay_Color){255, 255, 255, 255});
+    Clay_TextElementConfig cfg = text_config(app, textColor, 1, 0);
     CLAY(Jpx__Id(win, id), {
         .layout = {
             .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0)},
-            .padding = {16, 16, 7, 7},
+            .padding = solid ? (Clay_Padding){10, 10, 4, 4} : (Clay_Padding){16, 16, 7, 7},
             .childAlignment = {CLAY_ALIGN_X_CENTER, CLAY_ALIGN_Y_CENTER},
         },
         /* Clay_Hovered() 必须在元素声明内部求值：在 CLAY(...) 之前调用拿到的是

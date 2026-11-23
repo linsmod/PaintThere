@@ -125,12 +125,21 @@ void VmShell_SetStartHandler(VmShell *shell, VmShellStartHandler handler, void *
 
 static Clay_RenderCommandArray shell_layout(void *userData) {
     VmShell *sh = (VmShell *)userData;
+    const VmTheme *t = sh->theme;
+    /* 任务栏由 Clay 布局，填充只支持单色：XP 皮肤的渐变由窗口体的 drawRect 负责，
+       这里取渐变里的「代表色」保持色相一致。 */
+    const char *startPaint = t->startFrom ? t->startFrom : t->accentColor;
+    const char *startText = t->startTextColor ? t->startTextColor : t->accentTextColor;
+    const char *taskText = t->taskButtonTextColor ? t->taskButtonTextColor : t->accentTextColor;
+    const char *clockText = t->clockTextColor ? t->clockTextColor : t->fgColor;
+    const int fontSize = t->fontSize > 0 ? t->fontSize : 13;
+
     Clay_BeginLayout();
     CLAY(CLAY_ID("taskbar"), {
         .layout = {
             .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0)},
-            .padding = {6, 6, 4, 4},
-            .childGap = 6,
+            .padding = {3, 0, 2, 2},
+            .childGap = 3,
             .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
         },
         .backgroundColor = (Clay_Color){0, 0, 0, 0},
@@ -138,20 +147,20 @@ static Clay_RenderCommandArray shell_layout(void *userData) {
         /* 开始按钮：任务栏只发回调，菜单由宿主当作普通窗口管理。 */
         CLAY(CLAY_ID("tb_start"), {
             .layout = {
-                .sizing = {CLAY_SIZING_FIXED(72), CLAY_SIZING_FIXED((float)(sh->height - 8))},
-                .padding = {10, 6, 0, 0},
+                .sizing = {CLAY_SIZING_FIXED(78), CLAY_SIZING_FIXED((float)(sh->height - 4))},
+                .padding = {12, 8, 0, 0},
                 .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
             },
-            .backgroundColor = theme_color(sh->theme->accentColor,
-                                           Clay_Hovered() ? 0.90f : 0.63f,
+            .backgroundColor = theme_color(startPaint,
+                                           Clay_Hovered() ? 1.0f : 0.92f,
                                            (Clay_Color){124, 122, 255, 200}),
-            .cornerRadius = CLAY_CORNER_RADIUS(6),
+            .cornerRadius = CLAY_CORNER_RADIUS(t->startFrom ? 4 : 6),
         }) {
             Clay_OnHover(shell_item_press, (void *)(intptr_t)-1);
             Clay_String label = {.length = 6, .chars = "开始"};
             CLAY_TEXT(label, CLAY_TEXT_CONFIG({
-                .fontId = 0, .fontSize = 13,
-                .textColor = theme_color(sh->theme->accentTextColor, 1.0f,
+                .fontId = 0, .fontSize = fontSize,
+                .textColor = theme_color(startText, 1.0f,
                                          (Clay_Color){255, 255, 255, 255}),
             }));
         }
@@ -167,31 +176,35 @@ static Clay_RenderCommandArray shell_layout(void *userData) {
             Clay_Color bg;
             Clay_Color fg;
             if (win->focused) {
-                bg = theme_color(sh->theme->accentColor, 0.82f,
+                /* XP 聚焦条目是更深的蓝；现代主题仍用 accent 高亮。 */
+                const char *paint = t->taskButtonActiveFrom ? t->taskButtonActiveFrom
+                                                            : t->accentColor;
+                bg = theme_color(paint, t->taskButtonActiveFrom ? 1.0f : 0.82f,
                                  (Clay_Color){124, 122, 255, 210});
-                fg = theme_color(sh->theme->accentTextColor, 1.0f,
-                                 (Clay_Color){255, 255, 255, 255});
+                fg = theme_color(taskText, 1.0f, (Clay_Color){255, 255, 255, 255});
             } else if (win->minimized) {
-                bg = theme_color(sh->theme->fgColor, 0.05f,
+                const char *paint = t->taskButtonFrom ? t->taskButtonFrom : t->fgColor;
+                bg = theme_color(paint, t->taskButtonFrom ? 1.0f : 0.05f,
                                  (Clay_Color){255, 255, 255, 12});
-                fg = theme_color(sh->theme->fgColor, 0.43f,
+                fg = theme_color(taskText, t->taskButtonFrom ? 0.65f : 0.43f,
                                  (Clay_Color){255, 255, 255, 110});
             } else {
-                bg = theme_color(sh->theme->fgColor, 0.12f,
+                const char *paint = t->taskButtonFrom ? t->taskButtonFrom : t->fgColor;
+                bg = theme_color(paint, t->taskButtonFrom ? 1.0f : 0.12f,
                                  (Clay_Color){255, 255, 255, 30});
-                fg = theme_color(sh->theme->fgColor, 0.86f,
+                fg = theme_color(taskText, t->taskButtonFrom ? 1.0f : 0.86f,
                                  (Clay_Color){226, 231, 240, 220});
             }
             CLAY(CLAY_IDI("tb_item", (uint32_t)win->id), {
                 .layout = {
-                    .sizing = {CLAY_SIZING_FIXED(110), CLAY_SIZING_FIXED((float)(sh->height - 8))},
+                    .sizing = {CLAY_SIZING_FIXED(110), CLAY_SIZING_FIXED((float)(sh->height - 4))},
                     .padding = {8, 6, 0, 0},
                     .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
                 },
                 /* 单行 + 水平裁剪：标题比条目长时截断，不能换行撑出任务栏。 */
                 .clip = {.horizontal = true, .childOffset = {0, 0}},
                 .backgroundColor = bg,
-                .cornerRadius = CLAY_CORNER_RADIUS(5),
+                .cornerRadius = CLAY_CORNER_RADIUS(3),
             }) {
                 Clay_OnHover(shell_item_press, (void *)(intptr_t)win->id);
                 Clay_String label = {
@@ -199,29 +212,36 @@ static Clay_RenderCommandArray shell_layout(void *userData) {
                     .chars = win->title ? win->title : "",
                 };
                 CLAY_TEXT(label, CLAY_TEXT_CONFIG({
-                    .fontId = 0, .fontSize = 12, .textColor = fg,
+                    .fontId = 0, .fontSize = fontSize, .textColor = fg,
                     .wrapMode = CLAY_TEXT_WRAP_NONE,
                 }));
             }
         }
 
-        /* 右侧时钟：宿主每秒调 VmShell_Refresh 驱动重绘。
+        /* 弹簧把托盘顶到最右：窗口少时任务按钮不跟着跑到右边缘。 */
+        CLAY(CLAY_ID("tb_fill"), {
+            .layout = {.sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1)}},
+        }) {}
+
+        /* 右侧托盘：XP 有独立的浅蓝区，时钟落在其中。
            Clay 保留字符串指针到 EndLayout 之后，必须是 static。 */
         static char clock[16] = {0};
         time_t now = time(NULL);
         struct tm *tmVal = localtime(&now);
         if (tmVal) strftime(clock, sizeof(clock), "%H:%M", tmVal);
-        CLAY(CLAY_ID("tb_clock"), {
+        CLAY(CLAY_ID("tb_tray"), {
             .layout = {
-                .sizing = {CLAY_SIZING_FIXED(56), CLAY_SIZING_FIXED((float)(sh->height - 8))},
-                .padding = {8, 6, 0, 0},
+                .sizing = {CLAY_SIZING_FIXED(76), CLAY_SIZING_GROW(0)},
                 .childAlignment = {.x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER},
             },
+            .backgroundColor = t->trayFrom
+                ? theme_color(t->trayFrom, 1.0f, (Clay_Color){0, 0, 0, 0})
+                : (Clay_Color){0, 0, 0, 0},
         }) {
             Clay_String label = {.length = (int32_t)strlen(clock), .chars = clock};
             CLAY_TEXT(label, CLAY_TEXT_CONFIG({
-                .fontId = 0, .fontSize = 13,
-                .textColor = theme_color(sh->theme->fgColor, 0.92f,
+                .fontId = 0, .fontSize = fontSize,
+                .textColor = theme_color(clockText, 0.95f,
                                          (Clay_Color){226, 231, 240, 235}),
             }));
         }

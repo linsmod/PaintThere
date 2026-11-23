@@ -105,7 +105,12 @@ struct JpxApp {
     int dirty;
     int running;
 
+    /* 资源包：client 只收 loadResPack(id)，自己来取 /respack/<id>。
+       resJson 是首连接一次性 events 的内容（现在只有一条 loadResPack）。 */
     char *resJson;
+    char resPackId[64];
+    char *resPackJson;
+    int resPackSerial;
     char *tilesJson;
     char *fullJson;
 

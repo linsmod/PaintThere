@@ -2,7 +2,7 @@
 // 逻辑只有一份；两端差异仅通过标准 location / globalThis 配置吸收。
 import {
   initCanvas, commandHandlers, setLayerCanvas, replayBackgroundPrograms,
-  setDrawTarget, setTextNeedsReplay, setTextScale
+  setDrawTarget, setTextNeedsReplay, setTextScale, setResPackApplied
 } from './app.js';
 import { loadFont } from './font_wasm.js';
 
@@ -42,8 +42,9 @@ async function boot() {
     document.body.style.height = '100%';
     document.body.style.margin = '0px';
     document.body.style.overflow = 'hidden';
+    /* 画布外的留边跟随桌面配色：深色主题下不像白边，XP 主题下像桌面延伸。 */
     document.body.style.background =
-      'radial-gradient(circle at 50% 30%, #1c2032 0%, #0d0f18 70%)';
+      'linear-gradient(180deg, #1e6fd9 0%, #6fa8e8 100%)';
     document.body.style.display = 'flex';
     document.body.style.alignItems = 'center';
     document.body.style.justifyContent = 'center';
@@ -165,6 +166,8 @@ async function boot() {
     });
   };
   replaySink = scheduleReplay;
+  /* 资源包拉取完成（异步）后按新 pattern/style 缓存重放所有 tile。 */
+  setResPackApplied(scheduleReplay);
 
   /* 显示缩放（CSS）与物理分辨率（DPR）分开算：
      CSS 尺寸决定占多大地方，renderScale 决定画多少像素。
@@ -198,8 +201,9 @@ async function boot() {
     stage.style.position = 'relative';
     stage.style.flex = '0 0 auto';
     stage.style.overflow = 'hidden';
-    stage.style.borderRadius = '10px';
-    stage.style.boxShadow = '0 24px 70px rgba(0,0,0,0.55), 0 0 0 1px rgba(124,122,255,0.18)';
+    /* 桌面是屏幕本身：不做卡片圆角与投影，避免画布像浮在页面上的演示框。 */
+    stage.style.borderRadius = '0px';
+    stage.style.boxShadow = 'none';
     for (const layer of [bg, cv]) {
       layer.style.width = cssW + 'px';
       layer.style.height = cssH + 'px';

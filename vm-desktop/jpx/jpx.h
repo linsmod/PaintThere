@@ -29,6 +29,9 @@ typedef struct {
     const char *bgColor, *fgColor, *borderColor, *accentColor, *accentTextColor;
     const char *inputBgColor, *disabledColor, *selectedColor;
     const char *hoverColor;   /* NULL 时用 accent 提亮 20% 推导 */
+    /* 按钮底色/文字色：NULL 时沿用 accent 风格（现代高亮块）；
+       置值后按钮走「实体块」外观（XP 的米灰 3D 按钮）。 */
+    const char *buttonBgColor, *buttonTextColor;
     int fontId, fontSize, radius, padding, gap;
 } JpxTheme;
 
@@ -104,8 +107,11 @@ const JpxTheme *Jpx_Theme(JpxApp *app);
 /* XAML 资源字典派生出的完整主题：同时置 WM 装饰、shell 任务栏与控件主题。
    颜色指针借自调用方，需保证生命周期长于 app。 */
 void    Jpx_SetVmTheme(JpxApp *app, const VmTheme *theme);
-/* 向所有客户端广播资源命令 JSON（definePattern/defineStyle），用于主题热更新。 */
-void    Jpx_BroadcastResources(JpxApp *app, const char *json);
+/* 资源包：资源本体不进 SSE。注册后服务端只向 client 下发 loadResPack(id)，
+   client 自己 GET /respack/<id> 拉取命令数组并覆盖缓存。
+   同一时刻只保留最近一次注册的包（旧包不再提供服务）。
+   已连接客户端会立即收到 loadResPack，新连接从 events 首事件拿到同一个 id。 */
+int     Jpx_ResPack_Register(JpxApp *app, const char *resPackId, const char *json);
 
 int  Jpx_WindowOpen(JpxApp *app, const JpxWindowDesc *desc);   /* 返回 winId > 0 */
 void Jpx_WindowClose(JpxApp *app, int winId);

@@ -7,6 +7,7 @@
 #include <string.h>
 
 #include "jpx_xaml_theme.h"
+#include "vm_serialize_json.h"
 
 /* --file <path>：解析真实主题文件并打印资源摘要（调试用）。 */
 static int probe_file(const char *path) {
@@ -138,10 +139,20 @@ static void test_derive(void) {
     expect(JpxXamlTheme_Parse(&table, SAMPLE, err, sizeof(err)), "theme parsed for derive");
     VmTheme theme;
     JpxXamlTheme_DeriveTheme(&table, &theme);
-    expect_str(theme.accentColor, "rgba(124,122,255,1.000)", "accent derived");
-    expect_str(theme.panelColor, "rgba(16,18,28,1.000)", "panel derived");
-    expect_str(theme.chrome.titleFocusColor, "rgba(124,122,255,1.000)", "title focus derived");
-    expect(theme.chrome.titleHeight == 30, "chrome defaults preserved");
+    expect_str(theme.accentColor, "rgba(124,122,255,1.000)",
+               "accent derived from TaskButtonBackground");
+    expect_str(theme.panelColor, "rgba(16,18,28,1.000)",
+               "panel derived from TaskbarBackground");
+    /* XP 皮肤把标题栏交给 style id：paint 命中 styleCache 才会画渐变。 */
+    expect_str(theme.chrome.titleFocusColor, "s_title_active", "title focus uses style id");
+    expect_str(theme.chrome.titleIdleColor, "s_title_idle", "title idle uses style id");
+    expect_str(theme.bgColor, "rgba(255,255,255,1)", "window body is Luna white");
+    expect(theme.chrome.borderWidth == 3, "Luna 3px border");
+    expect(theme.chrome.showShadow == 0, "Luna has no window shadow");
+    expect(theme.titleActiveFrom != NULL && theme.taskButtonFrom != NULL &&
+           theme.startFrom != NULL && theme.trayFrom != NULL,
+           "gradient skin tokens present");
+    expect(theme.chrome.titleHeight == 30, "chrome title height preserved");
 }
 
 static void test_patterns(void) {
@@ -156,6 +167,26 @@ static void test_patterns(void) {
     expect(list.resourceCount >= 5, "resource count increased");
     VmResourceCommand *c = VmDisplay_AppendResource(&list, VM_CMD_DEFINE_PATTERN, "probe");
     expect(c != NULL, "resource capacity >= 6");
+}
+
+/* 资源包只下发 id：SSE 里不能出现 definePattern 之类的资源本体。 */
+static void test_respack_command(void) {
+    section("respack command");
+    static VmDisplayList list;
+    VmDisplay_Init(&list);
+    VmResourceCommand *c = VmDisplay_AppendResource(&list, VM_CMD_LOAD_RES_PACK, "respack");
+    expect(c != NULL, "loadResPack appended as resource command");
+    if (!c) return;
+    VmDisplay_CopyStr(c->args.loadResPack.resPackId,
+                      sizeof(c->args.loadResPack.resPackId), "theme-7");
+    char *json = VmSerialize_CommandArrayJson(&list);
+    expect(json != NULL, "respack command serialized");
+    if (json) {
+        expect(strstr(json, "\"cmd\":\"loadResPack\"") != NULL, "cmd is loadResPack");
+        expect(strstr(json, "\"theme-7\"") != NULL, "respack id carried in args");
+        expect(strstr(json, "definePattern") == NULL, "no resource body in the event");
+        free(json);
+    }
 }
 
 static void test_errors(void) {
@@ -175,6 +206,7 @@ int main(int argc, char **argv) {
     test_resolve();
     test_derive();
     test_patterns();
+    test_respack_command();
     test_errors();
     printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures ? 1 : 0;

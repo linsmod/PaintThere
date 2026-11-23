@@ -133,6 +133,7 @@ python tools/start_vm_desktop.py demo_xaml
 - [x] S3：派生主题与 WM/shell 接入（2026-11-23 完成）
 - [x] S4：资源热更新与主题切换演示（2026-11-23 完成）
 - [x] S5：全量回归 + 文档收尾（2026-11-23 完成）
+- [x] S6：资源包下发（loadResPack + /respack/<id>）、启动即应用、XP 外观落地（2026-11-23 完成，见文末续作）
 
 ## 8. 执行记录
 
@@ -168,3 +169,56 @@ python tools/start_vm_desktop.py demo_xaml
 验证：启动 `--theme "...\Windows XP Blue.xaml"`，点切换按钮 → `resources-update` 114 条命令、29 个渐变，`p_panel` = 5-stop XP 蓝渐变；状态文本「主题已切换」进帧。六个测试套件全通过（主题测试 34 项）。
 
 未覆盖：RetroBar 主题的 Style/Setter/ControlTemplate/DrawingBrush/ImageBrush 仍跳过（v1 非目标）；任务栏按钮/文字用单色代表色，未逐元素套用各自渐变 key。
+
+### 续作：资源包下发 + XP 外观落地（2026-11-23）
+
+用户要求：减少 gap，并且「资源包应该让 client 请求，服务端只发 loadResPack(resPackId)」。
+
+**协议**
+- `vm_display.h` 新增 `VM_CMD_LOAD_RES_PACK` 与 `VmLoadResPackArgs{resPackId[64]}`；
+  序列化为 `{"id":"respack","cmd":"loadResPack","args":["theme-1"],"rect":[0,0,0,0]}`。
+- `vm_server`：新增 `VmResPackProvider` + `VmServer_SetResPackProvider` + `GET /respack/<id>`
+  （id 限 `[A-Za-z0-9_-]`、长度 <64，非当前包返回 404）。SSE 不再携带资源本体。
+- `jpx`：`Jpx_ResPack_Register(app, id, json)` 注册当前包并广播同一条 loadResPack；
+  首连接 `resources` 事件内容也变成这一条。删除 `Jpx_BroadcastResources`（已无消费者）。
+- `assets/app.js`：`loadResPack` handler → `fetch('/respack/<id>')` → 按 id 缓存 →
+  执行 definePattern/defineStyle/loadImg → `setResPackApplied` 通知重放所有 tile。
+- 收益：刷新页面 / 多客户端重连都从首事件的同一个 id 恢复主题（旧实现会退回默认暗色）。
+
+**启动即应用主题**
+- `demo_xaml` 在窗口打开后直接 `JpxXamlTheme_Apply`，不再需要先点按钮。
+- `DeriveTheme` 修正 key：原查的 `AccentColor/accentTextColor/TaskTextColor/WindowBackground/DesktopFrom/DesktopTo`
+  在 XP 主题里**都不存在**（实测 `x:Key=` 计数为 0），只有 `TaskbarBackground`/`TaskButtonBackground` 命中。
+  现改为：窗口/控件用 Luna 固定值（白底、`#0054e3` 边框、3px 边、字号 12、radius 3），
+  任务栏侧才查表（`TaskbarBackground`/`TaskButtonBackground`/`ButtonForeground`/`ClockForeground`/`StartLabel`）。
+
+**外观**
+- `VmTheme` 增加成对渐变 token（title active/idle、start、task、task active、tray）与文字色；
+  `VmTheme_AppendResources` 生成 `p_*` pattern + `s_*` style，仅当字段非空（默认深色主题零变化）。
+- WM：`chrome.title{Active,Idle}` 填 `s_title_*`（前端 paint 命中 styleCache 才走渐变）；
+  `showShadow=0` 时关阴影、窗口直角、标题按钮改为常驻色块（关闭红）。
+- shell：开始按钮绿、任务条目按 `task/task_active`、新增托盘区（`tray` 色）+ 弹簧把托盘顶到右侧；
+  任务栏内边距/圆角/字号随主题。
+- 控件：`JpxTheme` 增加 `buttonBgColor/buttonTextColor`，XP 下按钮转米灰实体块 + 黑字。
+- 渲染页：画布外背景改桌面蓝渐变，去掉 stage 圆角与投影。
+
+**验证证据**
+- 六个套件全通过：test_frame 120、test_jpx_xaml 47、test_jpx_xaml_theme 44、test_text_edit 66、test_sys 16、test_fs 19。
+- `GET /respack/theme-1` 200、25396 B、126 条命令（117 pattern）；`/respack/nope` 404。
+  包内 `p_panel` 5 stop，`s_title_active/s_title_idle/s_start/s_task/s_task_active/s_tray` 齐备。
+- 首连接事件实测：`event: resources` → `[{"cmd":"loadResPack","args":["theme-1"]}]`。
+- 帧实测：`w1_title` paint=`s_title_active`（点击标题栏后）、`w1_border`=`rgba(0,84,227,1)` 3px、
+  `w1_body`=`s_window` 白底、开始按钮 `rgba(63,154,63,0.92)`、任务条目 `rgba(59,142,232)`/`rgba(28,95,192)`、
+  托盘 `rgba(29,126,232)`。
+- 热切换：点「切换主题」→ 1 次 `resources-update` 带 `loadResPack("theme-2")`，状态文本「主题已切换」进帧。
+- 浏览器（agent-browser）截图：蓝色桌面填满视口、蓝渐变标题栏 + 红关闭按钮、白色窗口体、
+  米灰 3D 按钮、绿色开始按钮、蓝色任务条目与托盘时钟；刷新后保持 XP 外观，`__vmRenderer.error` 为空。
+- demo_jpx 冒烟：首事件同样只有 `loadResPack("default")`，`/respack/default` 200 / 1395 B。
+
+**剩余 gap（未做）**
+- RetroBar 的 XP 主题只有任务栏资源；窗口标题栏/边框/控件是按 Luna 惯例手写的近似值，不是从主题文件读的。
+- 任务栏仍是 Clay 单色填充：`s_start`/`s_task`/`s_tray` 的渐变只在 respack 里定义但未被 shell 使用
+  （Clay 不支持渐变；要用上需把 shell 改成 drawRect 手绘）。
+- 任务栏高度固定 36（XP 30），未读 `TaskbarHeight`。
+- 字体仍是 `assets/font.ttf`（SimHei 黑体），XP 中文界面是宋体 9pt。
+- 桌面无壁纸（图片资源），只用蓝天渐变近似；`Style`/`ControlTemplate`/`DrawingBrush`/`ImageBrush` 仍未支持。

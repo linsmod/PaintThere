@@ -466,8 +466,10 @@ Style 等一切能 id 查表的都 id 化；元素标记在二进制里用预定
   重出全部 19 主题 bins。
 - S10b 导出器 `tools/export_theme_css.py`：直接按协议读三件套（Python struct，
   不链 C 代码）→ theme.css + 图片复制到导出目录；`--check` 跑「导出→编译→逐字节比对」。
-  另产出**固定预览壳** `assets/preview.html`（任务栏骨架 div + `?theme=<css>` 动态加载，
-  用 var(--Key) 上色；骨架不属主题数据，一份服务全部主题）。
+  另产出**固定预览壳** `assets/preview.html`（任务栏骨架 div + `?theme=<css>` 或
+  `?theme-dir=<slug>` 加载）。预览把子集蕴含的信息由 JS 展开成**真正的 class CSS**
+  （dir() 渐变转浏览器角度、`:hover`/`:active` 交互态、开始按钮雪碧图三态换段），
+  可实际演示主题交互效果，不止静态审阅；骨架不属主题数据，一份服务全部主题。
   结构说明：主题协议只有扁平资源表，无元素树（结构在 guest 代码里，模板不执行），
   因此 CSS 无损覆盖；主题携带结构是未来独立协议层，当前无消费点不预做。
 - S10c 编译器 `jpx_xaml/jpx_html_theme.c/.h`：严格 CSS 子集解析 → 资源表

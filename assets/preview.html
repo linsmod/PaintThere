@@ -4,31 +4,45 @@
 <meta charset="utf-8">
 <title>theme preview</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #103a6e; overflow: hidden; }
+  html, body { margin: 0; height: 100%; background: #103a6e; overflow: hidden;
+               font-family: "Microsoft YaHei", sans-serif; }
   #taskbar { position: absolute; left: 0; right: 0; bottom: 0; display: flex;
-             align-items: center; padding-left: 3px; box-sizing: border-box; }
-  .tb-item { border-radius: 3px; margin-left: 3px; display: flex; align-items: center;
-             color: #fff; font: 12px "Microsoft YaHei", sans-serif; padding: 0 8px;
-             white-space: nowrap; overflow: hidden; }
-  #tray { margin-left: auto; margin-right: 0; }
-  #err { position: absolute; top: 8px; left: 8px; color: #f88; font: 12px monospace; }
+             align-items: center; box-sizing: border-box; }
+  #taskbar * { box-sizing: border-box; }
+  .tb-item { display: flex; align-items: center; color: #fff; font-size: 12px;
+             padding: 0 8px; white-space: nowrap; overflow: hidden; cursor: default; }
+  #tray { margin-left: auto; }
+  .tb-icon { margin-right: 6px; }
+  #err { position: absolute; top: 8px; left: 8px; color: #f88; font: 12px monospace;
+         background: rgba(0,0,0,0.6); padding: 2px 6px; }
+  #err:empty { display: none; }
+  #hint { position: absolute; top: 8px; right: 8px; color: #cde; font: 12px monospace;
+          background: rgba(0,0,0,0.6); padding: 2px 6px; }
 </style>
 </head>
 <body>
 <div id="taskbar">
-  <div class="tb-item" id="start">开始</div>
-  <div class="tb-item" id="item1">窗口 1</div>
+  <div class="tb-item" id="start"><span class="tb-label">开始</span></div>
+  <div class="tb-item active" id="item1">窗口 1</div>
   <div class="tb-item" id="item2">窗口 2</div>
-  <div class="tb-item" id="tray">00:00</div>
+  <div class="tb-item" id="tray"><span id="clock">00:00</span></div>
 </div>
+<div id="hint"></div>
 <div id="err"></div>
 <script>
-/* 主题预览壳（固定骨架，不属主题数据）：
-   ?theme=<相对本页的 theme.css 路径>，JS 按 --key: value; 文本解析资源表
-   （key 含点号，浏览器 CSSOM 不认，且渐变是自定义 dir() 语法），把值翻译成
-   浏览器可绘制的样式渲染任务栏骨架。仅供人工审阅，与运行时链路无关。 */
-const cssUrl = new URLSearchParams(location.search).get("theme");
+/* 主题预览壳（固定骨架，不属主题数据）。
+   子集 CSS 蕴含的信息在这里由 JS 展开成真正的 class CSS（含 :hover/:active
+   与开始按钮雪碧图三态），所以预览能演示主题的交互效果，不止静态审阅：
+     ?theme=<相对本页的 theme.css>          加载导出的 CSS 子集
+     ?theme-dir=xp-blue                     等价简写（<dir>/theme.css）
+   协议约束不变：主题仍是扁平资源表，结构在骨架里；var() 引用、选择器等
+   原始 CSS 特性不进协议，预览的"动态"全部由本页 JS 生成。 */
+const params = new URLSearchParams(location.search);
+const cssUrl = params.get("theme") || (params.get("theme-dir")
+  ? params.get("theme-dir").replace(/\/?$/, "/") + "theme.css" : null);
 const err = document.getElementById("err");
+const hint = document.getElementById("hint");
+let cssDir = "";   /* css 文件所在目录（url() 值的解析基准） */
 function fail(msg) { err.textContent = "preview: " + msg; }
 
 /* dir(x0,y0,x1,y1) → CSS 角度（0deg = 向上）。 */
@@ -45,44 +59,101 @@ function gradBody(dir, stops) {
   });
   return `linear-gradient(${deg.toFixed(2)}deg, ${parts.join(", ")})`;
 }
-/* 裸值 → 可用 CSS 值；无法识别的原样返回。 */
-function toCss(v, cssDir) {
-  let m = v.match(/^linear-gradient\(dir\(([^)]*)\),\s*(.*)\)$/s)
-       || v.match(/^radial-gradient\(dir\(([^)]*)\),\s*(.*)\)$/s);
+function cssValue(v) {
+  let m = v.match(/^(linear|radial)-gradient\(dir\(([^)]*)\),\s*(.*)\)$/s);
   if (m) {
-    const g = gradBody(m[1], m[2].replace(/\)\s*$/, ""));
+    const g = gradBody(m[2], m[3].replace(/\)\s*$/, ""));
     return g || v;
   }
   m = v.match(/^url\(([^)]+)\)$/);
   if (m) return `url("${cssDir}${m[1]}")`;
-  return v;
+  return v;   /* rgba/#hex/命名颜色（Transparent 等浏览器原生支持） */
+}
+function str(v) {   /* STRING 资源去引号 */
+  return v && v[0] === "'" ? v.slice(1, -1) : v;
+}
+function px(res, key, fallback) {
+  const n = parseFloat(res[key]);
+  return (isNaN(n) ? fallback : n) + "px";
 }
 
 function render(res) {
-  const tb = document.getElementById("taskbar");
-  const px = k => (parseFloat(res[k]) || 0) + "px";
-  tb.style.height = px("TaskbarHeight") || "30px";
-  tb.style.background = toCss(res.TaskbarBackground || "rgba(0,0,0,0.6)", cssUrl);
-  tb.style.borderRadius = px("Taskbar.Height") || "0";
-  const start = document.getElementById("start");
-  start.style.width = px("StartButton.MinWidth") || "96px";
-  start.style.height = px("StartButton.Height") || "32px";
-  start.style.background = toCss(res.StartButtonBackground || "rgba(63,154,63,0.92)", cssUrl);
-  if (res.StartButtonImage) start.style.background = toCss(res.StartButtonImage, cssUrl);
-  const item = document.getElementById("item1");
-  item.style.background = toCss(res.TaskButtonBackground || "rgba(59,142,232,0.9)", cssUrl);
-  item.style.color = res.ButtonForeground || "#fff";
-  document.getElementById("item2").style.background =
-    toCss(res.TaskButtonBackgroundPressed || "rgba(28,95,192,0.9)", cssUrl);
-  const tray = document.getElementById("tray");
-  tray.style.background = toCss(res.TrayBackground || res.TaskbarBackground || "rgba(29,126,232,0.9)", cssUrl);
-  tray.style.color = res.ClockForeground || "#fff";
+  /* —— 交互效果全部由这里生成的真 CSS 承载 —— */
+  let css = `
+    .tb-item { font-size: 12px; }
+    #taskbar {
+      height: ${px(res, "TaskbarHeight", 30)};
+      padding-left: ${px(res, "panelPad", 3)};
+      background: ${cssValue(res.TaskbarBackground || "rgba(24,45,88,0.9)")};
+      font-family: ${(() => {
+        const f = str(res.GlobalFontFamily || "");
+        return f ? `"${f}", "Microsoft YaHei", sans-serif` : '"Microsoft YaHei", sans-serif';
+      })()};
+    }
+    #start {
+      min-width: ${px(res, "StartButton.MinWidth", 96)};
+      height: ${px(res, "StartButton.Height", 30)};
+      color: ${res.StartLabel ? cssValue(res.StartLabel) : "#fff"};
+      font-weight: bold;
+      border-radius: ${px(res, "panelRadius", 3)};
+      ${res.StartIconImage ? `
+        background-image: url("${cssDir}${res.StartIconImage.match(/^url\(([^)]+)\)$/)[1]}"), none;
+        background-repeat: no-repeat; background-position: 4px center;
+        background-size: auto 70%; padding-left: 30px;` : ""}
+    }
+    #item1, #item2 {
+      width: ${px(res, "TaskButton.Width", 110)};
+      height: ${px(res, "StartButton.Height", 26)};
+      margin-left: 3px;
+      background: ${cssValue(res.TaskButtonBackground || "rgba(59,142,232,0.9)")};
+      ${res.TaskButtonTopBorder ? `border-top: 1px solid ${cssValue(res.TaskButtonTopBorder)};` : ""}
+      ${res.TaskButtonBottomBorder ? `border-bottom: 1px solid ${cssValue(res.TaskButtonBottomBorder)};` : ""}
+    }
+    #item1:hover, #item2:hover {
+      background: ${cssValue(res.TaskButtonBackgroundHover || res.TaskButtonBackground || "rgba(120,180,255,0.9)")};
+    }
+    #item1:active, #item2:active {
+      background: ${cssValue(res.TaskButtonBackgroundPressed || res.TaskButtonBackground || "rgba(30,80,180,0.9)")};
+    }
+    .tb-item.active {
+      background: ${cssValue(res.TaskButtonBackgroundPressed || res.TaskButtonBackground || "rgba(30,80,180,0.9)")};
+      font-weight: bold;
+    }
+    #tray {
+      min-width: ${px(res, "Tray.Width", 76)};
+      justify-content: center;
+      background: ${cssValue(res.TrayBackground || res.TaskbarBackground || "rgba(29,126,232,0.9)")};
+      color: ${res.ClockForeground ? cssValue(res.ClockForeground) : "#fff"};
+      ${res.ShowDesktopIconImageSmall ? `
+        background-image: url("${cssDir}${res.ShowDesktopIconImageSmall.match(/^url\(([^)]+)\)$/)[1]}");
+        background-repeat: no-repeat; background-position: 6px center;
+        background-size: auto 60%; padding-left: 26px;` : ""}
+    }
+  `;
+  /* 开始按钮雪碧图三态：StartButtonImage 竖排三段，hover/pressed 换段。 */
+  const sbm = res.StartButtonImage && res.StartButtonImage.match(/^url\(([^)]+)\)$/);
+  if (sbm) {
+    css += `
+    #start {
+      background-image: url("${cssDir}${sbm[1]}");
+      background-size: 100% 300%;
+      background-position: 0 0;
+      color: transparent;
+    }
+    #start:hover { background-position: 0 50%; }
+    #start:active { background-position: 0 100%; }
+    `;
+  }
+  const style = document.createElement("style");
+  style.textContent = css;
+  document.head.appendChild(style);
+  hint.textContent = `hover 任务条目 / 按住看按下态 / 移到开始按钮看三态 — ${cssUrl}`;
 }
 
 if (!cssUrl) {
-  fail("缺 ?theme=<theme.css>，如 ?theme=xp-blue/theme.css");
+  fail('缺 ?theme=<theme.css> 或 ?theme-dir=<dir>，如 ?theme-dir=xp-blue');
 } else {
-  const cssDir = cssUrl.includes("/") ? cssUrl.slice(0, cssUrl.lastIndexOf("/") + 1) : "";
+  cssDir = cssUrl.includes("/") ? cssUrl.slice(0, cssUrl.lastIndexOf("/") + 1) : "";
   fetch(cssUrl).then(r => r.text()).then(text => {
     const res = {};
     for (const m of text.matchAll(/--([^:;\s]+)\s*:\s*([^;]+);/g)) res[m[1]] = m[2].trim();

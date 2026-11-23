@@ -742,6 +742,22 @@ static void vm_accept(VmServer *s) {
         vm_reject_full(fd);
         return;
     }
+    /* vm_send_all 是阻塞 send 循环，而客户端 socket 默认无发送超时：
+       对端停止读（页面刷新/后台标签被节流）时 TCP 窗口填满，send 会把
+       服务端主循环整个挂死——新连接全部得不到服务，表现为刷新挂起。
+       给发送加超时，超时即视为慢客户端断开（与慢客户端策略一致）。 */
+#ifdef _WIN32
+    {
+        DWORD sndTimeout = 2000;
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+                   (const char *)&sndTimeout, sizeof(sndTimeout));
+    }
+#else
+    {
+        struct timeval sndTimeout = {2, 0};
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &sndTimeout, sizeof(sndTimeout));
+    }
+#endif
     memset(&s->clients[slot], 0, sizeof(s->clients[slot]));
     s->clients[slot].fd = fd;
 }

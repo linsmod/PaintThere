@@ -98,8 +98,9 @@ function defineStyle(styleId, config) {
 }
 
 /* 资源包：guest 只下发 id（loadResPack），资源本体由 client 自己 GET 拉取并按 id 缓存。
-   图片按 id 覆盖注册：主题图片的 id 是 XAML 资源 key，跨主题同名不同内容，
-   短路会导致切主题后 startIcon 等停在旧图（只有刷新页面才更新）。 */
+   缓存失效由主题管理逻辑驱动：每次 apply 递增 resPackId，client 拉取容器后经
+   applyResPack 覆盖注册其中的图片（主题图片的 id 是 XAML 资源 key，跨主题同名
+   不同内容，不覆盖会停在旧图）。普通 loadImg 是一次性资源通道，仍按 id 短路。 */
 const resPackCache = new Map();
 let resPackApplied = null;
 function setResPackApplied(cb) { resPackApplied = cb; }
@@ -274,19 +275,15 @@ function setDrawTarget(target) {
 }
 
 function loadImg(imgId, dataUrl) {
-    let entry = imageCache.get(imgId);
-    if (!entry) {
-        entry = { image: null, ready: false, failed: false };
-        imageCache.set(imgId, entry);
-    }
+    if (imageCache.has(imgId)) return;
+    const entry = { image: null, ready: false, failed: false };
+    imageCache.set(imgId, entry);
     const img = new Image();
     img.onload = () => {
         entry.image = img;
         entry.ready = true;
-        entry.failed = false;
         tintedCache.clear();
         if (textNeedsReplay) textNeedsReplay();
-        if (resPackApplied) resPackApplied();
     };
     img.onerror = () => { entry.failed = true; };
     img.src = dataUrl;

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>theme preview</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #103a6e; overflow: hidden; }
+  #taskbar { position: absolute; left: 0; right: 0; bottom: 0; display: flex;
+             align-items: center; padding-left: 3px; box-sizing: border-box; }
+  .tb-item { border-radius: 3px; margin-left: 3px; display: flex; align-items: center;
+             color: #fff; font: 12px "Microsoft YaHei", sans-serif; padding: 0 8px;
+             white-space: nowrap; overflow: hidden; }
+  #tray { margin-left: auto; margin-right: 0; }
+  #err { position: absolute; top: 8px; left: 8px; color: #f88; font: 12px monospace; }
+</style>
+</head>
+<body>
+<div id="taskbar">
+  <div class="tb-item" id="start">开始</div>
+  <div class="tb-item" id="item1">窗口 1</div>
+  <div class="tb-item" id="item2">窗口 2</div>
+  <div class="tb-item" id="tray">00:00</div>
+</div>
+<div id="err"></div>
+<script>
+/* 主题预览壳（固定骨架，不属主题数据）：
+   ?theme=<相对本页的 theme.css 路径>，JS 按 --key: value; 文本解析资源表
+   （key 含点号，浏览器 CSSOM 不认，且渐变是自定义 dir() 语法），把值翻译成
+   浏览器可绘制的样式渲染任务栏骨架。仅供人工审阅，与运行时链路无关。 */
+const cssUrl = new URLSearchParams(location.search).get("theme");
+const err = document.getElementById("err");
+function fail(msg) { err.textContent = "preview: " + msg; }
+
+/* dir(x0,y0,x1,y1) → CSS 角度（0deg = 向上）。 */
+function gradBody(dir, stops) {
+  const m = dir.match(/^\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*$/);
+  if (!m) return null;
+  const dx = m[3] - m[1], dy = m[4] - m[2];
+  const deg = Math.atan2(dx, dy) * 180 / Math.PI;
+  const parts = stops.split(",").map(s => s.trim()).filter(Boolean).map(s => {
+    const i = s.lastIndexOf(" ");
+    if (i < 0) return s;
+    const off = parseFloat(s.slice(i + 1));
+    return s.slice(0, i).trim() + " " + (off * 100).toFixed(2) + "%";
+  });
+  return `linear-gradient(${deg.toFixed(2)}deg, ${parts.join(", ")})`;
+}
+/* 裸值 → 可用 CSS 值；无法识别的原样返回。 */
+function toCss(v, cssDir) {
+  let m = v.match(/^linear-gradient\(dir\(([^)]*)\),\s*(.*)\)$/s)
+       || v.match(/^radial-gradient\(dir\(([^)]*)\),\s*(.*)\)$/s);
+  if (m) {
+    const g = gradBody(m[1], m[2].replace(/\)\s*$/, ""));
+    return g || v;
+  }
+  m = v.match(/^url\(([^)]+)\)$/);
+  if (m) return `url("${cssDir}${m[1]}")`;
+  return v;
+}
+
+function render(res) {
+  const tb = document.getElementById("taskbar");
+  const px = k => (parseFloat(res[k]) || 0) + "px";
+  tb.style.height = px("TaskbarHeight") || "30px";
+  tb.style.background = toCss(res.TaskbarBackground || "rgba(0,0,0,0.6)", cssUrl);
+  tb.style.borderRadius = px("Taskbar.Height") || "0";
+  const start = document.getElementById("start");
+  start.style.width = px("StartButton.MinWidth") || "96px";
+  start.style.height = px("StartButton.Height") || "32px";
+  start.style.background = toCss(res.StartButtonBackground || "rgba(63,154,63,0.92)", cssUrl);
+  if (res.StartButtonImage) start.style.background = toCss(res.StartButtonImage, cssUrl);
+  const item = document.getElementById("item1");
+  item.style.background = toCss(res.TaskButtonBackground || "rgba(59,142,232,0.9)", cssUrl);
+  item.style.color = res.ButtonForeground || "#fff";
+  document.getElementById("item2").style.background =
+    toCss(res.TaskButtonBackgroundPressed || "rgba(28,95,192,0.9)", cssUrl);
+  const tray = document.getElementById("tray");
+  tray.style.background = toCss(res.TrayBackground || res.TaskbarBackground || "rgba(29,126,232,0.9)", cssUrl);
+  tray.style.color = res.ClockForeground || "#fff";
+}
+
+if (!cssUrl) {
+  fail("缺 ?theme=<theme.css>，如 ?theme=xp-blue/theme.css");
+} else {
+  const cssDir = cssUrl.includes("/") ? cssUrl.slice(0, cssUrl.lastIndexOf("/") + 1) : "";
+  fetch(cssUrl).then(r => r.text()).then(text => {
+    const res = {};
+    for (const m of text.matchAll(/--([^:;\s]+)\s*:\s*([^;]+);/g)) res[m[1]] = m[2].trim();
+    render(res);
+  }).catch(e => fail(e.message));
+}
+</script>
+</body>
+</html>

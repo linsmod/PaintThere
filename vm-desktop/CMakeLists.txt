@@ -68,6 +68,7 @@ add_executable(demo_xaml
     jpx_xaml/jpx_xaml_state.c
     jpx_xaml/jpx_xaml_view.c
     jpx_xaml/jpx_xaml_theme.c
+    jpx_xaml/jpx_html_theme.c
     jpx_xaml/jpx_xaml_theme_apply.c
     jpx/jpx_clay_impl.c
     jpx/jpx_app.c
@@ -144,6 +145,7 @@ add_executable(test_jpx_xaml_theme
     test_jpx_xaml_theme.c
     jpx_xaml/jpx_xaml_parser.c
     jpx_xaml/jpx_xaml_theme.c
+    jpx_xaml/jpx_html_theme.c
     vm_display.c
     vm_serialize_json.c
     vm_theme.c

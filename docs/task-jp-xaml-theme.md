@@ -433,18 +433,72 @@ Style 等一切能 id 查表的都 id 化；元素标记在二进制里用预定
 
 ### 进度
 
-- [x] S9a：STRING（FontFamily/system:String）与 PATH（DrawingBrush 几何，
-  geom_walk 两遍走查：bbox + 归一化 0..1；相对命令/弧/多组坐标跳过资源）+
-  `<Key>.Brush` 派生色（字面量或查当前表）（2026-11-23）
-- [x] S9b：WritePrecompiled / LoadPrecompiled（显式小端；record 100B 定长；
-  strings.bin 池 offset 0 保留空串；图片 `<资源id>.<扩展名>` 复制）（2026-11-23）
-- [x] S9c：预编译往返断言（合并链/Style 尺寸/STRING/PATH bbox/图片改名与复制）+
-  PATH 边界（相对命令跳过不炸整体）；`--precompile <xaml> <outDir>` 工具模式；
-  主题套件 86 项全通过（2026-11-23）
-- [x] S9d：`tools/precompile_themes.py`（编排：slug 命名 + 产物核对）；
-  RetroBar 19 个主题全量预编译 19 ok 0 failed → `assets/themes/*`
-  （xp-blue 全目录 ~22KB，源 xaml 143KB）（2026-11-23）
-- [x] S9e：demo `--preset` 启动验证：xp-blue 预编译 SSE 首事件 theme-1、
-  respack 42026B（含 4 图），浏览器截图外观与实时解析一致；
-  95-98 预编译验证经典灰降级（ButtonFace/Light/Shadow 色系）；
-  全量回归六套件通过；提交（2026-11-23）
+- [x] S9 全部完成（2026-11-23，commit 0eb32c8）
+
+## 11. S10：CSS 主题导出与编译（2026-11-23 立项）
+
+用户需求：反编译器把 theme 转成 HTML+CSS 子集；再加 jpx_html_theme 编译逻辑；
+以后主题实现方式多样。约束：**xaml 工具与 html 工具只共享协议（资源表结构 +
+三件套二进制格式），实现互不耦合**；导出→编译回的二进制必须逐字节一致。
+
+### 冻结的 CSS 子集（canonical，导出器逐条按表序输出）
+
+```css
+:root {
+  --Key: rgba(56,136,233,1.000);                       /* COLOR，颜色串原样 */
+  --Key: linear-gradient(dir(0.0000,0.0000,0.0000,1.0000),
+        rgba(56,136,233,1.000) 0, rgba(25,65,165,1.000) 1);   /* LINEAR，dir() 内嵌方向原串 */
+  --Key: radial-gradient(dir(0.1500,0.1500,0.7500), ...);     /* RADIAL */
+  --Key: 30;                                            /* NUMBER，repr %.17g 级往返 */
+  --Key: 'Tahoma';                                      /* STRING，单引号，不支持内嵌引号 */
+  --Key: path(1,1,3,3, 'M0,0 L0,1 L1,1 L1,0Z');         /* PATH，bbox %.17g + 归一化 data */
+  --Key: url(StartIconImage.png);                       /* IMAGE，相对 css 目录 */
+}
+```
+
+- 选择器/媒体查询/var()/注释不支持（解析器严格：不认识的值直接报错，保证确定性）
+- 浮点往返保证：f32 用 17 位有效数字的十进制（Python repr），C 侧 strtod→float 还原精确
+
+### 步骤
+
+- S10a 字符串池规范化：WritePrecompiled 改为收集→qsort 去重→定偏移，
+  strings.bin 与表序无关（否则 css 编译回的图片顺序不同会破坏字节一致）；
+  重出全部 19 主题 bins。
+- S10b 导出器 `tools/export_theme_css.py`：直接按协议读三件套（Python struct，
+  不链 C 代码）→ theme.css + 图片复制到导出目录；`--check` 跑「导出→编译→逐字节比对」。
+  另产出**固定预览壳** `assets/preview.html`（任务栏骨架 div + `?theme=<css>` 动态加载，
+  用 var(--Key) 上色；骨架不属主题数据，一份服务全部主题）。
+  结构说明：主题协议只有扁平资源表，无元素树（结构在 guest 代码里，模板不执行），
+  因此 CSS 无损覆盖；主题携带结构是未来独立协议层，当前无消费点不预做。
+- S10c 编译器 `jpx_xaml/jpx_html_theme.c/.h`：严格 CSS 子集解析 → 资源表
+  （只依赖协议头 jpx_xaml_theme.h 的结构 + WritePrecompiled）；
+  `--compile-css <css> <outDir>` 工具模式；demo `--theme-css`。
+- S10d 测试：C 单测（css 解析/类型推断/顺序保持）+ 全部 19 主题 `--check` 字节一致。
+- S10e 文档与提交。
+
+### 进度
+
+- [x] S10a：WritePrecompiled 字符串池规范化（收集→qsort 去重→定偏移），
+  strings.bin 与资源顺序无关；重出 19 主题 bins（2026-11-23）
+- [x] S10b：`tools/export_theme_css.py`（协议级独立实现：Python struct 直读三件套，
+  不链 C 代码；canonical CSS 输出 + 图片复制 + `--check` 往返比对）；
+  预览壳 `assets/preview.html`（固定骨架 + JS 文本解析资源表，绕开浏览器对
+  点号自定义属性与 dir() 渐变的限制；?theme=<css> 加载）（2026-11-23）
+- [x] S10c：`jpx_xaml/jpx_html_theme.c/.h`（严格 CSS 子集解析，独立实现，
+  只依赖协议头；值语法分派：gradient(dir)/path/url/'string'/数字/rgba|#/裸 token 命名颜色）；
+  `--compile-css` 工具模式；demo `--theme-css`（2026-11-23）
+- [x] S10d：C 单测 104 项全通过（css 解析/顺序保持/空值拒绝/命名颜色原样）；
+  **19/19 主题 `--check` 往返逐字节一致**；demo `--theme-css xp-blue` 与
+  `--preset xp-blue` 的 respack 均为 42026B（直接等价证据）；预览壳截图正常（2026-11-23）
+- [x] S10e：文档与提交（2026-11-23）
+
+### 执行记录与坑
+
+- 三个解析坑：`strchr(')')` 会先碰到 dir() 的右括号（改 paren_inner 配平）；
+  stops 尾部的渐变收尾 `)` 要剥掉再切段；`path(...)` 的实参在 `path(` 之后
+  而非 `(` 处（原始实现按 paren_inner 写错了位置）。
+- `Transparent` 等命名颜色：XAML 解析对非 `#` 值原样透传，CSS 编译器以
+  「裸 token 兜底为 COLOR」承接；STRING 导出恒带引号，二者不混淆。
+- 字节一致的前提是池规范化（S10a）：css 编译回的图片在表尾，与 xaml 表序不同，
+  旧的顺序敏感池会导致 strings.bin 不一致。
+- start_vm_desktop 的路径旗标补了 `--theme-css`（相对路径按调用者 CWD 绝对化）。

@@ -6,6 +6,7 @@
 #include "jpx.h"
 #include "jpx_xaml.h"
 #include "jpx_xaml_theme.h"
+#include "jpx_html_theme.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -188,13 +189,16 @@ int main(int argc, char **argv) {
     opt.webRoot = argc > 2 ? argv[2] : "../assets";
     /* 可选：--theme <path> 加载真实 ResourceDictionary 文本（开发调试用）；
        --preset <name> 加载预编译主题 assets/themes/<name>（启动路径）；
+       --theme-css <file.css> 加载 CSS 子集主题（jpx_html_theme 编译）；
        --font <path> 指定主题字体（可指向系统字体，前端与 guest 共用同一文件）。 */
     const char *themePath = NULL;
     const char *presetName = NULL;
+    const char *cssPath = NULL;
     const char *fontOverride = NULL;
     for (int i = 3; i + 1 < argc; i++) {
         if (strcmp(argv[i], "--theme") == 0) themePath = argv[i + 1];
         else if (strcmp(argv[i], "--preset") == 0) presetName = argv[i + 1];
+        else if (strcmp(argv[i], "--theme-css") == 0) cssPath = argv[i + 1];
         else if (strcmp(argv[i], "--font") == 0) fontOverride = argv[i + 1];
     }
     if (fontOverride) snprintf(fontPath, sizeof(fontPath), "%s", fontOverride);
@@ -241,10 +245,22 @@ int main(int argc, char **argv) {
     char themeErr[256];
     int themeLoaded = 0;
     char presetDir[512];
+    char cssDir[512];
     if (themePath) {
         /* LoadFile 递归合并 MergedDictionaries（XP 家族二级继承等），开发调试用。 */
         themeLoaded = JpxXamlTheme_LoadFile(&g_theme, themePath, themeErr, sizeof(themeErr));
         if (!themeLoaded) fprintf(stderr, "demo_xaml: theme load failed: %s\n", themeErr);
+    } else if (cssPath) {
+        /* CSS 子集主题（jpx_html_theme，独立解析实现）。 */
+        themeLoaded = JpxHtmlTheme_LoadCss(&g_theme, cssPath, themeErr, sizeof(themeErr));
+        if (!themeLoaded) fprintf(stderr, "demo_xaml: css theme failed: %s\n", themeErr);
+        else {
+            snprintf(cssDir, sizeof(cssDir), "%s", cssPath);
+            char *slash = strrchr(cssDir, '/');
+            char *bslash = strrchr(cssDir, '\\');
+            if (bslash > slash) slash = bslash;
+            if (slash) *slash = '\0';
+        }
     } else if (presetName) {
         /* 预编译主题：assets/themes/<name>（xalm.bin + strings.bin + resid2path.bin + 图片）。 */
         snprintf(presetDir, sizeof(presetDir), "%s/themes/%s", opt.webRoot, presetName);
@@ -268,10 +284,14 @@ int main(int argc, char **argv) {
             if (slash) *slash = '\0';
         } else if (presetName) {
             snprintf(imgBase, sizeof(imgBase), "%s", presetDir);
+        } else if (cssPath) {
+            snprintf(imgBase, sizeof(imgBase), "%s", cssDir);
         }
         JpxXamlTheme_ResolveImages(&g_theme, imgBase);
         printf("demo_xaml: theme loaded from %s, %d resources\n",
-               themePath ? themePath : (presetName ? presetName : "builtin"), g_theme.count);
+               themePath ? themePath
+                         : (presetName ? presetName : (cssPath ? cssPath : "builtin")),
+               g_theme.count);
         /* 图片由资源包打包下发：client 一次 GET 拿「命令数组 + 全部图片」。 */
         Jpx_ResPack_SetImageProvider(g_app, JpxXamlTheme_ImageAt, &g_theme);
     }
@@ -299,7 +319,8 @@ int main(int argc, char **argv) {
        刷新页面也会从首事件的同一个 id 恢复。 */
     if (g_theme.count > 0 && JpxXamlTheme_Apply(g_app, &g_theme)) {
         snprintf(g_state.status, sizeof(g_state.status), "主题: XP（%s）",
-                 themePath ? "外置" : (presetName ? "预编译" : "内置"));
+                 themePath ? "外置"
+                           : (presetName ? "预编译" : (cssPath ? "css" : "内置")));
         Jpx_Invalidate(g_app);
     }
 

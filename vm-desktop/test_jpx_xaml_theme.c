@@ -10,6 +10,7 @@
 #include <direct.h>
 
 #include "jpx_xaml_theme.h"
+#include "jpx_html_theme.h"
 #include "vm_serialize_json.h"
 
 /* --file <path>：加载真实主题文件（含合并）并打印资源摘要（调试用）。 */
@@ -28,6 +29,30 @@ static int probe_file(const char *path) {
                    tb->kind, tb->stopCount,
                    tb->stopCount ? tb->stops[0].color : "-", tb->direction);
     return ok ? 0 : 1;
+}
+
+/* --compile-css <theme.css> <outDir>：CSS 子集 → 资源表 → 预编译写出
+   （css 导出目录需自包含图片；解析与写出由 exporter 的 --check 调用）。 */
+static int compile_css(const char *cssPath, const char *outDir) {
+    static JpxXamlResourceTable table;
+    char err[256];
+    if (!JpxHtmlTheme_LoadCss(&table, cssPath, err, sizeof(err))) {
+        printf("compile-css: parse failed: %s\n", err);
+        return 1;
+    }
+    char base[512];
+    snprintf(base, sizeof(base), "%s", cssPath);
+    char *slash = strrchr(base, '/');
+    char *bslash = strrchr(base, '\\');
+    if (bslash > slash) slash = bslash;
+    if (slash) *slash = '\0';
+    JpxXamlTheme_ResolveImages(&table, base);
+    if (!JpxXamlTheme_WritePrecompiled(&table, outDir, err, sizeof(err))) {
+        printf("compile-css: write failed: %s\n", err);
+        return 1;
+    }
+    printf("compiled %s -> %s (%d resources)\n", cssPath, outDir, table.count);
+    return 0;
 }
 
 /* --precompile <theme.xaml> <outDir>：合并 → 图片绝对化 → 预编译写出（编排脚本调用）。 */
@@ -511,9 +536,63 @@ static void test_classic_derive(void) {
                "classic text is black");
 }
 
+/* CSS 子集编译：类型推断、顺序保持、未知值报错。 */
+static void test_html_theme(void) {
+    section("css subset compile");
+    const char *dir = "temp/test_theme_css";
+    _mkdir("temp");
+    _mkdir(dir);
+    write_file("temp/test_theme_css/sample.css",
+        ":root {\n"
+        "  --TaskbarHeight: 30;\n"
+        "  --TaskbarBackground: linear-gradient(dir(0.0000,0.0000,0.0000,1.0000),\n"
+        "        rgba(56,136,233,1.000) 0, rgba(25,65,165,1.000) 1);\n"
+        "  --GlobalFontFamily: 'Tahoma';\n"
+        "  --TaskButtonThumbnail: path(1,1,3,3, 'M0,0 L0,1 L1,1 L1,0Z');\n"
+        "  --StartIconImage: url(StartIconImage.png);\n"
+        "}\n");
+    static JpxXamlResourceTable table;
+    char err[256];
+    expect(JpxHtmlTheme_LoadCss(&table, "temp/test_theme_css/sample.css",
+                                err, sizeof(err)), "css parses");
+    if (!table.count) { printf("  err=%s\n", err); return; }
+    expect_int(table.count, 5, "five declarations in order");
+    expect_int((int)table.items[0].kind, (int)JPX_XAML_RES_NUMBER, "number kind");
+    expect(table.items[0].number == 30.0, "number value");
+    expect_int((int)table.items[1].kind, (int)JPX_XAML_RES_LINEAR_GRADIENT,
+               "linear kind");
+    expect_str(table.items[1].direction, "0.0000,0.0000,0.0000,1.0000",
+               "direction verbatim");
+    expect_int(table.items[1].stopCount, 2, "stop count");
+    expect_str(table.items[1].stops[1].color, "rgba(25,65,165,1.000)",
+               "stop color verbatim");
+    expect_int((int)table.items[2].kind, (int)JPX_XAML_RES_STRING, "string kind");
+    expect_str(table.items[2].value, "Tahoma", "string value");
+    expect_int((int)table.items[3].kind, (int)JPX_XAML_RES_PATH, "path kind");
+    expect_str(table.items[3].value, "M0,0 L0,1 L1,1 L1,0Z", "path data");
+    expect(table.items[3].bbox[2] == 3.0f && table.items[3].bbox[3] == 3.0f,
+           "path bbox");
+    expect_int((int)table.items[4].kind, (int)JPX_XAML_RES_IMAGE, "image kind");
+    expect_str(table.items[4].uri, "StartIconImage.png", "image relative path");
+
+    /* 严格性：空值报错；裸 token（命名颜色）合法。 */
+    write_file("temp/test_theme_css/bad.css", ":root { --X: ; }\n");
+    expect(!JpxHtmlTheme_LoadCss(&table, "temp/test_theme_css/bad.css",
+                                 err, sizeof(err)),
+           "empty value rejected");
+    write_file("temp/test_theme_css/named.css", ":root { --C: Transparent; }\n");
+    expect(JpxHtmlTheme_LoadCss(&table, "temp/test_theme_css/named.css",
+                                err, sizeof(err)),
+           "named color accepted");
+    expect_str(table.count ? table.items[0].color : "", "Transparent",
+               "named color verbatim");
+}
+
 int main(int argc, char **argv) {
     if (argc > 3 && strcmp(argv[1], "--precompile") == 0)
         return precompile(argv[2], argv[3]);
+    if (argc > 3 && strcmp(argv[1], "--compile-css") == 0)
+        return compile_css(argv[2], argv[3]);
     if (argc > 2 && strcmp(argv[1], "--file") == 0) return probe_file(argv[2]);
     if (argc > 2 && strcmp(argv[1], "--dir") == 0) return probe_dir(argv[2]);
     g_probe = argc > 1 && strcmp(argv[1], "--probe") == 0;
@@ -525,6 +604,7 @@ int main(int argc, char **argv) {
     test_merge();
     test_precompiled();
     test_path_limits();
+    test_html_theme();
     test_classic_derive();
     test_respack_command();
     test_errors();

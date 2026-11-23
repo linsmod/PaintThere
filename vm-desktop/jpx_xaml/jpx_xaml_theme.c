@@ -437,24 +437,60 @@ int JpxXamlTheme_LoadFile(JpxXamlResourceTable *table, const char *path,
    u32 offset 引用），xalm.bin 的 record 只持有偏移。 */
 
 #define JPX_XAML_POOL_CAP 131072
+#define JPX_XAML_POOL_REF_CAP 2048
 #define JPX_XAML_XALM_REC 100   /* 1+1+2 + 32 + 32 + 4 + 4 + 16 + 8 */
 
 static char s_pool[JPX_XAML_POOL_CAP];
 static unsigned s_poolLen;
 
-static unsigned pool_add(const char *s) {
+/* 写侧池：先收集引用，再 qsort 去重定偏移。strings.bin 与表序无关
+   （css 编译回的资源顺序可能与 xaml 不同，字节一致要求池规范化）。 */
+static const char *s_refs[JPX_XAML_POOL_REF_CAP];
+static unsigned s_refOff[JPX_XAML_POOL_REF_CAP];
+static int s_refCount;
+
+static void pool_reset(void) { s_refCount = 0; s_poolLen = 0; }
+
+static void pool_ref(const char *s) {
     if (!s) s = "";
-    unsigned off = 0;
-    while (off < s_poolLen) {
-        if (strcmp(s_pool + off, s) == 0) return off;
-        off += (unsigned)strlen(s_pool + off) + 1;
+    for (int i = 0; i < s_refCount; i++) {
+        if (strcmp(s_refs[i], s) == 0) return;
     }
-    size_t n = strlen(s) + 1;
-    if (s_poolLen + n > sizeof(s_pool)) return 0;
-    memcpy(s_pool + s_poolLen, s, n);
-    unsigned at = s_poolLen;
-    s_poolLen += (unsigned)n;
-    return at;
+    if (s_refCount >= JPX_XAML_POOL_REF_CAP) return;
+    s_refs[s_refCount++] = s;
+}
+
+static int cmp_ref(const void *a, const void *b) {
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+static int pool_build(char *err, size_t errCap) {
+    qsort(s_refs, (size_t)s_refCount, sizeof(char *), cmp_ref);
+    int n = 0;
+    for (int i = 0; i < s_refCount; i++) {
+        if (n && strcmp(s_refs[n - 1], s_refs[i]) == 0) continue;
+        s_refs[n++] = s_refs[i];
+    }
+    s_refCount = n;
+    for (int i = 0; i < n; i++) {
+        size_t len = strlen(s_refs[i]) + 1;
+        if (s_poolLen + len > sizeof(s_pool)) {
+            snprintf(err, errCap, "string pool overflow");
+            return 0;
+        }
+        s_refOff[i] = s_poolLen;
+        memcpy(s_pool + s_poolLen, s_refs[i], len);
+        s_poolLen += (unsigned)len;
+    }
+    return 1;
+}
+
+static unsigned pool_off(const char *s) {
+    if (!s) s = "";
+    for (int i = 0; i < s_refCount; i++) {
+        if (strcmp(s_refs[i], s) == 0) return s_refOff[i];
+    }
+    return 0;
 }
 
 static void put_u32le(FILE *f, unsigned v) {
@@ -548,42 +584,42 @@ int JpxXamlTheme_WritePrecompiled(const JpxXamlResourceTable *table, const char 
         return 0;
     }
     mkdir_p(dir);
-    s_poolLen = 0;
-    pool_add("");   /* offset 0 保留为空串 */
+    pool_reset();
+    pool_ref("");   /* offset 0 保留为空串（空串排序最先，规范化后仍为 0） */
 
-    static unsigned keyOff[JPX_XAML_MAX_RESOURCES];
-    static unsigned valueOff[JPX_XAML_MAX_RESOURCES];
-    static unsigned stopColorOff[JPX_XAML_MAX_RESOURCES][VM_PATTERN_MAX_STOPS];
-    static unsigned r2pKey[JPX_XAML_MAX_RESOURCES], r2pPath[JPX_XAML_MAX_RESOURCES];
+    static char r2pName[JPX_XAML_MAX_RESOURCES][160];
+    static const JpxXamlResource *r2pRes[JPX_XAML_MAX_RESOURCES];
     int r2pCount = 0;
     int recCount = 0;   /* 非 IMAGE 资源数（进 xalm.bin record 的） */
 
+    /* 第一遍：收集字符串引用 + 复制图片。 */
     for (int i = 0; i < table->count; i++) {
-        if (table->items[i].kind != JPX_XAML_RES_IMAGE) recCount++;
         const JpxXamlResource *r = &table->items[i];
         if (r->kind == JPX_XAML_RES_IMAGE) {
             if (!r->uri[0]) continue;   /* DynamicResource 形式，无路径可打包 */
-            char name[160];
-            image_name(r, name, sizeof(name));
+            image_name(r, r2pName[r2pCount], sizeof(r2pName[0]));
             char dst[512];
-            snprintf(dst, sizeof(dst), "%s/%s", dir, name);
+            snprintf(dst, sizeof(dst), "%s/%s", dir, r2pName[r2pCount]);
             if (!copy_file(r->uri, dst, err, errCap)) return 0;
-            r2pKey[r2pCount] = pool_add(r->key);
-            r2pPath[r2pCount] = pool_add(name);
+            r2pRes[r2pCount] = r;
+            pool_ref(r->key);
+            pool_ref(r2pName[r2pCount]);
             r2pCount++;
             continue;
         }
-        keyOff[i] = pool_add(r->key);
+        recCount++;
+        pool_ref(r->key);
         const char *val = "";
         if (r->kind == JPX_XAML_RES_COLOR) val = r->color;
         else if (r->kind == JPX_XAML_RES_LINEAR_GRADIENT ||
                  r->kind == JPX_XAML_RES_RADIAL_GRADIENT) val = r->direction;
         else if (r->kind == JPX_XAML_RES_STRING || r->kind == JPX_XAML_RES_PATH)
             val = r->value;
-        valueOff[i] = pool_add(val);
+        pool_ref(val);
         for (int s = 0; s < r->stopCount && s < VM_PATTERN_MAX_STOPS; s++)
-            stopColorOff[i][s] = pool_add(r->stops[s].color);
+            pool_ref(r->stops[s].color);
     }
+    if (!pool_build(err, errCap)) return 0;
 
     char path[512];
     FILE *f;
@@ -604,6 +640,12 @@ int JpxXamlTheme_WritePrecompiled(const JpxXamlResourceTable *table, const char 
     for (int i = 0; i < table->count; i++) {
         const JpxXamlResource *r = &table->items[i];
         if (r->kind == JPX_XAML_RES_IMAGE) continue;
+        const char *val = "";
+        if (r->kind == JPX_XAML_RES_COLOR) val = r->color;
+        else if (r->kind == JPX_XAML_RES_LINEAR_GRADIENT ||
+                 r->kind == JPX_XAML_RES_RADIAL_GRADIENT) val = r->direction;
+        else if (r->kind == JPX_XAML_RES_STRING || r->kind == JPX_XAML_RES_PATH)
+            val = r->value;
         unsigned char rec[JPX_XAML_XALM_REC];
         memset(rec, 0, sizeof(rec));
         rec[0] = (unsigned char)r->kind;
@@ -616,13 +658,13 @@ int JpxXamlTheme_WritePrecompiled(const JpxXamlResourceTable *table, const char 
             rec[5 + s * 4] = (unsigned char)(bits >> 8);
             rec[6 + s * 4] = (unsigned char)(bits >> 16);
             rec[7 + s * 4] = (unsigned char)(bits >> 24);
-            unsigned c = stopColorOff[i][s];
+            unsigned c = pool_off(r->stops[s].color);
             rec[36 + s * 4] = (unsigned char)c;
             rec[37 + s * 4] = (unsigned char)(c >> 8);
             rec[38 + s * 4] = (unsigned char)(c >> 16);
             rec[39 + s * 4] = (unsigned char)(c >> 24);
         }
-        unsigned ko = keyOff[i], vo = valueOff[i];
+        unsigned ko = pool_off(r->key), vo = pool_off(val);
         rec[68] = (unsigned char)ko; rec[69] = (unsigned char)(ko >> 8);
         rec[70] = (unsigned char)(ko >> 16); rec[71] = (unsigned char)(ko >> 24);
         rec[72] = (unsigned char)vo; rec[73] = (unsigned char)(vo >> 8);
@@ -649,8 +691,10 @@ int JpxXamlTheme_WritePrecompiled(const JpxXamlResourceTable *table, const char 
     put_u32le(f, (unsigned)r2pCount);
     put_u32le(f, s_poolLen);
     for (int i = 0; i < r2pCount; i++) {
-        put_u32le(f, r2pKey[i]);
-        put_u32le(f, r2pPath[i]);
+        unsigned k = pool_off(r2pRes[i]->key);
+        unsigned p = pool_off(r2pName[i]);
+        put_u32le(f, k);
+        put_u32le(f, p);
     }
     fclose(f);
     return 1;

@@ -118,7 +118,7 @@ def parse_args(argv):
     port_override = None
     no_browser = False
     exe_args = []
-    path_flags = ("--theme", "--font")
+    path_flags = ("--theme", "--font", "--theme-css")
     expect_path = False
     i = 0
     while i < len(argv):

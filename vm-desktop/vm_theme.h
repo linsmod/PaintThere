@@ -59,6 +59,7 @@ typedef struct {
     int gap;
     int fontId;
     int fontSize;
+    int panelHeight;   /* 任务栏高度；0 表示用 VM_SHELL_DEFAULT_HEIGHT */
 } VmTheme;
 
 const VmTheme *VmTheme_Default(void);

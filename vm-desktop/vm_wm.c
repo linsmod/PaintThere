@@ -486,6 +486,23 @@ void VmWm_SetWheelHandler(VmWm *wm, int id, VmWindowWheelHandler handler, void *
     win->wheelUserData = userData;
 }
 
+void VmWm_SetWindowPaint(VmWm *wm, int id, VmWindowPaint paint, void *userData) {
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    if (!win) return;
+    win->paint = paint;
+    if (userData) win->userData = userData;
+    layer_dirty(win, "paint");
+    wm_dirty(wm, "set-paint");
+}
+
+void VmWm_SetWindowClickHandler(VmWm *wm, int id, VmWindowClickHandler handler,
+                                void *userData) {
+    VmWindow *win = VmWm_FindWindow(wm, id);
+    if (!win) return;
+    win->clickHandler = handler;
+    win->clickUserData = userData;
+}
+
 /* --- tiny JSON field extractors (input events are simple flat objects) --- */
 static const char *find_key(const char *json, const char *key) {
     static char scratch[128];
@@ -648,6 +665,14 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
         }
         if (size > 0 && rect_contains(minRect, x, y)) {
             VmWm_Minimize(wm, hit->id);
+            sync_pointer_state(wm);
+            return 1;
+        }
+    }
+
+    /* 手绘窗口（任务栏）没有焦点，按下即交给它自己的命中逻辑，命中就消费掉。 */
+    if (ownsFocus && isDown && button == 0 && hit && hit->clickHandler) {
+        if (hit->clickHandler(hit->id, x, y, hit->clickUserData)) {
             sync_pointer_state(wm);
             return 1;
         }
@@ -933,7 +958,7 @@ static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
     }
 
     /* 窗口内容裁到 body：防止控件溢出画到别的窗口上。 */
-    int clipped = wm->contentClip && win->layout && bodyW > 0 && bodyH > 0;
+    int clipped = wm->contentClip && (win->layout || win->paint) && bodyW > 0 && bodyH > 0;
     int decorCount = out->count;   /* 装饰命令到此为止，截断时回退到这里 */
     if (clipped) {
         snprintf(idbuf, sizeof(idbuf), "w%d_clip", win->id);
@@ -941,7 +966,11 @@ static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
     }
 
     int truncated = 0;
-    if (win->layout && win->clayCtx) {
+    if (win->paint) {
+        /* 手绘窗口：内容和装饰共用同一份坐标约定，paint 直接往缓冲里追加。 */
+        win->paint(out, bodyX, bodyY, bodyW, bodyH, win->userData);
+        truncated = (out->count >= out->cap);
+    } else if (win->layout && win->clayCtx) {
         Clay_SetCurrentContext(win->clayCtx);
         /* 让宿主知道「当前在跑谁的布局」：布局回调里发的作废能收窄到这一个窗口，
            而不是退化成全量作废（任务栏这类非 JPX 窗口尤其需要）。 */

@@ -443,8 +443,8 @@ static void test_shell(void) {
     }
 
     /* 点任务栏条目：最小化的窗口被恢复并获得焦点。
-       条目顺序 = 创建序；布局 = 左内边距 6 + 开始按钮 72 + 间距 6，
-       条目宽 110、间距 6，所以第 i 条中心 = 6 + 72 + 6 + i*116 + 55。 */
+       条目顺序 = 创建序；布局 = 左内边距 3 + 开始按钮 78 + 间距 3，
+       条目宽 110、间距 3，所以第 i 条中心 = 3 + 78 + 3 + i*113 + 55。 */
     VmWm_Minimize(wm, 1);
     expect_int(VmWm_FocusId(wm), -1, "no focus after minimize");
     int ord[VM_WM_MAX_WINDOWS];
@@ -454,7 +454,7 @@ static void test_shell(void) {
     expect(idx >= 0, "minimized window still listed in taskbar");
     if (idx >= 0) {
         char payload[160];
-        int cx = 6 + 72 + 6 + idx * 116 + 55;
+        int cx = 3 + 78 + 3 + idx * 113 + 55;
         snprintf(payload, sizeof(payload),
                  "{\"kind\":\"mousedown\",\"x\":%d,\"y\":580,\"button\":0,\"clientId\":\"A\"}",
                  cx);

@@ -34,6 +34,7 @@ static const VmTheme kDefaultTheme = {
     .gap = 10,
     .fontId = 0,
     .fontSize = 14,
+    .panelHeight = 36,
 };
 
 const VmTheme *VmTheme_Default(void) {

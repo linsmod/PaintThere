@@ -4,47 +4,22 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "vm_font.h"
 
-#include <time.h>
-
-/* shell 已在 Clay 层，直接解析 theme 的 rgba() 字符串；vm 层不依赖 Clay，
-   因此这里做本地解析而不是把 Jpx__Color 上提（会破坏层依赖）。 */
-static float theme_float(const char **s) {
-    char *end = NULL;
-    float v = strtof(*s, &end);
-    if (end == *s) return 0.0f;
-    *s = end;
-    return v;
-}
-
-static Clay_Color theme_color(const char *text, float alphaMul, Clay_Color fallback) {
-    if (!text || !*text) return fallback;
-    const char *paren = strchr(text, '(');
-    if (!paren) return fallback;
-    const char *p = paren + 1;
-    float r = theme_float(&p);
-    while (*p && (*p == ',' || *p == ' ')) p++;
-    float g = theme_float(&p);
-    while (*p && (*p == ',' || *p == ' ')) p++;
-    float b = theme_float(&p);
-    float a = 1.0f;
-    while (*p && (*p == ',' || *p == ' ')) p++;
-    if (*p && *p != ')') a = theme_float(&p);
-    /* CSS 的 0..1 alpha 要转成 Clay 的 0..255，与 Jpx__Color 保持一致。
-       漏掉这步会让 alpha≈0.63 被当成 0..255，序列化后变成 0.002（几乎全透明）。 */
-    if (a <= 1.0f) a *= 255.0f;
-    return (Clay_Color){r, g, b, a * alphaMul};
-}
-
 /* 任务栏 = 一个无装饰/置顶/不可拖动/不抢焦点的特殊窗口。
-   z 序、命中、Clay 指针、键盘全部复用 WM 现成路径，WM 不需要 panel 区概念。 */
+   内容用 VmWm_SetWindowPaint 手绘：Clay 的 backgroundColor 只吃单色，
+   XP 任务栏需要多 stop 渐变与位图填充。命中用 VmWm_SetWindowClickHandler
+   （NOFOCUS 窗口拿不到焦点，只能走按下通道）。 */
+
+#define SHELL_START_W 78
+#define SHELL_ITEM_W 110
+#define SHELL_TRAY_W 76
+#define SHELL_PAD 3
 
 struct VmShell {
     VmWm *wm;
-    Clay_Context *ctx;
-    void *arenaMem;
     int width, height;
     const VmTheme *theme;
     VmShellStartHandler startHandler;
@@ -53,60 +28,208 @@ struct VmShell {
     int lastDownSeq;
 };
 
-/* Clay_OnHover 只回传 void*，单进程一个任务栏，用静态回指取 wm。 */
 static VmShell *g_shell;
 
-static void shell_clay_error(Clay_ErrorData data) {
-    fwrite(data.errorText.chars, 1, data.errorText.length, stderr);
+static void append_rect(VmCmdBuffer *out, const char *id, int x, int y, int w, int h,
+                        const char *paint, float radius) {
+    VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_RECT, id);
+    if (!c) return;
+    VmRect r = {(float)x, (float)y, (float)w, (float)h};
+    c->rect = r;
+    c->args.drawRect.rect = r;
+    VmDisplay_CopyStr(c->args.drawRect.paint, sizeof(c->args.drawRect.paint), paint);
+    c->args.drawRect.cornerRadius = radius;
 }
 
-static Clay_Dimensions shell_measure(Clay_StringSlice text, Clay_TextElementConfig *config,
-                                     void *userData) {
-    (void)userData;
-    VmFontMetrics m = VmFont_Measure(config->fontId, config->fontSize, text.chars, text.length);
-    return (Clay_Dimensions){(float)m.width, (float)m.lineStep};
+static void append_border(VmCmdBuffer *out, const char *id, int x, int y, int w, int h,
+                          int width, const char *color) {
+    VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_BORDER, id);
+    if (!c) return;
+    VmRect r = {(float)x, (float)y, (float)w, (float)h};
+    c->rect = r;
+    c->args.drawBorder.rect = r;
+    VmDisplay_CopyStr(c->args.drawBorder.paint, sizeof(c->args.drawBorder.paint), color);
+    c->args.drawBorder.widths[0] = c->args.drawBorder.widths[1] = (uint16_t)width;
+    c->args.drawBorder.widths[2] = c->args.drawBorder.widths[3] = (uint16_t)width;
 }
 
-static void shell_item_press(Clay_ElementId id, Clay_PointerData pointerData, void *userData) {
-    (void)id;
-    (void)pointerData;
-    if (!g_shell) return;
-    VmWm *wm = g_shell->wm;
-    if (!wm->pointerDown) return;
-    /* 兜底：Clay 的 onHover 在个别时序下会带着旧位置回调，指针不在任务栏
-       就直接丢弃，避免在别的窗口上按下时误触条目。 */
+static void append_text(VmCmdBuffer *out, const char *id, int x, int y, int w, int h,
+                        const char *text, int fontId, int fontSize, const char *color) {
+    VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_TEXT, id);
+    if (!c) return;
+    VmRect box = {(float)x, (float)y, (float)w, (float)h};
+    c->rect = box;
+    c->args.drawText.rect = box;
+    VmDisplay_CopyStr(c->args.drawText.text, sizeof(c->args.drawText.text), text);
+    c->args.drawText.fontId = (uint16_t)fontId;
+    c->args.drawText.fontSize = (uint16_t)fontSize;
+    VmDisplay_CopyStr(c->args.drawText.color, sizeof(c->args.drawText.color), color);
+}
+
+/* 按像素宽截断 UTF-8：从末尾去掉完整字符，直到放得下。 */
+static void truncate_utf8(int fontId, int px, const char *text, int maxW,
+                          char *out, size_t cap) {
+    snprintf(out, cap, "%s", text ? text : "");
+    if (maxW <= 0) { out[0] = '\0'; return; }
+    while (out[0] && VmFont_Width(fontId, px, out, -1) > maxW) {
+        size_t n = strlen(out);
+        while (n > 0) {
+            n--;
+            if (((unsigned char)out[n] & 0xC0) != 0x80) break;
+        }
+        out[n] = '\0';
+    }
+}
+
+/* 绘制与命中共用的几何：开始按钮固定宽，条目按创建序排列。 */
+typedef struct {
+    int startX, startW;
+    int itemsX;
+    int n;
+    int ids[VM_WM_MAX_WINDOWS];
+} ShellLayout;
+
+static void shell_geometry(VmShell *sh, ShellLayout *L) {
+    memset(L, 0, sizeof(*L));
+    L->startX = SHELL_PAD;
+    L->startW = SHELL_START_W;
+    L->itemsX = L->startX + L->startW + SHELL_PAD;
+    L->n = VmWm_EnumerateCreated(sh->wm, L->ids, VM_WM_MAX_WINDOWS);
+}
+
+static int shell_item_visible(VmShell *sh, int id) {
+    VmWindow *win = VmWm_FindWindow(sh->wm, id);
+    if (!win || win->id == VM_SHELL_WINDOW_ID) return 0;
+    /* 桌面图标层与弹出菜单是无装饰窗口，不占任务栏条目。 */
+    return (win->flags & VM_WIN_UNDECORATED) == 0;
+}
+
+static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *userData) {
+    VmShell *sh = (VmShell *)userData;
+    if (!sh || !sh->theme) return;
+    const VmTheme *t = sh->theme;
+    const int fontId = t->fontId;
+    const int fontSize = t->fontSize > 0 ? t->fontSize : 13;
+    const int lineStep = VmFont_LineHeight(fontId, fontSize) > 0
+                             ? VmFont_LineHeight(fontId, fontSize) : fontSize;
+
+    ShellLayout L;
+    shell_geometry(sh, &L);
+
+    /* 开始按钮：主题给了渐变皮肤就用 s_start，否则退回强调色。 */
+    const int by = y + 2;
+    const int bh = h - 4;
+    const char *startPaint = t->startFrom ? "s_start" : t->accentColor;
+    append_rect(out, "tb_start", x + L.startX, by, L.startW, bh, startPaint,
+                t->startFrom ? 4.0f : 6.0f);
     {
-        VmWindow *self = VmWm_FindWindow(wm, VM_SHELL_WINDOW_ID);
-        if (!self) return;
-        if (wm->pointerX < self->x || wm->pointerX >= self->x + self->w ||
-            wm->pointerY < self->y || wm->pointerY >= self->y + self->h) return;
+        const char *label = "开始";
+        int tw = VmFont_Width(fontId, fontSize, label, -1);
+        const char *color = t->startTextColor ? t->startTextColor : t->accentTextColor;
+        append_text(out, "tb_start_label",
+                    x + L.startX + (L.startW - tw) / 2, by + (bh - lineStep) / 2,
+                    tw > 0 ? tw : L.startW, lineStep, label, fontId, fontSize, color);
     }
-    /* 按下沿由 WM 的按下序号推导，不用 Clay 的 PRESSED_THIS_FRAME：
-       后者只在有指针事件的帧推进，同一次按下会在后续重建帧里重复触发
-       （表现为「开始菜单开了立刻又关」）。 */
-    if (wm->pointerDownSeq == g_shell->lastDownSeq) return;
-    g_shell->lastDownSeq = wm->pointerDownSeq;
-    /* -1 是开始按钮：回调交给宿主，shell 不打开任何窗口。 */
-    intptr_t tag = (intptr_t)userData;
-    if (tag < 0) {
-        if (g_shell->startHandler) g_shell->startHandler(g_shell->startUserData);
-        return;
+
+    /* 任务条目：按创建序固定排列，标题超宽按像素截断。 */
+    int ix = x + L.itemsX;
+    for (int i = 0; i < L.n; i++) {
+        if (!shell_item_visible(sh, L.ids[i])) continue;
+        VmWindow *win = VmWm_FindWindow(sh->wm, L.ids[i]);
+        if (!win) continue;
+        const char *paint;
+        if (win->focused && t->taskButtonActiveFrom) paint = "s_task_active";
+        else if (t->taskButtonFrom) paint = "s_task";
+        else paint = win->focused ? t->accentColor : t->fgColor;
+
+        char idbuf[48];
+        snprintf(idbuf, sizeof(idbuf), "tb_item_%d", win->id);
+        append_rect(out, idbuf, ix, by, SHELL_ITEM_W, bh, paint, 3.0f);
+
+        /* XP 条目有 1px 深色内边 + 亮色内线；没有皮肤时留空。 */
+        if (t->taskButtonFrom) {
+            snprintf(idbuf, sizeof(idbuf), "tb_item_edge_%d", win->id);
+            append_border(out, idbuf, ix, by, SHELL_ITEM_W, bh, 1, "rgba(0,0,0,0.28)");
+        }
+
+        char label[128];
+        truncate_utf8(fontId, fontSize, win->title, SHELL_ITEM_W - 14, label, sizeof(label));
+        snprintf(idbuf, sizeof(idbuf), "tb_item_text_%d", win->id);
+        const char *color = t->taskButtonTextColor ? t->taskButtonTextColor : t->accentTextColor;
+        append_text(out, idbuf, ix + 7, by + (bh - lineStep) / 2,
+                    SHELL_ITEM_W - 14, lineStep, label, fontId, fontSize, color);
+        ix += SHELL_ITEM_W + SHELL_PAD;
     }
-    int wid = (int)tag;
-    VmWindow *win = VmWm_FindWindow(g_shell->wm, wid);
+
+    /* 右侧托盘：XP 有独立浅色区，时钟落在其中。 */
+    int trayX = x + w - SHELL_TRAY_W;
+    if (t->trayFrom) {
+        append_rect(out, "tb_tray", trayX, y, SHELL_TRAY_W, h, "s_tray", 0.0f);
+        append_border(out, "tb_tray_edge", trayX, y, 1, h, 1, "rgba(0,0,0,0.22)");
+    }
+    {
+        static char clock[16];
+        time_t now = time(NULL);
+        struct tm *tmVal = localtime(&now);
+        clock[0] = '\0';
+        if (tmVal) strftime(clock, sizeof(clock), "%H:%M", tmVal);
+        int cw = VmFont_Width(fontId, fontSize, clock, -1);
+        const char *color = t->clockTextColor ? t->clockTextColor : t->fgColor;
+        append_text(out, "tb_clock", trayX + (SHELL_TRAY_W - cw) / 2,
+                    y + (h - lineStep) / 2, cw > 0 ? cw : SHELL_TRAY_W, lineStep,
+                    clock, fontId, fontSize, color);
+    }
+}
+
+/* 任务栏条目语义与桌面系统一致：最小化的还原、最大化的先还原尺寸、
+   已聚焦的收起为最小化、其余聚焦到前面。 */
+static void shell_activate_window(VmShell *sh, int wid) {
+    VmWindow *win = VmWm_FindWindow(sh->wm, wid);
     if (!win) return;
-    /* 任务栏条目语义与桌面系统一致：最小化的还原、最大化的先还原尺寸、
-       已聚焦的收起为最小化、其余聚焦到前面。 */
     if (win->minimized) {
-        VmWm_Restore(g_shell->wm, wid);
+        VmWm_Restore(sh->wm, wid);
     } else if (win->maximized) {
-        VmWm_Unmaximize(g_shell->wm, wid);
-        VmWm_Focus(g_shell->wm, wid);
+        VmWm_Unmaximize(sh->wm, wid);
+        VmWm_Focus(sh->wm, wid);
     } else if (win->focused) {
-        VmWm_Minimize(g_shell->wm, wid);
+        VmWm_Minimize(sh->wm, wid);
     } else {
-        VmWm_Focus(g_shell->wm, wid);
+        VmWm_Focus(sh->wm, wid);
     }
+}
+
+static int shell_click(int winId, int x, int y, void *userData) {
+    (void)winId;
+    VmShell *sh = (VmShell *)userData;
+    if (!sh) return 0;
+    VmWindow *self = VmWm_FindWindow(sh->wm, VM_SHELL_WINDOW_ID);
+    if (!self) return 0;
+    if (x < self->x || x >= self->x + self->w ||
+        y < self->y || y >= self->y + self->h) return 0;
+    /* 按下沿：同一次按下只处理一次，与后续重建帧数无关。 */
+    if (sh->wm->pointerDownSeq == sh->lastDownSeq) return 0;
+    sh->lastDownSeq = sh->wm->pointerDownSeq;
+
+    const int lx = x - self->x;
+    ShellLayout L;
+    shell_geometry(sh, &L);
+
+    if (lx >= L.startX && lx < L.startX + L.startW) {
+        if (sh->startHandler) sh->startHandler(sh->startUserData);
+        return 1;
+    }
+
+    int ix = L.itemsX;
+    for (int i = 0; i < L.n; i++) {
+        if (!shell_item_visible(sh, L.ids[i])) continue;
+        if (lx >= ix && lx < ix + SHELL_ITEM_W) {
+            shell_activate_window(sh, L.ids[i]);
+            return 1;
+        }
+        ix += SHELL_ITEM_W + SHELL_PAD;
+    }
+    /* 点在任务栏空白处也消费，避免穿透到桌面窗口。 */
+    return 1;
 }
 
 /* 窗口集合 / 焦点 / 最小化变化：条目与高亮都要立刻更新，
@@ -123,132 +246,6 @@ void VmShell_SetStartHandler(VmShell *shell, VmShellStartHandler handler, void *
     shell->startUserData = userData;
 }
 
-static Clay_RenderCommandArray shell_layout(void *userData) {
-    VmShell *sh = (VmShell *)userData;
-    const VmTheme *t = sh->theme;
-    /* 任务栏由 Clay 布局，填充只支持单色：XP 皮肤的渐变由窗口体的 drawRect 负责，
-       这里取渐变里的「代表色」保持色相一致。 */
-    const char *startPaint = t->startFrom ? t->startFrom : t->accentColor;
-    const char *startText = t->startTextColor ? t->startTextColor : t->accentTextColor;
-    const char *taskText = t->taskButtonTextColor ? t->taskButtonTextColor : t->accentTextColor;
-    const char *clockText = t->clockTextColor ? t->clockTextColor : t->fgColor;
-    const int fontSize = t->fontSize > 0 ? t->fontSize : 13;
-
-    Clay_BeginLayout();
-    CLAY(CLAY_ID("taskbar"), {
-        .layout = {
-            .sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0)},
-            .padding = {3, 0, 2, 2},
-            .childGap = 3,
-            .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
-        },
-        .backgroundColor = (Clay_Color){0, 0, 0, 0},
-    }) {
-        /* 开始按钮：任务栏只发回调，菜单由宿主当作普通窗口管理。 */
-        CLAY(CLAY_ID("tb_start"), {
-            .layout = {
-                .sizing = {CLAY_SIZING_FIXED(78), CLAY_SIZING_FIXED((float)(sh->height - 4))},
-                .padding = {12, 8, 0, 0},
-                .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
-            },
-            .backgroundColor = theme_color(startPaint,
-                                           Clay_Hovered() ? 1.0f : 0.92f,
-                                           (Clay_Color){124, 122, 255, 200}),
-            .cornerRadius = CLAY_CORNER_RADIUS(t->startFrom ? 4 : 6),
-        }) {
-            Clay_OnHover(shell_item_press, (void *)(intptr_t)-1);
-            Clay_String label = {.length = 6, .chars = "开始"};
-            CLAY_TEXT(label, CLAY_TEXT_CONFIG({
-                .fontId = 0, .fontSize = fontSize,
-                .textColor = theme_color(startText, 1.0f,
-                                         (Clay_Color){255, 255, 255, 255}),
-            }));
-        }
-
-        int ids[VM_WM_MAX_WINDOWS];
-        /* 条目按创建序固定排列：z 序会随聚焦/raise 变化，条目会在点击时来回跳。 */
-        int n = VmWm_EnumerateCreated(sh->wm, ids, VM_WM_MAX_WINDOWS);
-        for (int i = 0; i < n; i++) {
-            VmWindow *win = VmWm_FindWindow(sh->wm, ids[i]);
-            if (!win || win->id == VM_SHELL_WINDOW_ID) continue;
-            /* 桌面图标层与弹出菜单是无装饰窗口，不占任务栏条目。 */
-            if (win->flags & VM_WIN_UNDECORATED) continue;
-            Clay_Color bg;
-            Clay_Color fg;
-            if (win->focused) {
-                /* XP 聚焦条目是更深的蓝；现代主题仍用 accent 高亮。 */
-                const char *paint = t->taskButtonActiveFrom ? t->taskButtonActiveFrom
-                                                            : t->accentColor;
-                bg = theme_color(paint, t->taskButtonActiveFrom ? 1.0f : 0.82f,
-                                 (Clay_Color){124, 122, 255, 210});
-                fg = theme_color(taskText, 1.0f, (Clay_Color){255, 255, 255, 255});
-            } else if (win->minimized) {
-                const char *paint = t->taskButtonFrom ? t->taskButtonFrom : t->fgColor;
-                bg = theme_color(paint, t->taskButtonFrom ? 1.0f : 0.05f,
-                                 (Clay_Color){255, 255, 255, 12});
-                fg = theme_color(taskText, t->taskButtonFrom ? 0.65f : 0.43f,
-                                 (Clay_Color){255, 255, 255, 110});
-            } else {
-                const char *paint = t->taskButtonFrom ? t->taskButtonFrom : t->fgColor;
-                bg = theme_color(paint, t->taskButtonFrom ? 1.0f : 0.12f,
-                                 (Clay_Color){255, 255, 255, 30});
-                fg = theme_color(taskText, t->taskButtonFrom ? 1.0f : 0.86f,
-                                 (Clay_Color){226, 231, 240, 220});
-            }
-            CLAY(CLAY_IDI("tb_item", (uint32_t)win->id), {
-                .layout = {
-                    .sizing = {CLAY_SIZING_FIXED(110), CLAY_SIZING_FIXED((float)(sh->height - 4))},
-                    .padding = {8, 6, 0, 0},
-                    .childAlignment = {.y = CLAY_ALIGN_Y_CENTER},
-                },
-                /* 单行 + 水平裁剪：标题比条目长时截断，不能换行撑出任务栏。 */
-                .clip = {.horizontal = true, .childOffset = {0, 0}},
-                .backgroundColor = bg,
-                .cornerRadius = CLAY_CORNER_RADIUS(3),
-            }) {
-                Clay_OnHover(shell_item_press, (void *)(intptr_t)win->id);
-                Clay_String label = {
-                    .length = (int32_t)strlen(win->title ? win->title : ""),
-                    .chars = win->title ? win->title : "",
-                };
-                CLAY_TEXT(label, CLAY_TEXT_CONFIG({
-                    .fontId = 0, .fontSize = fontSize, .textColor = fg,
-                    .wrapMode = CLAY_TEXT_WRAP_NONE,
-                }));
-            }
-        }
-
-        /* 弹簧把托盘顶到最右：窗口少时任务按钮不跟着跑到右边缘。 */
-        CLAY(CLAY_ID("tb_fill"), {
-            .layout = {.sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1)}},
-        }) {}
-
-        /* 右侧托盘：XP 有独立的浅蓝区，时钟落在其中。
-           Clay 保留字符串指针到 EndLayout 之后，必须是 static。 */
-        static char clock[16] = {0};
-        time_t now = time(NULL);
-        struct tm *tmVal = localtime(&now);
-        if (tmVal) strftime(clock, sizeof(clock), "%H:%M", tmVal);
-        CLAY(CLAY_ID("tb_tray"), {
-            .layout = {
-                .sizing = {CLAY_SIZING_FIXED(76), CLAY_SIZING_GROW(0)},
-                .childAlignment = {.x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER},
-            },
-            .backgroundColor = t->trayFrom
-                ? theme_color(t->trayFrom, 1.0f, (Clay_Color){0, 0, 0, 0})
-                : (Clay_Color){0, 0, 0, 0},
-        }) {
-            Clay_String label = {.length = (int32_t)strlen(clock), .chars = clock};
-            CLAY_TEXT(label, CLAY_TEXT_CONFIG({
-                .fontId = 0, .fontSize = fontSize,
-                .textColor = theme_color(clockText, 0.95f,
-                                         (Clay_Color){226, 231, 240, 235}),
-            }));
-        }
-    }
-    return Clay_EndLayout(0.016f);
-}
-
 VmShell *VmShell_Create(VmWm *wm, const VmTheme *theme, int height) {
     if (!wm) return NULL;
     if (height <= 0) height = VM_SHELL_DEFAULT_HEIGHT;
@@ -260,24 +257,15 @@ VmShell *VmShell_Create(VmWm *wm, const VmTheme *theme, int height) {
     sh->width = wm->width;
     sh->height = height;
 
-    uint64_t total = Clay_MinMemorySize();
-    sh->arenaMem = malloc((size_t)total);
-    if (!sh->arenaMem) { free(sh); return NULL; }
-    Clay_Arena arena = Clay_CreateArenaWithCapacityAndMemory(total, sh->arenaMem);
-    sh->ctx = Clay_Initialize(arena, (Clay_Dimensions){(float)sh->width, (float)height},
-                              (Clay_ErrorHandler){shell_clay_error});
-    if (!sh->ctx) { free(sh->arenaMem); free(sh); return NULL; }
-    Clay_SetCurrentContext(sh->ctx);
-    Clay_SetMeasureTextFunction(shell_measure, NULL);
-
     int y = wm->height - height;
     VmWindow *win = VmWm_AddWindow(wm, VM_SHELL_WINDOW_ID, "taskbar",
-                                   0, y, sh->width, height, shell_layout, sh);
-    if (!win) { free(sh->arenaMem); free(sh); return NULL; }
-    win->clayCtx = sh->ctx;
+                                   0, y, sh->width, height, NULL, sh);
+    if (!win) { free(sh); return NULL; }
     win->bodyStyleId = sh->theme->panelStyleId;
     VmWm_SetWindowFlags(wm, VM_SHELL_WINDOW_ID,
                         VM_WIN_UNDECORATED | VM_WIN_TOPMOST | VM_WIN_PINNED | VM_WIN_NOFOCUS);
+    VmWm_SetWindowPaint(wm, VM_SHELL_WINDOW_ID, shell_paint, sh);
+    VmWm_SetWindowClickHandler(wm, VM_SHELL_WINDOW_ID, shell_click, sh);
 
     /* 工作区 = 画布减去任务栏：最大化与拖动钳制都按它算。 */
     VmWm_SetWorkArea(wm, 0, 0, wm->width, wm->height - height);
@@ -292,7 +280,6 @@ void VmShell_Destroy(VmShell *shell) {
     if (!shell) return;
     VmWm_RemoveWindow(shell->wm, VM_SHELL_WINDOW_ID);
     if (g_shell == shell) g_shell = NULL;
-    free(shell->arenaMem);
     free(shell);
 }
 
@@ -302,8 +289,20 @@ void VmShell_SetTheme(VmShell *shell, const VmTheme *theme) {
     VmShell_Refresh(shell);
 }
 
+void VmShell_SetHeight(VmShell *shell, int height) {
+    if (!shell || height <= 0 || height == shell->height) return;
+    VmWindow *win = VmWm_FindWindow(shell->wm, VM_SHELL_WINDOW_ID);
+    if (!win) return;
+    shell->height = height;
+    /* 直接改矩形：任务栏钉在底部，不走 VmWm_Move（那会按工作区钳制）。 */
+    win->y = shell->wm->height - height;
+    win->h = height;
+    VmWm_SetWorkArea(shell->wm, 0, 0, shell->wm->width, shell->wm->height - height);
+    VmShell_Refresh(shell);
+}
+
 void VmShell_Refresh(VmShell *shell) {
     if (!shell) return;
-    /* 只有任务栏自己在变：窗口列表由 layout 每帧重读，不需要作废其他窗口。 */
+    /* 只有任务栏自己在变：窗口列表由 paint 每帧重读，不需要作废其他窗口。 */
     VmWm_InvalidateWindow(shell->wm, VM_SHELL_WINDOW_ID);
 }

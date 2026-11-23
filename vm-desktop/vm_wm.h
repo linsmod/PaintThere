@@ -25,6 +25,12 @@ extern "C" {
 #define VM_WM_LAYER_DEFAULT_QUOTA 1024
 
 typedef Clay_RenderCommandArray (*VmWindowLayout)(void *userData);
+/* 手绘窗口内容：直接往 out 追加绘制命令（坐标已是画布坐标）。
+   用于需要渐变/图片填充这类 Clay 布局表达不了的界面（任务栏）。 */
+typedef void (*VmWindowPaint)(VmCmdBuffer *out, int x, int y, int w, int h, void *userData);
+/* 手绘窗口的点击：按下时把画布坐标交给窗口自己的命中逻辑，返回 1 表示已消费。
+   NOFOCUS 窗口（任务栏）拿不到焦点，只能走这条通道。 */
+typedef int (*VmWindowClickHandler)(int windowId, int x, int y, void *userData);
 /* Guest-internal key handler: return 1 if the key was consumed. */
 typedef int (*VmWindowKeyHandler)(int windowId, const char *key, const char *code,
                                   int isDown, void *userData);
@@ -75,6 +81,9 @@ typedef struct {
     Clay_Context *clayCtx;
     VmWindowLayout layout;
     void *userData;
+    VmWindowPaint paint;              /* 非空时优先于 layout：直接输出绘制命令 */
+    VmWindowClickHandler clickHandler;
+    void *clickUserData;
     VmWindowKeyHandler keyHandler;
     void *keyUserData;
     VmWindowWheelHandler wheelHandler;
@@ -166,6 +175,10 @@ void VmWm_Focus(VmWm *wm, int id);
 void VmWm_Raise(VmWm *wm, int id);
 void VmWm_Move(VmWm *wm, int id, int x, int y);
 void VmWm_SetKeyHandler(VmWm *wm, int id, VmWindowKeyHandler handler, void *userData);
+/* 手绘内容：设置后该窗口不再跑 Clay 布局，装饰之外的命令全部由 paint 产出。 */
+void VmWm_SetWindowPaint(VmWm *wm, int id, VmWindowPaint paint, void *userData);
+void VmWm_SetWindowClickHandler(VmWm *wm, int id, VmWindowClickHandler handler,
+                                void *userData);
 /* 最近一次键盘事件的修饰键；keyHandler 内部调用即得该次事件的修饰键。 */
 void VmWm_KeyModifiers(VmWm *wm, int *ctrl, int *shift, int *alt);
 void VmWm_SetWheelHandler(VmWm *wm, int id, VmWindowWheelHandler handler, void *userData);

@@ -19,14 +19,16 @@ typedef void (*VmShellStartHandler)(void *userData);
 void VmShell_SetStartHandler(VmShell *shell, VmShellStartHandler handler, void *userData);
 
 /* 任务是「特殊窗口」：无装饰、置顶、不可拖动、不抢焦点。
-   这样 z 序、命中、Clay 指针、键盘路径全部复用 WM 现成实现。
-   字体由 wm 使用的主题决定，度量走 vm_font，因此调用前需先 VmFont_LoadFile。 */
+   内容用 VmWm_SetWindowPaint 手绘（需要渐变/位图填充，Clay 只能单色），
+   命中用 VmWm_SetWindowClickHandler。字体度量走 vm_font，调用前需先 VmFont_LoadFile。 */
 VmShell *VmShell_Create(VmWm *wm, const VmTheme *theme, int height);
 void VmShell_Destroy(VmShell *shell);
 
 /* 运行时换肤：shell 只持有指针，调用方需保证 theme 生命周期长于 shell。
    换色后需 VmShell_Refresh + 对应窗口置脏才会体现在下一帧。 */
 void VmShell_SetTheme(VmShell *shell, const VmTheme *theme);
+/* 运行时改高度（主题的 TaskbarHeight）：同步窗口矩形与工作区。 */
+void VmShell_SetHeight(VmShell *shell, int height);
 
 /* 窗口打开/关闭/标题变化后调用；布局每帧重读窗口列表，通常不需要。 */
 void VmShell_Refresh(VmShell *shell);

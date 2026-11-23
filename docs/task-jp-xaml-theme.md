@@ -215,10 +215,25 @@ python tools/start_vm_desktop.py demo_xaml
   米灰 3D 按钮、绿色开始按钮、蓝色任务条目与托盘时钟；刷新后保持 XP 外观，`__vmRenderer.error` 为空。
 - demo_jpx 冒烟：首事件同样只有 `loadResPack("default")`，`/respack/default` 200 / 1395 B。
 
+### S7a：任务栏改手绘 + 高度读主题（2026-11-23）
+
+Clay 的 `backgroundColor` 只吃单色，渐变填不进去。方案是给 WM 加一条「手绘窗口」通道：
+
+- `vm_wm.h` 新增 `VmWindowPaint(out, x, y, w, h, userData)` 与 `VmWindowClickHandler(winId, x, y, userData)`，
+  `VmWindow.paint` 非空时优先于 Clay layout；`VmWm_SetWindowPaint` / `VmWm_SetWindowClickHandler`。
+- 点击通道解决 NOFOCUS 窗口拿不到焦点的问题：`VmWm_HandleInput` 在装饰按钮之后、焦点处理之前
+  把按下交给 `clickHandler`，命中即消费。
+- `vm_shell.c` 去掉 Clay arena/ctx，改为 `shell_paint` 直接追加 drawRect/drawBorder/drawText：
+  `s_start`/`s_task`/`s_task_active`/`s_tray` 渐变真正生效；条目标题按像素截断（`truncate_utf8`）；
+  绘制与命中共用 `shell_geometry`，避免两处坐标漂移。
+- `VmTheme.panelHeight` ← 资源表 `TaskbarHeight`（XP 30）；`Jpx_SetVmTheme` 调 `VmShell_SetHeight`
+  同步窗口矩形与工作区。
+- `test_frame` 的条目中心公式随布局更新（3 + 78 + 3 + i*113 + 55）。
+
+验证：六套件全通过；截图确认任务栏为 30 高、蓝渐变、绿色圆角开始按钮、条目带 1px 深边、托盘浅蓝 + 时钟。
+
 **剩余 gap（未做）**
 - RetroBar 的 XP 主题只有任务栏资源；窗口标题栏/边框/控件是按 Luna 惯例手写的近似值，不是从主题文件读的。
-- 任务栏仍是 Clay 单色填充：`s_start`/`s_task`/`s_tray` 的渐变只在 respack 里定义但未被 shell 使用
-  （Clay 不支持渐变；要用上需把 shell 改成 drawRect 手绘）。
-- 任务栏高度固定 36（XP 30），未读 `TaskbarHeight`。
+- 开始按钮还没有位图（`StartButtonImage`/`StartIconImage` 是 PNG，需要 ImageBrush 链路）。
 - 字体仍是 `assets/font.ttf`（SimHei 黑体），XP 中文界面是宋体 9pt。
-- 桌面无壁纸（图片资源），只用蓝天渐变近似；`Style`/`ControlTemplate`/`DrawingBrush`/`ImageBrush` 仍未支持。
+- 桌面无壁纸（图片资源），只用蓝天渐变近似；`Style`/`ControlTemplate`/`DrawingBrush` 仍未支持。

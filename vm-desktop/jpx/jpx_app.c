@@ -286,7 +286,8 @@ JpxApp *Jpx_Create(const JpxOptions *opt) {
 
     build_resources(app);
 
-    app->shell = VmShell_Create(app->wm, VmTheme_Default(), VM_SHELL_DEFAULT_HEIGHT);
+    app->shell = VmShell_Create(app->wm, VmTheme_Default(),
+                                VmTheme_Default()->panelHeight);
     if (!app->shell && app->opt.logLevel >= 1) {
         fprintf(stderr, "[jpx] 任务栏创建失败（窗口数已达上限？）\n");
     }
@@ -352,7 +353,10 @@ void Jpx_SetVmTheme(JpxApp *app, const VmTheme *theme) {
     if (!theme) {
         app->hasVmTheme = 0;
         Jpx_SetTheme(app, NULL);
-        if (app->shell) VmShell_SetTheme(app->shell, VmTheme_Default());
+        if (app->shell) {
+            VmShell_SetTheme(app->shell, VmTheme_Default());
+            VmShell_SetHeight(app->shell, VmTheme_Default()->panelHeight);
+        }
         return;
     }
     app->vmTheme = *theme;
@@ -379,7 +383,10 @@ void Jpx_SetVmTheme(JpxApp *app, const VmTheme *theme) {
     t.gap = theme->gap;
     app->theme = t;
     if (app->wm) VmWm_SetChrome(app->wm, &theme->chrome);
-    if (app->shell) VmShell_SetTheme(app->shell, &app->vmTheme);
+    if (app->shell) {
+        VmShell_SetTheme(app->shell, &app->vmTheme);
+        if (theme->panelHeight > 0) VmShell_SetHeight(app->shell, theme->panelHeight);
+    }
     Jpx__Invalidate(app);
 }
 

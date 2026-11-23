@@ -262,6 +262,7 @@ void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out) {
         JpxRes_Color(table, "ButtonForeground", out->taskButtonTextColor);
     out->clockTextColor = JpxRes_Color(table, "ClockForeground", out->clockTextColor);
     out->startTextColor = JpxRes_Color(table, "StartLabel", out->startTextColor);
+    out->panelHeight = (int)JpxRes_Number(table, "TaskbarHeight", out->panelHeight);
 }
 
 const char *JpxXamlTheme_Resolve(const JpxXamlResourceTable *table,

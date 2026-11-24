@@ -859,6 +859,43 @@ static void append_clip_cmd(VmCmdBuffer *out, VmCmdType type, const char *id, Vm
     c->args.clip = r;
 }
 
+/* 把一条命令的所有矩形平移。外部内容（IPC）是 body 局部坐标，
+   合成时必须平移到画布坐标；只碰真正带 rect 的类型。 */
+static void shift_command(VmDrawCommand *c, int dx, int dy) {
+    if (!c || (dx == 0 && dy == 0)) return;
+    c->rect.x += (float)dx;
+    c->rect.y += (float)dy;
+    switch (c->type) {
+        case VM_CMD_DRAW_RECT:
+            c->args.drawRect.rect.x += (float)dx;
+            c->args.drawRect.rect.y += (float)dy;
+            break;
+        case VM_CMD_DRAW_BORDER:
+            c->args.drawBorder.rect.x += (float)dx;
+            c->args.drawBorder.rect.y += (float)dy;
+            break;
+        case VM_CMD_DRAW_TEXT:
+            c->args.drawText.rect.x += (float)dx;
+            c->args.drawText.rect.y += (float)dy;
+            break;
+        case VM_CMD_DRAW_IMG:
+            c->args.drawImg.rect.x += (float)dx;
+            c->args.drawImg.rect.y += (float)dy;
+            break;
+        case VM_CMD_DRAW_PATH:
+            c->args.drawPath.rect.x += (float)dx;
+            c->args.drawPath.rect.y += (float)dy;
+            break;
+        case VM_CMD_CLIP_PUSH:
+        case VM_CMD_CLIP_POP:
+            c->args.clip.x += (float)dx;
+            c->args.clip.y += (float)dy;
+            break;
+        default:
+            break;
+    }
+}
+
 /* 返回 1 表示超配额。超限时整段内容被替换为纯色块 + 提示文字，
    needOut 给出该窗口真实需要的命令条数（写入数 + 被丢弃数）。 */
 static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
@@ -986,8 +1023,10 @@ static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
         }
     }
 
-    /* 窗口内容裁到 body：防止控件溢出画到别的窗口上。 */
-    int clipped = wm->contentClip && (win->layout || win->paint) && bodyW > 0 && bodyH > 0;
+    /* 窗口内容裁到 body：防止控件溢出画到别的窗口上。
+       外部内容（IPC）与本地 paint/layout 一样需要裁剪。 */
+    int has_content = win->paint || win->layout || win->layer.external;
+    int clipped = wm->contentClip && has_content && bodyW > 0 && bodyH > 0;
     int decorCount = out->count;   /* 装饰命令到此为止，截断时回退到这里 */
     if (clipped) {
         snprintf(idbuf, sizeof(idbuf), "w%d_clip", win->id);
@@ -995,7 +1034,17 @@ static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
     }
 
     int truncated = 0;
-    if (win->paint) {
+    if (win->layer.external) {
+        /* 外部内容（IPC）：content[] 是 body 局部坐标，平移到画布坐标后拼接。
+           窗口移动只需重跑这一步，原始内容不必让客户端重发。 */
+        for (int i = 0; i < win->layer.contentCount; i++) {
+            const VmDrawCommand *src = &win->layer.content[i];
+            VmDrawCommand *c = VmCmdBuffer_Append(out, src->type, src->id);
+            if (!c) { truncated = 1; break; }
+            *c = *src;
+            shift_command(c, bodyX, bodyY);
+        }
+    } else if (win->paint) {
         /* 手绘窗口：内容和装饰共用同一份坐标约定，paint 直接往缓冲里追加。 */
         win->paint(out, bodyX, bodyY, bodyW, bodyH, win->userData);
         truncated = (out->count >= out->cap);

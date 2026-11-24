@@ -273,13 +273,27 @@ target_link_libraries(test_wms_ipc PRIVATE wms_core)
 add_executable(test_wms_peer wms/test_wms_peer.c)
 target_link_libraries(test_wms_peer PRIVATE wms_peer)
 
-# 窗口管理服务。M2 阶段挂模拟宿主（占位帧），只验证元数据与 IPC；
-# M3 换成 vm_host.c（真实合成）后去掉 --mock。
+# 窗口管理服务。M3 起默认挂真实合成宿主（wms/vm_host.c），
+# 因此带上本项目的合成链：vm_wm / vm_display / vm_tiles / 序列化 / 字体 / 主题。
+# vm_wm.h 目前仍暴露 Clay 类型，所以编译期需要 CLAY_DIR（清理见任务文档 M7）。
 add_executable(vm_wms
     wms/main.c
     wms/wms_server.c
     wms/wms_mock_host.c
+    wms/vm_host.c
+    vm_wm.c
+    clay_frame_adapter.c
+    jpx/jpx_clay_impl.c
+    vm_display.c
+    vm_serialize_json.c
+    vm_tiles.c
+    vm_font.c
+    vm_theme.c
 )
+target_include_directories(vm_wms PRIVATE
+    "${CLAY_DIR}" "${MSTB_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/wms"
+    "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(vm_wms PRIVATE
     wms_core wms_peer ${WMS_UV_TARGET} ${WMS_PLATFORM_LIBS})
 if(WIN32)
@@ -289,6 +303,8 @@ endif()
 # 协议级客户端演示：APP / SHELL / RDP 三角色，e2e 脚本直接驱动它们
 add_executable(test_wms_app wms/test_wms_app.c)
 target_link_libraries(test_wms_app PRIVATE wms_client)
+# 推真实 VmDrawCommand，需要 vm_display.h 的类型定义
+target_include_directories(test_wms_app PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
 add_executable(test_wms_shell wms/test_wms_shell.c)
 target_link_libraries(test_wms_shell PRIVATE wms_client)

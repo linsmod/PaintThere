@@ -161,7 +161,8 @@ $app = Start-Tool 'test_wms_app.exe' @('--pipe', $pipe, '--seconds', "$AppSecond
 Start-Sleep -Milliseconds 400
 $sh  = Start-Tool 'test_wms_shell.exe' @('--pipe', $pipe, '--seconds', "$ShellSeconds", '--theme', 'dark', '--click', '220,160', '--focus') $shO $shE
 Start-Sleep -Milliseconds 400
-$rdp = Start-Tool 'test_wms_rdp.exe' @('--pipe', $pipe, '--seconds', "$RdpSeconds") $rdpO $rdpE
+$rdpDump = Join-Path $LogDir 'basic-fullframe.json'
+$rdp = Start-Tool 'test_wms_rdp.exe' @('--pipe', $pipe, '--seconds', "$RdpSeconds", '--dump', $rdpDump) $rdpO $rdpE
 
 $app.WaitForExit(30000) | Out-Null
 $sh.WaitForExit(30000)  | Out-Null
@@ -183,6 +184,8 @@ Assert-Log $rdpO 'fullframe frame_id=\d+'                              'RDP 收�
 Assert-Log $rdpO 'frame frame_id=\d+'                                  'RDP 收到增量帧'
 Assert-Log $rdpO "resources id='default'"                              'RDP 收到资源包应答'
 Assert-NoLog $srvE 'bad frame'                                         '没有任何坏帧'
+# 光有帧不够：帧里必须真的有应用推来的内容，否则可能只是装饰
+Assert-Log $rdpDump 'app_rect_0'                                       'fullframe 含应用内容的绘制命令'
 Stop-Tool $app; Stop-Tool $sh; Stop-Tool $rdp
 
 # ---------------------------------------------------------------

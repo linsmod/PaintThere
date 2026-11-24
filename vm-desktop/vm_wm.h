@@ -57,7 +57,12 @@ typedef struct VmWm VmWm;
 typedef void (*VmWmWindowListHandler)(VmWm *wm, void *userData);
 
 /* 窗口内容缓冲：装饰 + 内容，坐标已是画布坐标。
-   合成阶段按 z 序并入输出流，窗口因此成为可独立失效的内容单元。 */
+   合成阶段按 z 序并入输出流，窗口因此成为可独立失效的内容单元。
+
+   两种内容来源：
+   - 本地（paint / Clay layout）：build_one_window 直接按画布坐标生成；
+   - 外部（IPC 推来的命令数组）：存在 content[] 里，坐标是窗口 body 局部，
+     合成时按 body 原点平移后拼进 commands。external = 1 时不再走 paint/layout。 */
 typedef struct {
     VmDrawCommand commands[VM_WM_LAYER_CAPACITY];
     int count;
@@ -66,6 +71,10 @@ typedef struct {
     uint32_t builtFrame;
     /* 最后一次把 contentDirty 置 1 的原因（字面量，仅诊断用）。 */
     const char *dirtyWhy;
+    /* 外部内容：原始命令（body 局部坐标），与 commands 分开存放。 */
+    int external;
+    int contentCount;
+    VmDrawCommand content[VM_WM_LAYER_CAPACITY];
 } VmWindowLayer;
 
 typedef struct {

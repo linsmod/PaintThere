@@ -15,7 +15,8 @@
 #include "uv.h"
 #include "wms_client.h"
 
-#define APP_CMD_SIZE 496          /* 与 VMWM_CONTENT_CMD_MAX_SIZE 内的真实尺寸对齐 */
+#include "vm_display.h"   /* 真实 VmDrawCommand：内容要被宿主按同一结构解释 */
+
 #define APP_CMD_MAX  16
 
 static uint64_t g_win_id  = 0;
@@ -24,30 +25,55 @@ static int      g_content = 1;
 static int      g_anim    = 1;
 static int      g_events  = 0;
 
-/* 造 count 条命令：首字节放序号，其余填色值，长度都是 APP_CMD_SIZE */
-static void build_cmds(uint8_t* out, uint32_t count, uint32_t seed)
+/* 造 count 条真实命令（body 局部坐标）：count-1 个矩形 + 1 行文字。
+   文字里带 seed，每次回推内容不同，宿主才能产出增量帧。 */
+static void build_cmds(VmDrawCommand* out, uint32_t count, uint32_t seed)
 {
+    static const char* colors[3] = {
+        "rgba(64,120,220,1)", "rgba(220,96,64,1)", "rgba(72,180,120,1)"
+    };
     uint32_t i;
     for (i = 0; i < count; i++) {
-        uint8_t* p = out + (size_t)i * APP_CMD_SIZE;
-        memset(p, (int)((seed + i) & 0xFF), APP_CMD_SIZE);
-        p[0] = (uint8_t)i;
+        VmDrawCommand* c = &out[i];
+        memset(c, 0, sizeof(*c));
+        if (i + 1 == count) {
+            VmRect r = {8.0f, 8.0f, 260.0f, 22.0f};
+            c->type = VM_CMD_DRAW_TEXT;
+            snprintf(c->id, sizeof(c->id), "app_text");
+            c->rect = r;
+            c->args.drawText.rect = r;
+            snprintf(c->args.drawText.text, sizeof(c->args.drawText.text),
+                     "app seed=%u n=%u", (unsigned)seed, (unsigned)count);
+            c->args.drawText.fontId = 0;
+            c->args.drawText.fontSize = 14;
+            snprintf(c->args.drawText.color, sizeof(c->args.drawText.color),
+                     "%s", "rgba(255,255,255,1)");
+        } else {
+            VmRect r = {(float)(8 + (int)i * 72), 40.0f, 62.0f, 42.0f};
+            c->type = VM_CMD_DRAW_RECT;
+            snprintf(c->id, sizeof(c->id), "app_rect_%u", (unsigned)i);
+            c->rect = r;
+            c->args.drawRect.rect = r;
+            snprintf(c->args.drawRect.paint, sizeof(c->args.drawRect.paint),
+                     "%s", colors[i % 3]);
+            c->args.drawRect.cornerRadius = 4.0f;
+        }
     }
 }
 
 static void push_content(WmsClient* c, uint32_t epoch, int w, int h)
 {
-    uint8_t   cmds[APP_CMD_MAX * APP_CMD_SIZE];
-    uint32_t  n;
-    int       accepted = 0, overflow = 0;
-    VmWmResult r;
+    VmDrawCommand cmds[APP_CMD_MAX];
+    uint32_t      n;
+    int           accepted = 0, overflow = 0;
+    VmWmResult    r;
 
     if (!g_content || !g_win_id) return;
 
     n = 4;
     build_cmds(cmds, n, epoch + (uint32_t)w);
-    r = Wms_PushContent(c, g_win_id, epoch, cmds, n, APP_CMD_SIZE,
-                        &accepted, &overflow);
+    r = Wms_PushContent(c, g_win_id, epoch, cmds, n,
+                        (uint32_t)sizeof(VmDrawCommand), &accepted, &overflow);
     printf("[app] push content win=%llu epoch=%u n=%u body=%dx%d -> %s accepted=%d overflow=%d\n",
            (unsigned long long)g_win_id, (unsigned)epoch, (unsigned)n,
            w, h, Wms_StrError(r), accepted, overflow);

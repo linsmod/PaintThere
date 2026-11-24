@@ -1,11 +1,14 @@
 /*
- * main.c - wm_server 入口
+ * main.c - vm_wms 入口（窗口管理服务）
  *
  * 用法：
- *   wm_server                                  默认管道名、默认 800x600、挂模拟宿主
- *   wm_server --pipe <path>                    指定管道名 / unix socket 路径
- *   wm_server --screen 800x600                 画布尺寸（宿主接入前用命令行给）
- *   wm_server --no-mock                        不挂模拟宿主（接真实合成层时用）
+ *   vm_wms                                     默认管道名、800x600、挂真实合成宿主
+ *   vm_wms --pipe <path>                       指定管道名 / unix socket 路径
+ *   vm_wms --screen 800x600                    画布尺寸
+ *   vm_wms --mock                              挂模拟宿主（占位帧，仅联调用）
+ *
+ * 真实宿主 = vm_host.c：渲染副本 + 装饰 + 合成 + 瓦片切分 + 资源包。
+ * 未接宿主时内容/帧类请求返回 VMWM_ERR_NOT_READY，元数据能力不受影响。
  *
  * 退出：Ctrl+C / SIGTERM。
  */
@@ -21,6 +24,8 @@
 #include "wms_host.h"
 #include "wms_log.h"
 
+#include "vm_host.h"
+
 static void on_signal(uv_signal_t* handle, int signum)
 {
     (void)handle;
@@ -30,10 +35,11 @@ static void on_signal(uv_signal_t* handle, int signum)
 
 static void usage(void)
 {
-    printf("usage: wm_server [--pipe <path>] [--screen <W>x<H>] [--no-mock]\n");
+    printf("usage: vm_wms [--pipe <path>] [--screen <W>x<H>] [--mock]\n");
     printf("  default pipe : %s\n", VMWM_PIPE_NAME);
     printf("  protocol     : v%u, payload <= %u bytes\n",
            (unsigned)VMWM_VERSION, (unsigned)VMWM_MAX_PAYLOAD);
+    printf("  host         : default = real compositing; --mock = placeholder frames\n");
 }
 
 int main(int argc, char** argv)
@@ -41,7 +47,8 @@ int main(int argc, char** argv)
     const char* path     = VMWM_PIPE_NAME;
     int32_t     screen_w = 800;
     int32_t     screen_h = 600;
-    int         use_mock = 1;
+    int         use_mock = 0;
+    VmHost*     host     = NULL;
     uv_signal_t sig_int;
     uv_signal_t sig_term;
     int         i;
@@ -55,8 +62,8 @@ int main(int argc, char** argv)
                 printf("bad --screen value\n");
                 return 2;
             }
-        } else if (strcmp(argv[i], "--no-mock") == 0) {
-            use_mock = 0;
+        } else if (strcmp(argv[i], "--mock") == 0) {
+            use_mock = 1;
         } else if (strcmp(argv[i], "--help") == 0 ||
                    strcmp(argv[i], "-h") == 0) {
             usage();
@@ -68,12 +75,12 @@ int main(int argc, char** argv)
         }
     }
 
-    printf("wm-server starting, pipe = %s, screen = %dx%d\n",
+    printf("vm-wms starting, pipe = %s, screen = %dx%d\n",
            path, (int)screen_w, (int)screen_h);
     fflush(stdout);
 
     if (VmWm_ServerInit(path) != VMWM_OK) {
-        printf("wm-server init failed\n");
+        printf("vm-wms init failed\n");
         return 1;
     }
 
@@ -81,9 +88,18 @@ int main(int argc, char** argv)
 
     if (use_mock) {
         VmWm_ServerSetHost(VmWm_MockHost());
-        printf("mock host registered (占位帧，仅用于联调)\n");
-        fflush(stdout);
+        printf("mock host registered (placeholder frames, integration only)\n");
+    } else {
+        host = VmHost_Create(screen_w, screen_h, 100, 100);
+        if (!host) {
+            printf("vm host create failed\n");
+            VmWm_ServerStop();
+            return 1;
+        }
+        VmWm_ServerSetHost(VmHost_Callbacks(host));
+        printf("vm host registered (real compositing)\n");
     }
+    fflush(stdout);
 
     uv_signal_init(uv_default_loop(), &sig_int);
     uv_signal_start(&sig_int, on_signal, SIGINT);
@@ -95,6 +111,7 @@ int main(int argc, char** argv)
 
     VmWm_ServerRun();
 
-    vmwm_log("wm-server exited");
+    VmHost_Destroy(host);
+    vmwm_log("vm-wms exited");
     return 0;
 }

@@ -19,6 +19,8 @@
 static int      g_frames     = 0;
 static int      g_fullframes = 0;
 static int      g_events     = 0;
+/* --dump <path>：把收到的 fullframe 原样落盘，供 e2e 事后检查内容 */
+static const char* g_dumpPath = NULL;
 
 static void on_event(WmsClient* c, const WmsEvent* e, void* user)
 {
@@ -34,6 +36,15 @@ static void on_event(WmsClient* c, const WmsEvent* e, void* user)
         printf("[rdp] %s frame_id=%u len=%u head=%.60s\n",
                e->evt == EVT_FRAME ? "frame" : "fullframe",
                (unsigned)fid, (unsigned)len, json ? json : "");
+        if (g_dumpPath && e->evt == EVT_FULLFRAME && json && len) {
+            FILE* f = fopen(g_dumpPath, "wb");
+            if (f) {
+                fwrite(json, 1, len, f);
+                fclose(f);
+                printf("[rdp] dumped fullframe -> %s (%u bytes)\n",
+                       g_dumpPath, (unsigned)len);
+            }
+        }
         fflush(stdout);
         break;
     }
@@ -89,6 +100,8 @@ int main(int argc, char** argv)
             respack = argv[++i];
         } else if (strcmp(argv[i], "--no-input") == 0) {
             send_input = 0;
+        } else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) {
+            g_dumpPath = argv[++i];
         }
     }
 

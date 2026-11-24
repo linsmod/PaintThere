@@ -507,7 +507,7 @@ python tools\inspect_vm_frame.py temp\baseline.txt --tiles
 | M0 基线固化 | 已完成（2026-11-24） | 见 §13.1 |
 | M1 协议层落入本项目 | 已完成（2026-11-24） | 见 §13.2 |
 | M2 vm_wms 元数据上线 | 已完成（2026-11-24） | 见 §13.3 |
-| M3 宿主接入 | 未开始 | 核心工作量：`vm_host.c` |
+| M3 宿主接入 | 已完成（2026-11-24） | 见 §13.4 |
 | M4 rdp 拆分 | 未开始 | |
 | M5 外壳独立 | 未开始 | |
 | M6 应用独立 | 未开始 | |
@@ -602,3 +602,33 @@ python tools\drive_vm_desktop.py 9020 snap baseline wait 1500
 **未验证**：`vm_wms` 当前挂 mock 宿主，帧内容是占位 JSON，不是真实画面。真实合成要等 M3 的 `vm_host.c` 接进去。
 
 **恢复点**：`vm_wms.exe` 可独立启动（`vm-desktop\build\vm_wms.exe --pipe \\.\pipe\vmwm_dev`），`tools/e2e_wms.ps1` 可重复运行。
+
+### 13.4 M3（2026-11-24）
+
+做了什么：
+
+1. `vm_wm.h` 的 `VmWindowLayer` 增加外部内容槽：`external` / `contentCount` / `content[VM_WM_LAYER_CAPACITY]`。`content` 存客户端推来的原始命令（body 局部坐标），`commands` 仍是合成结果。
+2. `vm_wm.c` 新增 `shift_command()` 与 external 分支：合成时把 `content` 平移到画布坐标；`clipped` 条件加上 external（外部内容同样裁到 body）。
+3. 新增 `wms/vm_host.c` / `vm_host.h`：实现 10 个 `VmWmHost` 回调，持有 `VmWm` 渲染副本 + `VmDisplayList frame` + `VmTileGrid` + 主题资源包。
+4. `wms/main.c`：默认挂真实宿主，`--mock` 才用占位宿主。
+5. `vm_wms` target 加上合成链（`vm_wm.c` / `clay_frame_adapter.c` / `jpx_clay_impl.c` / `vm_display.c` / `vm_serialize_json.c` / `vm_tiles.c` / `vm_font.c` / `vm_theme.c`）与 `CLAY_DIR` / `MSTB_DIR` include。
+6. `test_wms_app.c`：原来推的是 496 字节填充数据（`cmd_size = 496`），与本项目 `sizeof(VmDrawCommand) = 492` 不匹配，被宿主丢弃；改为构造真实 `VM_CMD_DRAW_RECT` / `VM_CMD_DRAW_TEXT`，`cmd_size = sizeof(VmDrawCommand)`。
+7. `test_wms_rdp.c`：加 `--dump <path>`，把 fullframe 原样落盘供事后检查。
+8. e2e 增加一条断言：dump 出的 fullframe 必须含 `app_rect_0`（否则「有帧」可能只是装饰）。
+
+**观察**：
+
+- `VmWindowLayer` 每窗口增加约 508 KB（`content` 数组），`VmWm` 常驻从约 5 MB 涨到约 10 MB。`VmWm_Create` 仍是一次性 `calloc`，未出问题；池化仍留给后续 S3。
+- `vm_wms` 现在编译期需要 `CLAY_DIR`：`vm_wm.h` 仍暴露 `Clay_Context` 与 `VmWindowLayout`。这是过渡状态，M7 清理。
+- 坐标链路已验证：APP 推 `{8,40,62,42}`（body 局部）→ 宿主按 body 原点 `(101,110)` 平移 → tile `(1,1)` 局部 `{9,50,62,42}`。**x+1 / y+10 对所有命令一致**，说明偏移来自同一个 body 原点，不是逐条漂移。
+- `demo_jpx` 的单进程路径未受影响：`test_frame` 120/120、`test_menu` 30/30。
+
+验收：`pwsh tools/e2e_wms.ps1 -SkipBuild` → **24/24 checks passed**，exit 0。新增断言「fullframe 含应用内容的绘制命令」通过。
+
+**未验证**：
+
+- 画面视觉效果（颜色、文字排布）没在浏览器里看过；只验证了命令进入帧且坐标自洽。
+- 标题栏按钮的 hover 高亮在 `vm_wms` 下不生效：`vm_host` 不持有指针状态，`wm->pointerValid = 0`。M5 迁外壳时用 `EVT_INPUT` 的 move 事件补。
+- `on_theme` 只处理默认主题，忽略传入的名字。
+
+**恢复点**：`vm_wms` 默认跑真实合成；`temp/e2e-wms-logs/basic-fullframe.json` 可事后检查帧内容。

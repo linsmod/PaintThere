@@ -22,4 +22,6 @@
 - `task-shell-context-menu-and-settings.md` — 任务栏右键菜单与设置面板（对标 RetroBar）：WM 右键通道、vm_menu 弹出菜单控件、jpx_shell_settings 设置组件与配置持久化的执行记录。
 - `task-taskbar-retrobar-fidelity.md` — 任务栏几何全量主题数据驱动（对标 RetroBar）：Thickness/模板几何采集、条目动态宽度、托盘内容驱动、按钮溢出高度、开始按钮 XP 排版；含逐元素几何验证证据。
 - `task-taskbar-template-layer.md` — 任务栏按钮模板层次化（对标 RetroBar TaskButton 模板）：三态模板层集（主渐变多 stop + 外 4 边 + 内 3 边 + 对角高光）、宋体字体源替换；含线路与视觉验证。
-- `todo-shell-roadmap.md` — 桌面外壳长期待办：动态托盘图标（IPC 扩展）、开始菜单 popup 化、快速启动栏、时钟 tooltip、任务条目拖拽重排、条目溢出滚动、斜体字体。
+- `design-ui-producer-decoupling.md` — UI 生产层解耦设计（冻结于 2026-11-24）：displayList 为唯一契约、Clay 降级为 jp_xaml 后端之一、双后端分工、能力矩阵与禁止项。
+- `task-shell-xaml-framework.md` — shell XAML 化执行文档（立项 2026-11-24，未开工）：jp_xaml 后端接口、Direct 后端、最小 XAML 子集（Canvas/DockPanel/Layers/Repeat）、列表绑定、taskbar.xaml、19 主题验证。
+- `todo-shell-roadmap.md` — 桌面外壳长期待办：外壳 UI 层重构（XAML 化）、动态托盘图标（IPC 扩展）、开始菜单 popup 化、快速启动栏、时钟 tooltip、任务条目拖拽重排、条目溢出滚动、斜体字体。

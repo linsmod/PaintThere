@@ -417,16 +417,42 @@ python tools\inspect_vm_frame.py temp\baseline.txt --tiles
 
 ### M5 外壳独立
 
-**做什么**
+**范围**：M5.1 + M5.2 + M5.3。任务栏的 XAML 化**不在本步**，见 `docs/task-shell-xaml-framework.md`
+（已立项，M5 完成后开始）。理由：进程化与 UI 层重构混在一次验收里，出问题无法定位。
+
+**M5.1 迁进程**
 
 1. `vm-desktop/shell/main.c` + 迁入 `vm_shell.c` / `vm_menu.c` / 主题解析。
-2. 任务栏通过 `Wms_CreateWindow` 建窗，内容用手绘 `paint` 生成命令数组后 `Wms_PushContent`。
-3. 条目：`Wms_ListWindows` 首次同步 + `EVT_*` 增量。
+2. 任务栏通过 `Wms_CreateWindow` 建窗，内容用现有 `shell_paint` 生成命令数组后 `Wms_PushContent`。
+3. `VmShell` 不再持 `VmWm *`（那是 wms 进程的渲染副本）：改持窗口快照（首次 `Wms_ListWindows` + `EVT_*` 增量）；hover 判定用的指针位置改由本地维护（`CMD_INPUT` 回环或 shell 自身收到的输入事件），不再读 `wm->pointerX`。
 4. 工作区：`Wms_SetWorkArea`。
 
-**验收**：§1 第 1 条（kill shell 不影响窗口；重启重建）。
+**M5.2 内容契约收口（去 Clay）**
 
-**恢复点**：三进程（wms / rdp / shell）跑通，应用仍可用单进程模式。
+1. `VmWindowLayout` 改为与 `VmWindowPaint` 同形：`void (*)(VmCmdBuffer *, int x, int y, int w, int h, void *userData)`。
+2. `vm_wm.h` 删除 `#include "clay.h"` 与 `clay_frame_adapter.h`；`VmWindow.clayCtx` 删除；`sync_pointer_state` 移出 WM。
+3. Clay 分支的等价能力由 producer 侧适配：单进程 `demo_jpx` 在自己的回调里 `Clay_SetCurrentContext` → `Clay_EndLayout` → `ClayFrame_AppendCommands`。
+4. 依据：`docs/design-ui-producer-decoupling.md` U1/U2。
+
+**M5.3 模板抽函数**
+
+把 `vm_shell.c:363-448` 的「主渐变 → 外 4 边 → 内 3 边 → 对角高光」抽成通用函数：
+
+```c
+void VmTemplate_PaintLayers(VmCmdBuffer *out, const VmTaskButtonLayer *st,
+                            int x, int y, int w, int h, float radius,
+                            const char *mainPattern, const char *hlPattern);
+```
+
+该函数是 `task-shell-xaml-framework.md` P3 的现成积木；本步只做抽取，不改外观。
+
+**验收**：
+
+- §1 第 1 条（kill shell 不影响窗口；重启重建）。
+- M5.2：`vm_wms.exe` 与 `vm_shell.exe` 的链接命令行都不含 Clay；单进程 `demo_jpx` 视觉与输入不变；`test_frame --probe` 断言数不变。
+- M5.3：同主题下改造前后命令语义等价（层数与顺序一致），差异逐条列出。
+
+**恢复点**：三进程（wms / rdp / shell）跑通，应用仍可用单进程模式；`vm_wms` / `vm_shell` 不链 Clay。
 
 ### M6 应用独立
 
@@ -509,7 +535,7 @@ python tools\inspect_vm_frame.py temp\baseline.txt --tiles
 | M2 vm_wms 元数据上线 | 已完成（2026-11-24） | 见 §13.3 |
 | M3 宿主接入 | 已完成（2026-11-24） | 见 §13.4 |
 | M4 rdp 拆分 | 已完成（2026-11-24） | 见 §13.5 |
-| M5 外壳独立 | 未开始 | |
+| M5 外壳独立 | 未开始 | 范围 = 5.1 迁进程 + 5.2 去 Clay + 5.3 模板抽函数；任务栏 XAML 化另见 `docs/task-shell-xaml-framework.md` |
 | M6 应用独立 | 未开始 | |
 | M7 清理与文档 | 未开始 | |
 

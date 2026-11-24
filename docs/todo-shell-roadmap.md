@@ -28,3 +28,10 @@
   popup 基础设施）。
 - [ ] **任务条目拖拽重排 / 分组**（优先级：低，RetroBar 高级行为）
   当前条目按创建序固定排列。
+
+## 外壳 UI 层重构（XAML 化）
+
+- [ ] **jp_xaml 双后端 + taskbar.xaml**（优先级：中；M5 完成后开始）
+  执行文档：`docs/task-shell-xaml-framework.md`（P1–P5）；设计决策：`docs/design-ui-producer-decoupling.md`。
+  验收：`vm_shell` 不链 Clay、19 个预编译主题视觉等价、`shell_paint` 不再含模板绘制顺序。
+  依赖：M5.3 的 `VmTemplate_PaintLayers` 先抽出。

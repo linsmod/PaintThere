@@ -1,0 +1,256 @@
+<#
+e2e_wms.ps1 - WMS 四进程端到端验收（vm_wms + test_wms_app + test_wms_shell + test_wms_rdp）
+
+来源：wmwms 仓库的 scripts/run_e2e.ps1，迁入本项目后只改了产物名、构建目录与
+日志落点，断言与场景未改。
+
+为什么要有这个脚本：
+  单测只能证明编解码自洽。真正容易坏的是 IPC 生命周期、内容通道、帧下发、
+  进程退出清理，那些只有起进程才看得见。所以每个场景用独立管道名，互不干扰。
+
+覆盖场景：
+  proto   协议单测与进程身份单测（纯内存 / 真实句柄，不开服务）
+  basic   APP 建窗+回推内容 / SHELL 声明工作区+切主题+枚举+点输入 / RDP 收帧
+  crash   APP 被强杀 → 服务端靠进程句柄发现对端死亡并回收窗口
+  restart SHELL 退出后窗口保留，新 SHELL 重连照样能枚举（外壳重启场景）
+
+用法：
+  pwsh tools/e2e_wms.ps1 [-SkipBuild] [-AppSeconds 8] [-KeepLogs]
+
+退出码：0 全通过，1 有断言失败（日志留在 temp/e2e-wms-logs）。
+#>
+param(
+    [switch]$SkipBuild,
+    [int]$AppSeconds   = 8,
+    [int]$ShellSeconds = 6,
+    [int]$RdpSeconds   = 5,
+    [switch]$KeepLogs
+)
+
+$ErrorActionPreference = 'Continue'
+
+$RepoRoot = Split-Path -Parent $PSScriptRoot
+$BuildDir = Join-Path $RepoRoot 'vm-desktop\build'
+$LogDir   = Join-Path $RepoRoot 'temp\e2e-wms-logs'
+
+if (Test-Path $LogDir) { Remove-Item $LogDir -Recurse -Force }
+New-Item -ItemType Directory -Force $LogDir | Out-Null
+
+$script:Fails  = 0
+$script:Checks = 0
+
+function Assert-Log {
+    param([string]$File, [string]$Pattern, [string]$Name)
+    $script:Checks++
+    if (-not (Test-Path $File)) {
+        $script:Fails++
+        Write-Host ("  [FAIL] {0}: 日志缺失 {1}" -f $Name, $File) -ForegroundColor Red
+        return
+    }
+    if (Select-String -Path $File -Pattern $Pattern -Quiet) {
+        Write-Host ("  [ OK ] {0}" -f $Name) -ForegroundColor Green
+    } else {
+        $script:Fails++
+        Write-Host ("  [FAIL] {0}: 未匹配 '{1}' in {2}" -f $Name, $Pattern, (Split-Path -Leaf $File)) -ForegroundColor Red
+    }
+}
+
+function Assert-LogAny {
+    param([string]$File, [string[]]$Patterns, [string]$Name)
+    $script:Checks++
+    if (-not (Test-Path $File)) {
+        $script:Fails++
+        Write-Host ("  [FAIL] {0}: 日志缺失" -f $Name) -ForegroundColor Red
+        return
+    }
+    foreach ($p in $Patterns) {
+        if (Select-String -Path $File -Pattern $p -Quiet) {
+            Write-Host ("  [ OK ] {0}" -f $Name) -ForegroundColor Green
+            return
+        }
+    }
+    $script:Fails++
+    Write-Host ("  [FAIL] {0}: 未匹配 {1}" -f $Name, ($Patterns -join ' | ')) -ForegroundColor Red
+}
+
+function Assert-NoLog {
+    param([string]$File, [string]$Pattern, [string]$Name)
+    $script:Checks++
+    if ((Test-Path $File) -and (Select-String -Path $File -Pattern $Pattern -Quiet)) {
+        $script:Fails++
+        Write-Host ("  [FAIL] {0}: 不该出现 '{1}'" -f $Name, $Pattern) -ForegroundColor Red
+    } else {
+        Write-Host ("  [ OK ] {0}" -f $Name) -ForegroundColor Green
+    }
+}
+
+function Start-Tool {
+    param([string]$Exe, [string[]]$Arguments, [string]$OutFile, [string]$ErrFile)
+    $path = Join-Path $BuildDir $Exe
+    if (-not (Test-Path $path)) { throw "missing executable: $path" }
+    return Start-Process -FilePath $path -ArgumentList $Arguments `
+        -RedirectStandardOutput $OutFile -RedirectStandardError $ErrFile `
+        -PassThru -NoNewWindow
+}
+
+function Wait-ServerReady {
+    param([string]$ErrFile, [int]$TimeoutMs = 5000)
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
+    while ((Get-Date) -lt $deadline) {
+        if ((Test-Path $ErrFile) -and (Select-String -Path $ErrFile -Pattern 'listening' -Quiet)) { return $true }
+        Start-Sleep -Milliseconds 100
+    }
+    return $false
+}
+
+function Stop-Tool {
+    param($Proc)
+    if ($null -eq $Proc) { return }
+    try {
+        if (-not $Proc.HasExited) { Stop-Process -Id $Proc.Id -Force }
+        $Proc.WaitForExit(3000) | Out-Null
+    } catch { }
+}
+
+function New-Pipe([string]$tag) {
+    return '\\.\pipe\vmwm_e2e_' + $tag + '_' + (Get-Random -Maximum 100000)
+}
+
+# ---------------------------------------------------------------
+# 0. 构建（-SkipBuild 跳过）
+# ---------------------------------------------------------------
+if (-not $SkipBuild) {
+    Write-Host '== build ==' -ForegroundColor Cyan
+    $cmake = 'C:\msys64\mingw64\bin\cmake.exe'
+    if (-not (Test-Path $cmake)) { $cmake = (Get-Command cmake -ErrorAction SilentlyContinue).Source }
+    if (-not $cmake) { Write-Host 'cmake not found' -ForegroundColor Red; exit 1 }
+    & $cmake --build $BuildDir -j 8 2>&1 | Select-Object -Last 3
+    if ($LASTEXITCODE -ne 0) { Write-Host 'build failed' -ForegroundColor Red; exit 1 }
+}
+
+# ---------------------------------------------------------------
+# 1. 协议单测与进程身份单测
+# ---------------------------------------------------------------
+Write-Host "`n== scenario: proto ==" -ForegroundColor Cyan
+& (Join-Path $BuildDir 'test_wms_ipc.exe') --probe | ForEach-Object { Write-Host "  $_" }
+if ($LASTEXITCODE -ne 0) { $script:Fails++ }
+$script:Checks++
+
+& (Join-Path $BuildDir 'test_wms_peer.exe') --probe | ForEach-Object { Write-Host "  $_" }
+if ($LASTEXITCODE -ne 0) { $script:Fails++ }
+$script:Checks++
+
+# ---------------------------------------------------------------
+# 2. basic：APP + SHELL + RDP
+# ---------------------------------------------------------------
+Write-Host "`n== scenario: basic ==" -ForegroundColor Cyan
+$pipe = New-Pipe 'basic'
+$srvO = Join-Path $LogDir 'basic-server.out.txt'
+$srvE = Join-Path $LogDir 'basic-server.err.txt'
+$appO = Join-Path $LogDir 'basic-app.out.txt'
+$appE = Join-Path $LogDir 'basic-app.err.txt'
+$shO  = Join-Path $LogDir 'basic-shell.out.txt'
+$shE  = Join-Path $LogDir 'basic-shell.err.txt'
+$rdpO = Join-Path $LogDir 'basic-rdp.out.txt'
+$rdpE = Join-Path $LogDir 'basic-rdp.err.txt'
+
+$srv = Start-Tool 'vm_wms.exe' @('--pipe', $pipe, '--screen', '800x600') $srvO $srvE
+if (-not (Wait-ServerReady $srvE)) { Write-Host '  server 未就绪' -ForegroundColor Red; $script:Fails++ }
+
+$app = Start-Tool 'test_wms_app.exe' @('--pipe', $pipe, '--seconds', "$AppSeconds") $appO $appE
+Start-Sleep -Milliseconds 400
+$sh  = Start-Tool 'test_wms_shell.exe' @('--pipe', $pipe, '--seconds', "$ShellSeconds", '--theme', 'dark', '--click', '220,160', '--focus') $shO $shE
+Start-Sleep -Milliseconds 400
+$rdp = Start-Tool 'test_wms_rdp.exe' @('--pipe', $pipe, '--seconds', "$RdpSeconds") $rdpO $rdpE
+
+$app.WaitForExit(30000) | Out-Null
+$sh.WaitForExit(30000)  | Out-Null
+$rdp.WaitForExit(30000) | Out-Null
+Start-Sleep -Milliseconds 400
+Stop-Tool $srv
+
+Assert-Log $srvE 'handshake client id=\d+ type=APP peer pid=\d+' '服务端识别 APP 进程身份'
+Assert-Log $srvE 'handshake client id=\d+ type=SHELL'                  '服务端识别 SHELL'
+Assert-Log $srvE 'handshake client id=\d+ type=RDP'                    '服务端识别 RDP'
+Assert-Log $appO 'layout_req win=\d+ epoch=1'                          'APP 收到首个布局请求'
+Assert-Log $appO 'push content .* accepted=1'                          '内容通道被采纳'
+Assert-Log $appO 'input win=\d+ kind=1 down=1'                         'APP 收到转成局部坐标的点击'
+Assert-Log $shO  'set_workarea 0,0 800x568 -> ok'                      'SHELL 声明工作区'
+Assert-Log $shO  'list_windows -> 2'                                   'SHELL 枚举到 2 个窗口'
+Assert-Log $shO  'set_focus \d+ -> ok'                                 'SHELL 切换焦点'
+Assert-Log $rdpO 'request_fullframe -> ok'                             'RDP fullframe 请求被受理'
+Assert-Log $rdpO 'fullframe frame_id=\d+'                              'RDP 收到 fullframe 数据'
+Assert-Log $rdpO 'frame frame_id=\d+'                                  'RDP 收到增量帧'
+Assert-Log $rdpO "resources id='default'"                              'RDP 收到资源包应答'
+Assert-NoLog $srvE 'bad frame'                                         '没有任何坏帧'
+Stop-Tool $app; Stop-Tool $sh; Stop-Tool $rdp
+
+# ---------------------------------------------------------------
+# 3. crash：APP 被强杀，服务端按进程句柄回收
+# ---------------------------------------------------------------
+Write-Host "`n== scenario: crash ==" -ForegroundColor Cyan
+$pipe = New-Pipe 'crash'
+$srvO = Join-Path $LogDir 'crash-server.out.txt'
+$srvE = Join-Path $LogDir 'crash-server.err.txt'
+$appO = Join-Path $LogDir 'crash-app.out.txt'
+$appE = Join-Path $LogDir 'crash-app.err.txt'
+
+$srv = Start-Tool 'vm_wms.exe' @('--pipe', $pipe) $srvO $srvE
+Wait-ServerReady $srvE | Out-Null
+$app = Start-Tool 'test_wms_app.exe' @('--pipe', $pipe, '--seconds', '60', '--no-anim') $appO $appE
+Start-Sleep -Milliseconds 1500
+Stop-Process -Id $app.Id -Force          # 模拟崩溃：不走 CloseWindow、不发 FIN
+Start-Sleep -Milliseconds 2500           # 等 peer 探活定时器（1s 一次）
+Stop-Tool $srv
+
+# Windows 上进程被强杀时管道句柄会立刻关闭，服务端先收到 EOF；
+# 进程句柄探活是备用路径（用于「句柄被别的进程继承、EOF 不来」的情况）。
+Assert-LogAny $srvE @('peer process exited', 'end of file') '服务端检测到对端消失'
+Assert-Log    $srvE 'remove window id=1'                    '死连接的窗口被回收'
+Assert-Log    $srvE 'client id=\d+ \(APP\) disconnected'     '连接被清理并落日志'
+Stop-Tool $app
+
+# ---------------------------------------------------------------
+# 4. restart：SHELL 退出后窗口保留，新 SHELL 重连可枚举
+# ---------------------------------------------------------------
+Write-Host "`n== scenario: restart ==" -ForegroundColor Cyan
+$pipe  = New-Pipe 'restart'
+$srvO  = Join-Path $LogDir 'restart-server.out.txt'
+$srvE  = Join-Path $LogDir 'restart-server.err.txt'
+$appO  = Join-Path $LogDir 'restart-app.out.txt'
+$appE  = Join-Path $LogDir 'restart-app.err.txt'
+$sh1O  = Join-Path $LogDir 'restart-shell1.out.txt'
+$sh1E  = Join-Path $LogDir 'restart-shell1.err.txt'
+$sh2O  = Join-Path $LogDir 'restart-shell2.out.txt'
+$sh2E  = Join-Path $LogDir 'restart-shell2.err.txt'
+
+$srv = Start-Tool 'vm_wms.exe' @('--pipe', $pipe) $srvO $srvE
+Wait-ServerReady $srvE | Out-Null
+$app = Start-Tool 'test_wms_app.exe' @('--pipe', $pipe, '--seconds', '30', '--no-anim') $appO $appE
+Start-Sleep -Milliseconds 400
+$sh1 = Start-Tool 'test_wms_shell.exe' @('--pipe', $pipe, '--seconds', '2', '--focus') $sh1O $sh1E
+$sh1.WaitForExit(10000) | Out-Null          # 外壳退出
+Start-Sleep -Milliseconds 300
+$sh2 = Start-Tool 'test_wms_shell.exe' @('--pipe', $pipe, '--seconds', '2', '--focus') $sh2O $sh2E
+$sh2.WaitForExit(10000) | Out-Null
+
+Assert-Log $sh1O "id=1 'wmwm test window'"               '第一个 SHELL 枚举到 APP 的窗口'
+Assert-Log $srvE 'client id=\d+ \(SHELL\) disconnected'  '外壳退出，服务端断开其连接'
+Assert-Log $sh2O "id=1 'wmwm test window'"               '外壳重启后仍能枚举到同一个窗口（id 稳定）'
+Assert-NoLog $srvE 'remove window id=1'                  '外壳退出没有连带回收 APP 的窗口（此时 APP 仍在）'
+Stop-Tool $app; Stop-Tool $sh1; Stop-Tool $sh2
+$app.WaitForExit(5000) | Out-Null
+Stop-Tool $srv
+
+# ---------------------------------------------------------------
+# 汇总
+# ---------------------------------------------------------------
+$ok = $script:Checks - $script:Fails
+Write-Host ("`n== {0}/{1} checks passed ==" -f $ok, $script:Checks) -ForegroundColor ($(if ($script:Fails) { 'Red' } else { 'Green' }))
+if ($script:Fails) {
+    Write-Host "日志：$LogDir" -ForegroundColor Yellow
+    exit 1
+}
+if (-not $KeepLogs) { }
+Write-Host "日志：$LogDir"
+exit 0

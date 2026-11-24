@@ -506,7 +506,7 @@ python tools\inspect_vm_frame.py temp\baseline.txt --tiles
 |---|---|---|
 | M0 基线固化 | 已完成（2026-11-24） | 见 §13.1 |
 | M1 协议层落入本项目 | 已完成（2026-11-24） | 见 §13.2 |
-| M2 vm_wms 元数据上线 | 未开始 | |
+| M2 vm_wms 元数据上线 | 已完成（2026-11-24） | 见 §13.3 |
 | M3 宿主接入 | 未开始 | 核心工作量：`vm_host.c` |
 | M4 rdp 拆分 | 未开始 | |
 | M5 外壳独立 | 未开始 | |
@@ -574,3 +574,31 @@ python tools\drive_vm_desktop.py 9020 snap baseline wait 1500
 全套 9 个测试除 `test_fs` 的既有失败外全部通过；`demo_jpx` / `demo_wm` / `demo_xaml` / `vm_renderer` 均重新链接成功。
 
 **恢复点**：`vm-desktop/wms/` 下 19 个文件可编译，`libwms_core.a` / `libwms_peer.a` / `libwms_client.a` 生成，`vm_ipc.h` 已删。
+
+### 13.3 M2（2026-11-24）
+
+做了什么：
+
+1. CMake 增加 `vm_wms`（`wms_server.c` + `wms_mock_host.c` + `main.c`）与 `test_wms_app` / `test_wms_shell` / `test_wms_rdp` 三个客户端演示 target，全部加入输出目录列表。
+2. libuv 选择改为**静态优先**：MSYS2 的 `libuv::uv` 是 `SHARED IMPORTED`（指向 `bin/libuv-1.dll`），`libuv::uv_a` 才是 `lib/libuv.a`。先试 `uv_a`，产物自包含，e2e 不需要把 `C:\msys64\mingw64\bin` 加进 `PATH`。
+3. 迁入 e2e 脚本 `tools/e2e_wms.ps1`（源 `wmwms/scripts/run_e2e.ps1`），只改产物名、构建目录、cmake 路径与日志落点；断言与场景未改。
+
+**观察**：
+
+- `wms_server.c`（1248 行）在本项目编译无错误，说明 M1 的 include 重写是完整的。
+- mock 宿主（`wms_mock_host.c`）产出占位帧，所以「内容 → 帧 → RDP」这条链在还没接真实合成时就能验证。
+- basic 场景的 `layout_req win=N epoch=1`、`push content accepted=1`、`input ... kind=1 down=1`、`fullframe frame_id=N`、`frame frame_id=N`、`resources id='default'` 全部命中，协议层与内容通道在本项目可用。
+- 若将来装的是只提供动态库的 libuv（无 `uv_a`），`WMS_UV_TARGET` 会回退到 `libuv::uv`，那时 e2e 需要把 DLL 目录加进 `PATH`。
+
+验收：`pwsh tools/e2e_wms.ps1 -SkipBuild` → **23/23 checks passed**，exit 0。
+
+| 场景 | 断言 | 覆盖 |
+|---|---|---|
+| proto | 2 | `test_wms_ipc` 36/36、`test_wms_peer` 7/7 |
+| basic | 14 | 三角色握手与进程身份、布局请求、内容采纳、body 局部坐标输入、工作区、枚举、焦点、fullframe、增量帧、资源包 |
+| crash | 3 | 强杀 APP 后服务端检测对端消失、回收窗口、清理连接 |
+| restart | 4 | 外壳退出不连带回收 APP 窗口、新外壳枚举到同一 `win_id` |
+
+**未验证**：`vm_wms` 当前挂 mock 宿主，帧内容是占位 JSON，不是真实画面。真实合成要等 M3 的 `vm_host.c` 接进去。
+
+**恢复点**：`vm_wms.exe` 可独立启动（`vm-desktop\build\vm_wms.exe --pipe \\.\pipe\vmwm_dev`），`tools/e2e_wms.ps1` 可重复运行。

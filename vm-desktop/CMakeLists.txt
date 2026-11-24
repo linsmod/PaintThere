@@ -212,12 +212,16 @@ target_link_libraries(vm_renderer PRIVATE canvas crash_report)
 # ---------------------------------------------------------------
 set(WMS_UV_TARGET "")
 find_package(libuv CONFIG QUIET)
-if(TARGET libuv::uv)
+# 静态优先（MSYS2 的 libuv::uv 指向 libuv-1.dll，uv_a 指向 libuv.a）：
+# 产物自包含，e2e 不需要把 mingw64/bin 加进 PATH 才能跑。
+if(TARGET libuv::uv_a)
+    set(WMS_UV_TARGET libuv::uv_a)
+elseif(TARGET libuv::uv)
     set(WMS_UV_TARGET libuv::uv)
-elseif(TARGET uv)
-    set(WMS_UV_TARGET uv)
 elseif(TARGET uv_a)
     set(WMS_UV_TARGET uv_a)
+elseif(TARGET uv)
+    set(WMS_UV_TARGET uv)
 endif()
 
 if(NOT WMS_UV_TARGET)
@@ -269,7 +273,30 @@ target_link_libraries(test_wms_ipc PRIVATE wms_core)
 add_executable(test_wms_peer wms/test_wms_peer.c)
 target_link_libraries(test_wms_peer PRIVATE wms_peer)
 
-set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer PROPERTIES
+# 窗口管理服务。M2 阶段挂模拟宿主（占位帧），只验证元数据与 IPC；
+# M3 换成 vm_host.c（真实合成）后去掉 --mock。
+add_executable(vm_wms
+    wms/main.c
+    wms/wms_server.c
+    wms/wms_mock_host.c
+)
+target_link_libraries(vm_wms PRIVATE
+    wms_core wms_peer ${WMS_UV_TARGET} ${WMS_PLATFORM_LIBS})
+if(WIN32)
+    target_link_libraries(vm_wms PRIVATE kernel32)
+endif()
+
+# 协议级客户端演示：APP / SHELL / RDP 三角色，e2e 脚本直接驱动它们
+add_executable(test_wms_app wms/test_wms_app.c)
+target_link_libraries(test_wms_app PRIVATE wms_client)
+
+add_executable(test_wms_shell wms/test_wms_shell.c)
+target_link_libraries(test_wms_shell PRIVATE wms_client)
+
+add_executable(test_wms_rdp wms/test_wms_rdp.c)
+target_link_libraries(test_wms_rdp PRIVATE wms_client)
+
+set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer vm_wms test_wms_app test_wms_shell test_wms_rdp PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"

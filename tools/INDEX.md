@@ -44,4 +44,6 @@
 - `vm-desktop/vm_server.c/.h` — C 跨平台 HTTP 服务：`GET /events` SSE 推帧、`POST /input` 收原始输入、白名单静态资源。
 - `vm-desktop/demo_server.c` — SSE 服务 demo。构建：`gcc -std=c11 -I<clay-dir> -I. demo_server.c demo_layout.c clay_frame_adapter.c vm_server.c -lws2_32 -o demo_server.exe`；运行：`./demo_server 9000`（webRoot 默认 `../assets`）。本机 clay 目录 `H:\github_repos\clay`；验证截图 `vm-desktop/demo_render.png`。
 
+- `e2e_wms.ps1` — WMS 四进程端到端验收：`pwsh tools/e2e_wms.ps1`（`-SkipBuild` 跳过构建）。起 `vm_wms` + `test_wms_app/shell/rdp`，跑 proto / basic / crash / restart 四个场景共 23 条断言；日志落 `temp/e2e-wms-logs/`（不受 git 管理）。每个场景用独立管道名 `\\.\pipe\vmwm_e2e_<tag>_<随机>`，可与正在运行的实例并存。验收结果与已知限制见 `docs/task-vm-wms-merge.md` §13.3。
+
 构建与验证使用标准命令：`python tools/build_vm.py`、`python tools/start_vm_desktop.py`，浏览器验证使用 `agent-browser`。详见 `docs/debug-vmdesk.md`。

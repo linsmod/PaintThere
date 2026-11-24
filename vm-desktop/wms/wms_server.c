@@ -1120,19 +1120,14 @@ static void on_conn_closed(uv_handle_t* handle)
     conn_unlink(c);
     if (g_conn_count) g_conn_count--;
 
-    if (c->type == VMWM_CLIENT_SHELL) {
-        /* 外壳掉线：窗口保留，owner 置 0，重连后可继续管理 */
-        for (i = 0; i < VMWM_MAX_WINDOWS; i++) {
-            if (g_wins[i].used && g_wins[i].owner == c->id)
-                g_wins[i].owner = 0;
-        }
-    } else {
-        /* APP / RDP：名下窗口全部回收 */
-        for (i = 0; i < VMWM_MAX_WINDOWS; i++) {
-            if (g_wins[i].used && g_wins[i].owner == c->id) {
-                int32_t dummy = 0;
-                VmWm_ServerRemoveWindow(g_wins[i].info.win_id, &dummy);
-            }
+    /* 断开即隔离：名下窗口全部回收。
+       外壳的窗口（任务栏、菜单）脱离外壳没有意义，保留只会留下无主空窗；
+       工作区保留最后值，外壳重启后自行重新声明（design-vm-wms-process.md §8.2）。
+       其他客户端的窗口不受影响。 */
+    for (i = 0; i < VMWM_MAX_WINDOWS; i++) {
+        if (g_wins[i].used && g_wins[i].owner == c->id) {
+            int32_t dummy = 0;
+            VmWm_ServerRemoveWindow(g_wins[i].info.win_id, &dummy);
         }
     }
 

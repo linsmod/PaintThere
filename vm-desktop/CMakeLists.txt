@@ -36,6 +36,7 @@ add_executable(demo_wm
     vm_font.c
     vm_theme.c
     vm_shell.c
+    vm_shell_local.c
     vm_menu.c
     vm_clipboard.c
 )
@@ -69,6 +70,7 @@ add_executable(demo_jpx
     vm_font.c
     vm_theme.c
     vm_shell.c
+    vm_shell_local.c
     vm_menu.c
     vm_clipboard.c
     vm_sys_win32.c
@@ -107,6 +109,7 @@ add_executable(demo_xaml
     vm_font.c
     vm_theme.c
     vm_shell.c
+    vm_shell_local.c
     vm_menu.c
     vm_clipboard.c
     vm_sys_win32.c
@@ -130,6 +133,7 @@ add_executable(test_frame
     vm_font.c
     vm_theme.c
     vm_shell.c
+    vm_shell_local.c
     vm_menu.c
     vm_clipboard.c
 )
@@ -144,6 +148,7 @@ add_executable(test_menu
     vm_font.c
     vm_theme.c
     vm_shell.c
+    vm_shell_local.c
     vm_menu.c
     vm_clipboard.c
 )
@@ -323,7 +328,21 @@ target_include_directories(vm_rdp PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/wms")
 target_link_libraries(vm_rdp PRIVATE wms_client ${WMS_PLATFORM_LIBS})
 
-set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer vm_wms test_wms_app test_wms_shell test_wms_rdp vm_rdp PROPERTIES
+# 桌面外壳：任务栏内容 + 输入命中。只链纯绘制层（vm_shell.c）与字体/主题，
+# 不链 vm_wm / Clay；窗口列表与动作通过 wms_client 走 vm_wms。
+add_executable(vm_shell
+    shell/main.c
+    vm_shell.c
+    vm_display.c
+    vm_font.c
+    vm_theme.c)
+target_include_directories(vm_shell PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/wms"
+    "${MSTB_DIR}")
+target_link_libraries(vm_shell PRIVATE wms_client ${WMS_PLATFORM_LIBS})
+
+set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer vm_wms test_wms_app test_wms_shell test_wms_rdp vm_rdp vm_shell PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"

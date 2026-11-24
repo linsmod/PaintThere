@@ -355,6 +355,61 @@ Assert-Log $sse2Dump 'app_rect_0' 'kill rdp 重启后靠 fullframe 恢复应用�
 Stop-Tool $app; Stop-Tool $rdp2; Stop-Tool $srv
 
 # ---------------------------------------------------------------
+# 6. shell：真实桌面外壳进程（vm_shell）
+#    任务栏由外壳建窗并推内容；kill 后任务栏消失、应用不受影响；
+#    重启后条目重建。这是 M5.1 的核心验收。
+# ---------------------------------------------------------------
+Write-Host "`n== scenario: shell ==" -ForegroundColor Cyan
+$pipe   = New-Pipe 'shell'
+$shPort = 19900 + (Get-Random -Maximum 90)
+$srvO   = Join-Path $LogDir 'shell-server.out.txt'
+$srvE   = Join-Path $LogDir 'shell-server.err.txt'
+$appO   = Join-Path $LogDir 'shell-app.out.txt'
+$appE   = Join-Path $LogDir 'shell-app.err.txt'
+$shO    = Join-Path $LogDir 'shell-shell.out.txt'
+$shE    = Join-Path $LogDir 'shell-shell.err.txt'
+$sh2O   = Join-Path $LogDir 'shell-shell2.out.txt'
+$sh2E   = Join-Path $LogDir 'shell-shell2.err.txt'
+$shRdpO = Join-Path $LogDir 'shell-rdp.out.txt'
+$shRdpE = Join-Path $LogDir 'shell-rdp.err.txt'
+$sseA   = Join-Path $LogDir 'shell-sse-before.txt'
+$sseB   = Join-Path $LogDir 'shell-sse-killed.txt'
+$sseC   = Join-Path $LogDir 'shell-sse-restarted.txt'
+$shBase = "http://127.0.0.1:$shPort"
+$fontPath = Join-Path $assetsDir 'font.ttf'
+
+$srv = Start-Tool 'vm_wms.exe' @('--pipe', $pipe, '--screen', '800x600') $srvO $srvE
+if (-not (Wait-ServerReady $srvE)) { Write-Host '  server 未就绪' -ForegroundColor Red; $script:Fails++ }
+$app = Start-Tool 'test_wms_app.exe' @('--pipe', $pipe, '--seconds', '60', '--no-anim') $appO $appE
+Start-Sleep -Milliseconds 400
+$sh = Start-Tool 'vm_shell.exe' @('--pipe', $pipe, '--font', $fontPath) $shO $shE
+Start-Sleep -Milliseconds 600
+$shRdp = Start-Tool 'vm_rdp.exe' @('--port', "$shPort", '--pipe', $pipe,
+    '--web-root', $assetsDir, '--font', $fontPath) $shRdpO $shRdpE
+Wait-Log $shRdpE "listening on 127.0.0.1:$shPort" | Out-Null
+Start-Sleep -Milliseconds 700
+
+& curl.exe -s --noproxy '*' --max-time 4 "$shBase/events" -o $sseA 2>$null | Out-Null
+Assert-Log    $srvE  'handshake client id=\d+ type=SHELL'          '真实外壳以 SHELL 角色连上'
+Assert-Log    $shE   'push content count=\d+ accepted=1'           '外壳推送任务栏内容被采纳'
+Assert-Log    $sseA  '开始'                                        'fullframe 含任务栏开始按钮'
+Assert-Log    $sseA  'wmwm test win'                               '任务栏含应用条目'
+
+Stop-Process -Id $sh.Id -Force
+Start-Sleep -Milliseconds 800
+& curl.exe -s --noproxy '*' --max-time 4 "$shBase/events" -o $sseB 2>$null | Out-Null
+Assert-NoLog  $sseB  '开始'                                        'kill 外壳后任务栏消失'
+Assert-Log    $sseB  'wmwm test window'                            'kill 外壳后应用内容保留'
+
+$sh2 = Start-Tool 'vm_shell.exe' @('--pipe', $pipe, '--font', $fontPath) $sh2O $sh2E
+Start-Sleep -Milliseconds 800
+& curl.exe -s --noproxy '*' --max-time 4 "$shBase/events" -o $sseC 2>$null | Out-Null
+Assert-Log    $sseC  '开始'                                        '重启外壳后任务栏重建'
+Assert-Log    $sseC  'wmwm test win'                               '重启后任务栏条目重建'
+
+Stop-Tool $app; Stop-Tool $sh2; Stop-Tool $shRdp; Stop-Tool $srv
+
+# ---------------------------------------------------------------
 # 汇总
 # ---------------------------------------------------------------
 $ok = $script:Checks - $script:Fails

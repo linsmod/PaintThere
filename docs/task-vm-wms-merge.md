@@ -489,7 +489,7 @@ void VmTemplate_PaintLayers(VmCmdBuffer *out, const VmTaskButtonLayer *st,
 |---|---|
 | 协议编解码 | `test_wms_ipc.exe --probe`（36 项） |
 | 进程身份 | `test_peer.exe --probe`（7 项） |
-| 窗口元数据 + 端到端 | `tools/e2e_wms.ps1`（23 条断言，四进程场景） |
+| 窗口元数据 + 端到端 | `tools/e2e_wms.ps1`（53 条断言，五进程场景；含真实 `vm_shell`） |
 | 合成与瓦片 | `test_frame --probe` + `inspect_vm_frame.py` 对比 M0 基线 |
 | 崩溃容错 | §1 的 5 条手工验收 |
 | 界面语义 | `test_menu --probe`、`test_jpx_xaml_theme --probe` |
@@ -539,7 +539,7 @@ void VmTemplate_PaintLayers(VmCmdBuffer *out, const VmTaskButtonLayer *st,
 | M2 vm_wms 元数据上线 | 已完成（2026-11-24） | 见 §13.3 |
 | M3 宿主接入 | 已完成（2026-11-24） | 见 §13.4 |
 | M4 rdp 拆分 | 已完成（2026-11-24） | 见 §13.5 |
-| M5 外壳独立 | 进行中 | 范围 = 5.1 迁进程 + 5.2 去 Clay + 5.3 模板抽函数；5.1 的协议前置已完成（见 §13.6）；任务栏 XAML 化另见 `docs/task-shell-xaml-framework.md` |
+| M5 外壳独立 | 进行中 | 5.1 迁进程已完成（§13.7）；5.2 去 Clay / 5.3 模板抽函数未做；任务栏 XAML 化另见 `docs/task-shell-xaml-framework.md` |
 | M6 应用独立 | 未开始 | |
 | M7 清理与文档 | 未开始 | |
 
@@ -740,3 +740,54 @@ hover 需要指针位置，而 `EVT_INPUT` 只发给命中窗口的属主，鼠�
 - 上游 wmwms 需要同样加这三个字段才能与本项目互通，已记入 §5.7 第 9 条。
 
 **恢复点**：协议可承载 flags 与指针；shell 进程化的最后两个阻塞点消除。
+
+### 13.7 M5.1 外壳迁进程（2026-11-24）
+
+**做了什么**
+
+1. 外壳拆成两层：
+   - `vm_shell.c`：纯绘制/命中。输入 `VmShellModel`（窗口条目快照 + 指针），
+     输出 `VmCmdBuffer` 或 `VmShellAction`。只 include `vm_display` / `vm_theme` / `vm_font`，
+     **不链 `vm_wm` / Clay**。
+   - `vm_shell_local.c`：单进程适配。把 `VmWm` 填成 model，把 action 翻译回
+     `VmWm_*`（含右键菜单、popup、显示桌面）。
+   - `vm_shell_internal.h`：两层共享的私有结构。
+2. 新增 `shell/main.c` + `vm_shell` target（链 `wms_client`，不链 `vm_wm`）：
+   - 以 `VMWM_CLIENT_SHELL` 连接；建任务栏窗口（UNDECORATED|TOPMOST|PINNED|NOFOCUS）。
+   - 窗口列表用 `Wms_ListWindows` 全量重拉（≤ 10 个窗口，增量合并的错误代价更高）。
+   - 指针来自 `EVT_POINTER`，按下沿用 `downSeq`；内容用 `Wms_PushContent`。
+   - 动作：激活/最小化/还原/聚焦走 `Wms_MapWindow` / `Wms_UnmapWindow` / `Wms_SetFocus`；
+     显示桌面遍历 model 批量 map/unmap。
+3. 服务端行为修正：`conn_unlink` 对 SHELL 不再「保留窗口、owner 置 0」，改为
+   **名下窗口一并回收**，与 `design-vm-wms-process.md` §8.2 一致；工作区保留最后值。
+   否则 kill 外壳后任务栏会以无主窗口形式留在画面上。
+4. `jpx_app.c`：`VmShell_SetTheme` 与 `SetShowClock/Tray` 不再隐式作废，宿主显式
+   `VmShell_Refresh`（纯设置与副作用分离）。
+
+**验收**
+
+- `pwsh tools/e2e_wms.ps1 -SkipBuild` → **53/53**（新增 `shell` 场景 8 条）：
+  真实外壳以 SHELL 连上、推送内容被采纳、fullframe 含「开始」与条目、
+  kill 外壳后任务栏消失且应用内容保留、重启后任务栏与条目重建。
+- 单进程未回归：`demo_jpx` 抓帧 **166531 B / setTile 96**，与 M0 基线逐字节相同。
+- 单元测试不变：`test_frame` 120、`test_menu` 30、`test_wms_ipc` 36、`test_wms_peer` 7、
+  `test_text_edit` 66、`test_jpx_xaml` 47、`test_jpx_xaml_theme` 137、`test_sys` 16。
+- 浏览器截图 `temp/m5a-visual.png`：任务栏位于底部、无标题栏、开始按钮 + 条目 + 时钟；
+  应用窗口内容与装饰正常。
+
+**观察**
+
+- `EVT_LAYOUT_REQ` 在 `Wms_CreateWindow` 的 ACK 之前就到达（服务端在 create 处理里发），
+  此时外壳还没拿到 `win_id`。外壳只建一个窗口，所以把第一条 layout_req 直接认领。
+- `vm_shell` 的 `--theme` 未实现：只有默认主题；`EVT_THEME_CHANGED` 会记日志但只应用默认。
+- wmwms 不管理「最大化」状态，`VmShellItem.maximized` 恒 0，`doUnmaximize` 分支不会触发。
+
+**遗留（M5.2/M5.3 或 M6 处理）**
+
+- 开始菜单、设置面板、任务栏右键菜单未迁：action 已定义，外壳只记日志。
+- `vm_shell` 仍链 `vm_font` / `vm_theme` / `vm_display`，不链 Clay；
+  `vm_wms` 仍因 `vm_wm.c` 的 Clay 分支而链 Clay（M5.2）。
+- 主题名解析与资源包仍是宿主默认主题。
+
+**恢复点**：`vm_wms + vm_rdp + vm_shell + app` 四进程在线；kill 外壳不影响应用；
+重启外壳重建任务栏。

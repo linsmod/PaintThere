@@ -394,6 +394,7 @@ void Jpx_SetVmTheme(JpxApp *app, const VmTheme *theme) {
         if (app->shell) {
             VmShell_SetTheme(app->shell, VmTheme_Default());
             VmShell_SetHeight(app->shell, VmTheme_Default()->panelHeight);
+            VmShell_Refresh(app->shell);   /* 纯设置不再隐式作废，由宿主显式刷新 */
         }
         return;
     }
@@ -426,6 +427,7 @@ void Jpx_SetVmTheme(JpxApp *app, const VmTheme *theme) {
     if (app->shell) {
         VmShell_SetTheme(app->shell, &app->vmTheme);
         if (theme->panelHeight > 0) VmShell_SetHeight(app->shell, theme->panelHeight);
+        VmShell_Refresh(app->shell);       /* 纯设置不再隐式作废，由宿主显式刷新 */
     }
     Jpx__Invalidate(app);
 }
@@ -536,13 +538,13 @@ void Jpx_SetShellSettingsHandler(JpxApp *app, JpxShellSettingsHandler handler,
 void Jpx_ShellSetShowClock(JpxApp *app, int show) {
     if (!app) return;
     VmShell_SetShowClock(app->shell, show);
-    app->dirty = 1;
+    Jpx_ShellRefresh(app);
 }
 
 void Jpx_ShellSetShowTrayIcon(JpxApp *app, int show) {
     if (!app) return;
     VmShell_SetShowTrayIcon(app->shell, show);
-    app->dirty = 1;
+    Jpx_ShellRefresh(app);
 }
 
 void Jpx_ClipboardSet(const char *utf8) {

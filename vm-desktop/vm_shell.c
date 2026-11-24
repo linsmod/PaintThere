@@ -7,12 +7,11 @@
 #include <time.h>
 
 #include "vm_font.h"
-#include "vm_menu.h"
+#include "vm_shell_internal.h"
 
-/* 任务栏 = 一个无装饰/置顶/不可拖动/不抢焦点的特殊窗口。
-   内容用 VmWm_SetWindowPaint 手绘：Clay 的 backgroundColor 只吃单色，
-   XP 任务栏需要多 stop 渐变与位图填充。命中用 VmWm_SetWindowClickHandler
-   （NOFOCUS 窗口拿不到焦点，只能走按下通道）。
+/* 任务栏内容的生产者：只读 VmShellModel 快照，产出绘制命令或动作。
+   这里没有 VmWm、没有 Clay、没有 IPC —— 数据源由调用方提供，
+   所以同一份代码既能服务单进程 demo，也能服务独立的 vm_shell 进程。
 
    几何与样式全部来自 VmTheme 的 panel* token（由主题资源/Style 派生），
    这里不写死像素；token 为 0 时才用最小兜底值。 */
@@ -22,25 +21,6 @@
 #define SHELL_FALLBACK_START_W 72
 #define SHELL_FALLBACK_ITEM_W 110
 #define SHELL_FALLBACK_ITEM_MIN 45
-
-struct VmShell {
-    VmWm *wm;
-    int width, height;
-    const VmTheme *theme;
-    VmShellStartHandler startHandler;
-    void *startUserData;
-    VmShellSettingsHandler settingsHandler;
-    void *settingsUserData;
-    /* 任务栏选项（RetroBar Properties 开关子集），默认全开。 */
-    int showClock;
-    int showTrayIcon;
-    /* 已处理过的按下序号：一次按下只触发一次，与重建帧数无关。
-       左右键分开记：右键菜单打开/关闭不影响左键的按下沿。 */
-    int lastDownSeq;
-    int lastRightSeq;
-};
-
-static VmShell *g_shell;
 
 static void append_rect(VmCmdBuffer *out, const char *id, int x, int y, int w, int h,
                         const char *paint, float radius) {
@@ -125,11 +105,16 @@ typedef struct {
     int itemsRight;                       /* 条目区右界（显示桌面按钮或托盘左缘） */
     int showDesktopX, showDesktopW;
     int trayX;                            /* 托盘 GroupBox 左缘 */
-    int n;                                /* 枚举到的窗口数 */
-    int ids[VM_WM_MAX_WINDOWS];
+    int n;                                /* model 里的条目总数 */
+    int nVis;                             /* 可见条目数 */
+    int idx[VM_SHELL_MAX_ITEMS];          /* 可见条目在 model 里的下标 */
 } ShellLayout;
 
-static int shell_item_visible(VmShell *sh, int id);
+static int item_visible(const VmShellItem *it) {
+    if (!it || it->id == VM_SHELL_WINDOW_ID) return 0;
+    /* 桌面图标层与弹出菜单是无装饰窗口，不占任务栏条目。 */
+    return !it->undecorated;
+}
 
 /* 任务条目 i 的矩形（index 是可见条目序号）。 */
 static void shell_item_rect(const ShellLayout *L, int index, int *x, int *w) {
@@ -137,7 +122,28 @@ static void shell_item_rect(const ShellLayout *L, int index, int *x, int *w) {
     *w = L->itemW + (index < L->itemExtra ? 1 : 0);
 }
 
-static void shell_geometry(VmShell *sh, ShellLayout *L) {
+static int shell_start_height(const VmShell *sh) {
+    const int h = sh->height;
+    int bh = sh->theme->panelStartButtonHeight > 0 ? sh->theme->panelStartButtonHeight : h - 8;
+    if (bh < 8) bh = h - 4;
+    return bh;
+}
+
+static int shell_item_height(const VmShell *sh) {
+    const int h = sh->height;
+    int bh = sh->theme->panelItemHeight > 0 ? sh->theme->panelItemHeight : h;
+    if (bh < 8) bh = h;
+    return bh;
+}
+
+static float shell_radius(const VmShell *sh) {
+    /* 0 = 直角（经典主题无 CornerRadius 资源），是显式值，不回退；
+       派生层按 key 缺失给 0，默认主题（现代深色）自带 5。 */
+    return (float)sh->theme->panelRadius;
+}
+
+static void shell_geometry(const VmShell *sh, const VmShellModel *m, int w,
+                           ShellLayout *L) {
     memset(L, 0, sizeof(*L));
     const VmTheme *t = sh->theme;
     const int fontId = t->fontId;
@@ -155,7 +161,12 @@ static void shell_geometry(VmShell *sh, ShellLayout *L) {
                                                : SHELL_FALLBACK_ITEM_W;
     int itemMin = t->panelItemWidthMin > 0 ? t->panelItemWidthMin
                                            : SHELL_FALLBACK_ITEM_MIN;
-    L->n = VmWm_EnumerateCreated(sh->wm, L->ids, VM_WM_MAX_WINDOWS);
+    L->n = m ? m->count : 0;
+    L->nVis = 0;
+    for (int i = 0; i < L->n; i++) {
+        if (!item_visible(&m->items[i])) continue;
+        L->idx[L->nVis++] = i;
+    }
 
     /* 右侧区（内容驱动，从右往左）：时钟（Clock Margin）→ 托盘 GroupBox
        左缘 → Tray.Margin.Left → 显示桌面按钮。 */
@@ -169,7 +180,7 @@ static void shell_geometry(VmShell *sh, ShellLayout *L) {
         clockZone = t->clockMarginLeft + VmFont_Width(fontId, fontSize, clock, -1) +
                     t->clockMarginRight;
     }
-    L->trayX = sh->width - clockZone;   /* 托盘 GroupBox 左缘 */
+    L->trayX = w - clockZone;   /* 托盘 GroupBox 左缘 */
     int sdIconW = t->panelShowDesktopIconW > 0 ? t->panelShowDesktopIconW : 16;
     L->showDesktopW = (sh->showTrayIcon && t->trayIconId)
                           ? t->panelShowDesktopMarginL + sdIconW +
@@ -181,10 +192,7 @@ static void shell_geometry(VmShell *sh, ShellLayout *L) {
     /* 条目区：默认宽放得下就用默认（尾部留空），放不下收缩铺满整行。 */
     L->itemsX = L->startX + L->startW + startMR + listML;
     int avail = L->itemsRight - L->itemsX;
-    int nVis = 0;
-    for (int i = 0; i < L->n; i++) {
-        if (shell_item_visible(sh, L->ids[i])) nVis++;
-    }
+    int nVis = L->nVis;
     if (nVis <= 0 || avail <= 0) {
         L->itemW = itemDef;
         return;
@@ -204,39 +212,15 @@ static void shell_geometry(VmShell *sh, ShellLayout *L) {
     }
 }
 
-/* 开始按钮高度由主题给；允许超出栏高（XP：StartButton.Height=32 放进 30 高栏，
-   Top 对齐、底部溢出画布外）。任务条目 0 = 占满栏（RetroBar 的纵向 Stretch），
-   主题给正值时按给定高度居中。 */
-static int shell_start_height(VmShell *sh) {
-    const int h = sh->height;
-    int bh = sh->theme->panelStartButtonHeight > 0 ? sh->theme->panelStartButtonHeight : h - 8;
-    if (bh < 8) bh = h - 4;
-    return bh;
+static int pointer_over(const VmShellModel *m, int x, int y, int w, int h) {
+    if (!m || !m->pointerValid) return 0;
+    return m->pointerX >= x && m->pointerX < x + w &&
+           m->pointerY >= y && m->pointerY < y + h;
 }
 
-static int shell_item_height(VmShell *sh) {
-    const int h = sh->height;
-    int bh = sh->theme->panelItemHeight > 0 ? sh->theme->panelItemHeight : h;
-    if (bh < 8) bh = h;
-    return bh;
-}
-
-static float shell_radius(VmShell *sh) {
-    /* 0 = 直角（经典主题无 CornerRadius 资源），是显式值，不回退；
-       派生层按 key 缺失给 0，默认主题（现代深色）自带 5。 */
-    return (float)sh->theme->panelRadius;
-}
-
-static int shell_item_visible(VmShell *sh, int id) {
-    VmWindow *win = VmWm_FindWindow(sh->wm, id);
-    if (!win || win->id == VM_SHELL_WINDOW_ID) return 0;
-    /* 桌面图标层与弹出菜单是无装饰窗口，不占任务栏条目。 */
-    return (win->flags & VM_WIN_UNDECORATED) == 0;
-}
-
-static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *userData) {
-    VmShell *sh = (VmShell *)userData;
-    if (!sh || !sh->theme) return;
+void VmShell_Paint(VmShell *sh, const VmShellModel *m, VmCmdBuffer *out,
+                   int x, int y, int w, int h) {
+    if (!sh || !m || !sh->theme) return;
     const VmTheme *t = sh->theme;
     const int fontId = t->fontId;
     const int fontSize = t->fontSize > 0 ? t->fontSize : 13;
@@ -244,7 +228,7 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
                              ? VmFont_LineHeight(fontId, fontSize) : fontSize;
 
     ShellLayout L;
-    shell_geometry(sh, &L);
+    shell_geometry(sh, m, w, &L);
 
     /* 几何全部来自主题：高度、圆角、间距、图标尺寸都不在这里写死。
        开始按钮高于栏时顶对齐（XP：32 高按钮放进 30 高栏，底部溢出画布外）；
@@ -257,15 +241,10 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
 
     /* 开始按钮：有位图皮肤就用位图三态（XP 的竖排雪碧取不同 1/3），
        其次是渐变（s_start），最后退回强调色单色。 */
-    int overStart = 0;
-    if (sh->wm->pointerValid) {
-        int px = sh->wm->pointerX, py = sh->wm->pointerY;
-        overStart = px >= x + L.startX && px < x + L.startX + L.startW &&
-                    py >= sby && py < sby + sbh;
-    }
+    int overStart = pointer_over(m, x + L.startX, sby, L.startW, sbh);
     if (t->startImageId) {
         const char *seg = overStart
-            ? (sh->wm->pointerDown ? "0,0.6666,1,0.3333" : "0,0.3333,1,0.3333")
+            ? (m->pointerDown ? "0,0.6666,1,0.3333" : "0,0.3333,1,0.3333")
             : "0,0,1,0.3333";
         char imgRef[160];
         snprintf(imgRef, sizeof(imgRef), "%s#%s", t->startImageId, seg);
@@ -316,36 +295,29 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
 
     /* 任务条目：RetroBar 语义宽度（默认宽 → 收缩铺满 → 下限截断），
        标题超宽按像素截断。 */
-    int vis = 0;
-    for (int i = 0; i < L.n; i++) {
-        if (!shell_item_visible(sh, L.ids[i])) continue;
+    for (int i = 0; i < L.nVis; i++) {
+        const VmShellItem *it = &m->items[L.idx[i]];
         int ix, iw;
-        shell_item_rect(&L, vis++, &ix, &iw);
+        shell_item_rect(&L, i, &ix, &iw);
         ix += x;
         if (ix + iw > x + L.itemsRight) break;   /* 无滚动：放不下的不再画 */
-        VmWindow *win = VmWm_FindWindow(sh->wm, L.ids[i]);
-        if (!win) continue;
         /* 悬停判定先于绘制：状态决定模板层集选择。 */
-        int hovered = 0;
-        if (sh->wm->pointerValid) {
-            int px = sh->wm->pointerX, py = sh->wm->pointerY;
-            hovered = px >= ix && px < ix + iw && py >= by && py < by + bh;
-        }
+        int hovered = pointer_over(m, ix, by, iw, bh);
 
         /* 模板层集：focused → Pressed；hovered 且非 focused → Hover（缺则
            normal 层集 + 旧悬停叠加）；层集不可用走 From/To + bevel 旧路径。 */
         const VmTaskButtonLayer *st = NULL;
-        if (win->focused) st = t->taskActive.stopCount >= 2 ? &t->taskActive : NULL;
+        if (it->focused) st = t->taskActive.stopCount >= 2 ? &t->taskActive : NULL;
         else if (hovered) st = t->taskHover.stopCount >= 2 ? &t->taskHover : NULL;
         if (!st && t->taskNormal.stopCount >= 2) st = &t->taskNormal;
 
         const char *paint;
-        if (st) paint = win->focused ? "s_task_active"
+        if (st) paint = it->focused ? "s_task_active"
                     : (hovered && t->taskHover.stopCount >= 2) ? "s_task_hover"
                     : "s_task";
-        else if (win->focused && t->taskButtonActiveFrom) paint = "s_task_active";
+        else if (it->focused && t->taskButtonActiveFrom) paint = "s_task_active";
         else if (t->taskButtonFrom) paint = "s_task";
-        else paint = win->focused ? t->accentColor : t->fgColor;
+        else paint = it->focused ? t->accentColor : t->fgColor;
 
         /* 绘制区 = 条目盒内缩模板 Padding（XP ButtonBorder 0,3,0,2）：
            渐变体不画满整栏，栏顶/底露出背景条；开始按钮无此内缩，
@@ -357,57 +329,57 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
         const int ih = bh - padTop - padBottom;
 
         char idbuf[48];
-        snprintf(idbuf, sizeof(idbuf), "tb_item_%d", win->id);
+        snprintf(idbuf, sizeof(idbuf), "tb_item_%d", it->id);
         append_rect(out, idbuf, ix, iy, iw, ih, paint, radius);
 
         if (st) {
             /* RetroBar 模板层次：主渐变 → 外 4 边 → 内 3 边 → 对角高光层。
                各状态有自己的边色，不做 bevel 反转。 */
             if (st->borderTop) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_top_%d", win->id);
+                snprintf(idbuf, sizeof(idbuf), "tb_item_top_%d", it->id);
                 append_rect(out, idbuf, ix, iy, iw, 1, st->borderTop, 0.0f);
             }
             if (st->borderLeft) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_left_%d", win->id);
+                snprintf(idbuf, sizeof(idbuf), "tb_item_left_%d", it->id);
                 append_rect(out, idbuf, ix, iy + 1, 1, ih - 2, st->borderLeft, 0.0f);
             }
             if (st->borderBottom) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_bottom_%d", win->id);
+                snprintf(idbuf, sizeof(idbuf), "tb_item_bottom_%d", it->id);
                 append_rect(out, idbuf, ix, iy + ih - 1, iw, 1, st->borderBottom, 0.0f);
             }
             if (st->borderRight) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_right_%d", win->id);
+                snprintf(idbuf, sizeof(idbuf), "tb_item_right_%d", it->id);
                 append_rect(out, idbuf, ix + iw - 1, iy + 1, 1, ih - 2, st->borderRight, 0.0f);
             }
             if (st->innerLeft) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_il_%d", win->id);
+                snprintf(idbuf, sizeof(idbuf), "tb_item_il_%d", it->id);
                 append_rect(out, idbuf, ix + 1, iy + 1, 1, ih - 3, st->innerLeft, 0.0f);
             }
             if (st->innerRight) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_ir_%d", win->id);
+                snprintf(idbuf, sizeof(idbuf), "tb_item_ir_%d", it->id);
                 append_rect(out, idbuf, ix + iw - 2, iy + 1, 1, ih - 3, st->innerRight, 0.0f);
             }
             if (st->innerBottom) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_ib_%d", win->id);
+                snprintf(idbuf, sizeof(idbuf), "tb_item_ib_%d", it->id);
                 append_rect(out, idbuf, ix + 1, iy + ih - 2, iw - 2, 1, st->innerBottom, 0.0f);
             }
             if (st->hlStopCount >= 2) {
-                const char *hl = win->focused ? "s_task_active_hl"
+                const char *hl = it->focused ? "s_task_active_hl"
                                : (hovered && t->taskHover.stopCount >= 2) ? "s_task_hover_hl"
                                : "s_task_hl";
-                snprintf(idbuf, sizeof(idbuf), "tb_item_hl_%d", win->id);
+                snprintf(idbuf, sizeof(idbuf), "tb_item_hl_%d", it->id);
                 append_rect(out, idbuf, ix + 2, iy + 1, iw - 4, ih - 3, hl, radius);
             }
             /* hover 无层集但主题给了悬停渐变：在层集之上叠加。 */
-            if (hovered && !win->focused && t->taskHover.stopCount < 2 &&
+            if (hovered && !it->focused && t->taskHover.stopCount < 2 &&
                 t->taskButtonHoverFrom) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_hover_%d", win->id);
+                snprintf(idbuf, sizeof(idbuf), "tb_item_hover_%d", it->id);
                 append_rect(out, idbuf, ix, iy, iw, ih, "s_task_hover", radius);
             }
         } else {
             /* 悬停：主题给了悬停渐变就用它，否则只在原底色上叠一层提亮。 */
-            if (hovered && !win->focused) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_hover_%d", win->id);
+            if (hovered && !it->focused) {
+                snprintf(idbuf, sizeof(idbuf), "tb_item_hover_%d", it->id);
                 if (t->taskButtonHoverFrom) {
                     append_rect(out, idbuf, ix, iy, iw, ih, "s_task_hover", radius);
                 } else {
@@ -423,25 +395,25 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
                 const char *left = t->taskBorderLeftColor;
                 const char *bottom = t->taskBorderBottomColor;
                 const char *right = t->taskBorderRightColor;
-                if (win->focused) {
+                if (it->focused) {
                     const char *swap;
                     swap = top; top = bottom; bottom = swap;
                     swap = left; left = right; right = swap;
                 }
                 if (top) {
-                    snprintf(idbuf, sizeof(idbuf), "tb_item_top_%d", win->id);
+                    snprintf(idbuf, sizeof(idbuf), "tb_item_top_%d", it->id);
                     append_rect(out, idbuf, ix, iy, iw, 1, top, 0.0f);
                 }
                 if (bottom) {
-                    snprintf(idbuf, sizeof(idbuf), "tb_item_bottom_%d", win->id);
+                    snprintf(idbuf, sizeof(idbuf), "tb_item_bottom_%d", it->id);
                     append_rect(out, idbuf, ix, iy + ih - 1, iw, 1, bottom, 0.0f);
                 }
                 if (left) {
-                    snprintf(idbuf, sizeof(idbuf), "tb_item_left_%d", win->id);
+                    snprintf(idbuf, sizeof(idbuf), "tb_item_left_%d", it->id);
                     append_rect(out, idbuf, ix, iy + 1, 1, ih - 2, left, 0.0f);
                 }
                 if (right) {
-                    snprintf(idbuf, sizeof(idbuf), "tb_item_right_%d", win->id);
+                    snprintf(idbuf, sizeof(idbuf), "tb_item_right_%d", it->id);
                     append_rect(out, idbuf, ix + iw - 1, iy + 1, 1, ih - 2, right, 0.0f);
                 }
             }
@@ -449,9 +421,9 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
 
         char label[128];
         int inset = t->panelTaskTextInsetX;   /* 0 = 贴边，显式值不回退 */
-        truncate_utf8(fontId, fontSize, win->title, iw - inset - 4, label,
+        truncate_utf8(fontId, fontSize, it->title, iw - inset - 4, label,
                       sizeof(label));
-        snprintf(idbuf, sizeof(idbuf), "tb_item_text_%d", win->id);
+        snprintf(idbuf, sizeof(idbuf), "tb_item_text_%d", it->id);
         const char *color = t->taskButtonTextColor ? t->taskButtonTextColor : t->accentTextColor;
         append_text(out, idbuf, ix + inset, iy + (ih - lineStep) / 2,
                     iw - inset - 4, lineStep, label, fontId, fontSize, color);
@@ -492,208 +464,113 @@ static void shell_paint(VmCmdBuffer *out, int x, int y, int w, int h, void *user
     }
 }
 
-/* 任务栏条目语义与桌面系统一致：最小化的还原、最大化的先还原尺寸、
-   已聚焦的收起为最小化、其余聚焦到前面。 */
-static void shell_activate_window(VmShell *sh, int wid) {
-    VmWindow *win = VmWm_FindWindow(sh->wm, wid);
-    if (!win) return;
-    if (win->minimized) {
-        VmWm_Restore(sh->wm, wid);
-    } else if (win->maximized) {
-        VmWm_Unmaximize(sh->wm, wid);
-        VmWm_Focus(sh->wm, wid);
-    } else if (win->focused) {
-        VmWm_Minimize(sh->wm, wid);
-    } else {
-        VmWm_Focus(sh->wm, wid);
-    }
-}
+int VmShell_HitTest(VmShell *sh, const VmShellModel *m, int lx, int ly,
+                    int button, int down, VmShellAction *out) {
+    if (!sh || !m || !out) return 0;
+    memset(out, 0, sizeof(*out));
+    if (!down) return 0;   /* 只有按下产生动作 */
 
-/* 显示桌面 toggle：有未最小化的可见窗口 → 全部最小化；否则全部还原。 */
-static void shell_toggle_show_desktop(VmShell *sh) {
-    int ids[VM_WM_MAX_WINDOWS];
-    int n = VmWm_EnumerateCreated(sh->wm, ids, VM_WM_MAX_WINDOWS);
-    int anyVisible = 0;
-    for (int i = 0; i < n; i++) {
-        if (!shell_item_visible(sh, ids[i])) continue;
-        VmWindow *win = VmWm_FindWindow(sh->wm, ids[i]);
-        if (win && !win->minimized) anyVisible = 1;
-    }
-    for (int i = 0; i < n; i++) {
-        if (!shell_item_visible(sh, ids[i])) continue;
-        if (anyVisible) VmWm_Minimize(sh->wm, ids[i]);
-        else VmWm_Restore(sh->wm, ids[i]);
-    }
-}
-
-/* ---- 右键上下文菜单（RetroBar 交互）---- */
-
-/* 条目菜单的动作表：与菜单项一一对应（分隔线占位为 0）。 */
-enum {
-    TASK_MENU_RESTORE = 1,
-    TASK_MENU_MAXIMIZE,
-    TASK_MENU_MINIMIZE,
-    TASK_MENU_CLOSE,
-    TASK_MENU_SEP
-};
-
-typedef struct {
-    VmShell *sh;
-    int wid;
-    int actions[5];   /* index → TASK_MENU_* */
-    int count;
-} TaskMenuCtx;
-
-/* 菜单单例一次一个，ctx 用静态存储保到回调触发（栈数组会悬空）。 */
-static TaskMenuCtx g_taskMenu;
-
-static void shell_task_menu_select(int index, void *userData) {
-    TaskMenuCtx *ctx = (TaskMenuCtx *)userData;
-    VmShell *sh = ctx->sh;
-    VmWindow *win = VmWm_FindWindow(sh->wm, ctx->wid);
-    if (!win) return;   /* 菜单打开期间窗口可能已被关掉 */
-    switch (ctx->actions[index]) {
-        case TASK_MENU_RESTORE:
-            if (win->maximized) VmWm_Unmaximize(sh->wm, ctx->wid);
-            else if (win->minimized) VmWm_Restore(sh->wm, ctx->wid);
-            break;
-        case TASK_MENU_MAXIMIZE:
-            VmWm_Maximize(sh->wm, ctx->wid);
-            break;
-        case TASK_MENU_MINIMIZE:
-            VmWm_Minimize(sh->wm, ctx->wid);
-            break;
-        case TASK_MENU_CLOSE:
-            /* 与装饰 × 同一条路径：只发关闭请求，真正移除由持有者决定。 */
-            if (win->closeHandler) win->closeHandler(win->id, win->closeUserData);
-            else VmWm_RemoveWindow(sh->wm, ctx->wid);
-            break;
-        default:
-            break;
-    }
-}
-
-static void shell_task_context_menu(VmShell *sh, int wid, int x, int y) {
-    VmWindow *win = VmWm_FindWindow(sh->wm, wid);
-    if (!win) return;
-    /* 菜单项按窗口状态动态生成（XP 的系统菜单语义）。 */
-    VmMenuItem items[5];
-    int *actions = g_taskMenu.actions;
-    g_taskMenu.sh = sh;
-    g_taskMenu.wid = wid;
-    g_taskMenu.count = 0;
-    if (win->maximized || win->minimized) {
-        items[g_taskMenu.count].text = win->maximized ? "还原大小" : "还原";
-        actions[g_taskMenu.count] = TASK_MENU_RESTORE;
-        g_taskMenu.count++;
-    } else {
-        items[g_taskMenu.count].text = "最大化";
-        actions[g_taskMenu.count] = TASK_MENU_MAXIMIZE;
-        g_taskMenu.count++;
-    }
-    if (!win->minimized) {
-        items[g_taskMenu.count].text = "最小化";
-        actions[g_taskMenu.count] = TASK_MENU_MINIMIZE;
-        g_taskMenu.count++;
-    }
-    items[g_taskMenu.count].text = NULL;
-    actions[g_taskMenu.count] = TASK_MENU_SEP;
-    g_taskMenu.count++;
-    items[g_taskMenu.count].text = "关闭";
-    actions[g_taskMenu.count] = TASK_MENU_CLOSE;
-    g_taskMenu.count++;
-    for (int i = 0; i < g_taskMenu.count; i++) items[i].enabled = 1;
-
-    /* 锚在按下点，越界由 VmMenu 钳制进画布。 */
-    VmMenu_Open(sh->wm, sh->theme, x, y, items, g_taskMenu.count,
-                shell_task_menu_select, &g_taskMenu);
-}
-
-static void shell_bar_menu_select(int index, void *userData) {
-    VmShell *sh = (VmShell *)userData;
-    if (index == 0 && sh->settingsHandler) sh->settingsHandler(sh->settingsUserData);
-}
-
-static int shell_click(int winId, int x, int y, int button, void *userData) {
-    (void)winId;
-    VmShell *sh = (VmShell *)userData;
-    if (!sh) return 0;
-    VmWindow *self = VmWm_FindWindow(sh->wm, VM_SHELL_WINDOW_ID);
-    if (!self) return 0;
-    if (x < self->x || x >= self->x + self->w ||
-        y < self->y || y >= self->y + self->h) return 0;
     /* 按下沿：同一次按下只处理一次，与后续重建帧数无关。左右键分开记。 */
     if (button == 2) {
-        if (sh->wm->pointerDownSeq == sh->lastRightSeq) return 0;
-        sh->lastRightSeq = sh->wm->pointerDownSeq;
+        if (m->downSeq <= sh->lastRightSeq) return 0;
+        sh->lastRightSeq = m->downSeq;
     } else {
-        if (sh->wm->pointerDownSeq == sh->lastDownSeq) return 0;
-        sh->lastDownSeq = sh->wm->pointerDownSeq;
+        if (m->downSeq <= sh->lastDownSeq) return 0;
+        sh->lastDownSeq = m->downSeq;
     }
 
-    const int lx = x - self->x;
+    const int w = sh->width;
     ShellLayout L;
-    shell_geometry(sh, &L);
+    shell_geometry(sh, m, w, &L);
 
     if (lx >= L.startX && lx < L.startX + L.startW) {
-        if (sh->startHandler) sh->startHandler(sh->startUserData);
+        out->kind = VM_SHELL_ACTION_START;
+        out->x = lx;
+        out->y = ly;
         return 1;
     }
 
     /* 显示桌面按钮：全部最小化 / 再次点击还原（XP 语义）。 */
     if (L.showDesktopW > 0 && lx >= L.showDesktopX && lx < L.showDesktopX + L.showDesktopW) {
-        if (button == 0) shell_toggle_show_desktop(sh);
+        int anyVisible = 0;
+        for (int i = 0; i < L.nVis; i++) {
+            if (!m->items[L.idx[i]].minimized) anyVisible = 1;
+        }
+        out->kind = VM_SHELL_ACTION_TOGGLE_DESKTOP;
+        out->minimizeAll = anyVisible;
+        out->x = lx;
+        out->y = ly;
         return 1;
     }
 
-    int vis = 0;
-    for (int i = 0; i < L.n; i++) {
-        if (!shell_item_visible(sh, L.ids[i])) continue;
+    const int bh = shell_item_height(sh);
+    const int by = bh >= sh->height ? 0 : (sh->height - bh) / 2;
+    for (int i = 0; i < L.nVis; i++) {
         int ix, iw;
-        shell_item_rect(&L, vis++, &ix, &iw);
+        shell_item_rect(&L, i, &ix, &iw);
         if (ix + iw > L.itemsRight) break;
-        if (lx >= ix && lx < ix + iw) {
-            if (button == 2) shell_task_context_menu(sh, L.ids[i], x, y);
-            else shell_activate_window(sh, L.ids[i]);
+        if (lx >= ix && lx < ix + iw && ly >= by && ly < by + bh) {
+            const VmShellItem *it = &m->items[L.idx[i]];
+            out->winId = it->id;
+            out->x = lx;
+            out->y = ly;
+            if (button == 2) {
+                out->kind = VM_SHELL_ACTION_CONTEXT_MENU;
+                return 1;
+            }
+            /* 激活语义与桌面系统一致：最小化的还原、最大化的先还原尺寸、
+               已聚焦的收起为最小化、其余聚焦到前面。 */
+            out->kind = VM_SHELL_ACTION_ACTIVATE;
+            if (it->minimized) {
+                out->doRestore = 1;
+            } else if (it->maximized) {
+                out->doUnmaximize = 1;
+                out->doFocus = 1;
+            } else if (it->focused) {
+                out->doMinimize = 1;
+            } else {
+                out->doFocus = 1;
+            }
             return 1;
         }
     }
+
     /* 任务栏空白处：左键只消费防穿透；右键是属性菜单（RetroBar 行为）。 */
     if (button == 2) {
-        static const VmMenuItem kBarMenu[] = {
-            {"属性", 1},
-        };
-        /* 菜单锚在按下点上方：VmMenu 越界时自动钳制进画布。 */
-        VmMenu_Open(sh->wm, sh->theme, x, y - 1, kBarMenu, 1, shell_bar_menu_select, sh);
+        out->kind = VM_SHELL_ACTION_SETTINGS;
+        out->x = lx;
+        out->y = ly;
+        return 1;
     }
     return 1;
 }
 
-/* 窗口集合 / 焦点 / 最小化变化：条目与高亮都要立刻更新，
-   不能等每秒时钟刷新兜底（那会有最长 1 秒的不同步）。 */
-static void shell_windows_changed(VmWm *wm, void *userData) {
-    VmShell *sh = (VmShell *)userData;
-    if (!wm || !sh) return;
-    VmWm_InvalidateWindow(wm, VM_SHELL_WINDOW_ID);
+VmShell *VmShell_New(const VmTheme *theme, int width, int height) {
+    if (width <= 0) width = 800;
+    if (height <= 0) height = VM_SHELL_DEFAULT_HEIGHT;
+    VmShell *sh = (VmShell *)calloc(1, sizeof(VmShell));
+    if (!sh) return NULL;
+    sh->theme = theme ? theme : VmTheme_Default();
+    sh->width = width;
+    sh->height = height;
+    sh->showClock = 1;
+    sh->showTrayIcon = 1;
+    return sh;
 }
 
-void VmShell_SetStartHandler(VmShell *shell, VmShellStartHandler handler, void *userData) {
-    if (!shell) return;
-    shell->startHandler = handler;
-    shell->startUserData = userData;
+void VmShell_Delete(VmShell *shell) {
+    free(shell);
 }
 
-void VmShell_SetSettingsHandler(VmShell *shell, VmShellSettingsHandler handler,
-                                void *userData) {
+/* 纯设置：只改配置字段。单进程适配层在自己换主题/选项后负责作废窗口。 */
+void VmShell_SetTheme(VmShell *shell, const VmTheme *theme) {
     if (!shell) return;
-    shell->settingsHandler = handler;
-    shell->settingsUserData = userData;
+    shell->theme = theme ? theme : VmTheme_Default();
 }
 
 void VmShell_SetShowClock(VmShell *shell, int show) {
     if (!shell) return;
     shell->showClock = show ? 1 : 0;
-    VmShell_Refresh(shell);
 }
 
 int VmShell_ShowClock(const VmShell *shell) {
@@ -703,72 +580,16 @@ int VmShell_ShowClock(const VmShell *shell) {
 void VmShell_SetShowTrayIcon(VmShell *shell, int show) {
     if (!shell) return;
     shell->showTrayIcon = show ? 1 : 0;
-    VmShell_Refresh(shell);
 }
 
 int VmShell_ShowTrayIcon(const VmShell *shell) {
     return shell ? shell->showTrayIcon : 0;
 }
 
-VmShell *VmShell_Create(VmWm *wm, const VmTheme *theme, int height) {
-    if (!wm) return NULL;
-    if (height <= 0) height = VM_SHELL_DEFAULT_HEIGHT;
-
-    VmShell *sh = (VmShell *)calloc(1, sizeof(VmShell));
-    if (!sh) return NULL;
-    sh->wm = wm;
-    sh->theme = theme ? theme : VmTheme_Default();
-    sh->width = wm->width;
-    sh->height = height;
-    sh->showClock = 1;
-    sh->showTrayIcon = 1;
-
-    int y = wm->height - height;
-    VmWindow *win = VmWm_AddWindow(wm, VM_SHELL_WINDOW_ID, "taskbar",
-                                   0, y, sh->width, height, NULL, sh);
-    if (!win) { free(sh); return NULL; }
-    win->bodyStyleId = sh->theme->panelStyleId;
-    VmWm_SetWindowFlags(wm, VM_SHELL_WINDOW_ID,
-                        VM_WIN_UNDECORATED | VM_WIN_TOPMOST | VM_WIN_PINNED | VM_WIN_NOFOCUS);
-    VmWm_SetWindowPaint(wm, VM_SHELL_WINDOW_ID, shell_paint, sh);
-    VmWm_SetWindowClickHandler(wm, VM_SHELL_WINDOW_ID, shell_click, sh);
-
-    /* 工作区 = 画布减去任务栏：最大化与拖动钳制都按它算。 */
-    VmWm_SetWorkArea(wm, 0, 0, wm->width, wm->height - height);
-
-    g_shell = sh;
-    /* 订阅窗口集合/焦点变化：条目与高亮跟着立即更新。 */
-    VmWm_SetWindowListHandler(wm, shell_windows_changed, sh);
-    return sh;
+int VmShell_Width(const VmShell *shell) {
+    return shell ? shell->width : 0;
 }
 
-void VmShell_Destroy(VmShell *shell) {
-    if (!shell) return;
-    VmWm_RemoveWindow(shell->wm, VM_SHELL_WINDOW_ID);
-    if (g_shell == shell) g_shell = NULL;
-    free(shell);
-}
-
-void VmShell_SetTheme(VmShell *shell, const VmTheme *theme) {
-    if (!shell) return;
-    shell->theme = theme ? theme : VmTheme_Default();
-    VmShell_Refresh(shell);
-}
-
-void VmShell_SetHeight(VmShell *shell, int height) {
-    if (!shell || height <= 0 || height == shell->height) return;
-    VmWindow *win = VmWm_FindWindow(shell->wm, VM_SHELL_WINDOW_ID);
-    if (!win) return;
-    shell->height = height;
-    /* 直接改矩形：任务栏钉在底部，不走 VmWm_Move（那会按工作区钳制）。 */
-    win->y = shell->wm->height - height;
-    win->h = height;
-    VmWm_SetWorkArea(shell->wm, 0, 0, shell->wm->width, shell->wm->height - height);
-    VmShell_Refresh(shell);
-}
-
-void VmShell_Refresh(VmShell *shell) {
-    if (!shell) return;
-    /* 只有任务栏自己在变：窗口列表由 paint 每帧重读，不需要作废其他窗口。 */
-    VmWm_InvalidateWindow(shell->wm, VM_SHELL_WINDOW_ID);
+int VmShell_Height(const VmShell *shell) {
+    return shell ? shell->height : 0;
 }

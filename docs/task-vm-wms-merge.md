@@ -508,7 +508,7 @@ python tools\inspect_vm_frame.py temp\baseline.txt --tiles
 | M1 协议层落入本项目 | 已完成（2026-11-24） | 见 §13.2 |
 | M2 vm_wms 元数据上线 | 已完成（2026-11-24） | 见 §13.3 |
 | M3 宿主接入 | 已完成（2026-11-24） | 见 §13.4 |
-| M4 rdp 拆分 | 未开始 | |
+| M4 rdp 拆分 | 已完成（2026-11-24） | 见 §13.5 |
 | M5 外壳独立 | 未开始 | |
 | M6 应用独立 | 未开始 | |
 | M7 清理与文档 | 未开始 | |
@@ -632,3 +632,46 @@ python tools\drive_vm_desktop.py 9020 snap baseline wait 1500
 - `on_theme` 只处理默认主题，忽略传入的名字。
 
 **恢复点**：`vm_wms` 默认跑真实合成；`temp/e2e-wms-logs/basic-fullframe.json` 可事后检查帧内容。
+
+### 13.5 M4（2026-11-24）
+
+做了什么：
+
+1. 新增 `vm-desktop/rdp/`：
+   - `rdp_server.c/.h`：HTTP / SSE / WebSocket / 静态资源 / respack，从 `vm_server.c` 移植，`select` 改 libuv。
+   - `main.c`：`uv_loop` + `WmsClient`（`VMWM_CLIENT_RDP`），主循环 `uv_run(UV_RUN_ONCE)` → `Wms_PollEvents(c, 0)` → `rdp_pump()`。
+2. `CMakeLists.txt` 加 `vm_rdp` target，只链 `wms_client` + libuv + 平台库；**不链 `vm_wm` / Clay**。
+3. 上行两条通道都保留：
+   - `GET /ws`（WebSocket，握手 + 掩码文本帧 + ping/pong），这是 `assets/vm_renderer.js` 的主路径；
+   - `POST /input`（HTTP 回退）。
+   两者都走同一个 `on_front_input`，把前端 JSON 转成 `VmWmReqInput`（`kind` 字符串 → 0/1/2/3/4，`win_id=0` 交给 wms 命中）。
+4. 下行：
+   - `EVT_FRAME` → SSE `data:`（增量）；
+   - `EVT_FULLFRAME` → SSE `event: fullframe`；
+   - `EVT_RESOURCES` → 缓存 + SSE `event: resources`（只发 `loadResPack` 命令，资源本体走 `GET /respack/<id>`）。
+5. 新 SSE 连接的基线策略：**不复用缓存的 fullframe，而是向上游请求一次新的**（`RdpServer_BeginFullframe`）。旧缓存与「连接建立前已广播的增量帧」之间有空洞，复用会缺块。
+6. `GET /respack/<id>` 返回 VMRP 容器（`magic | jsonLen | imgCount=0 | json`），与 `assets/app.js` 的 `parseResPack` 对齐。拆进程后只有主题资源，图片通道留给后续。
+7. `tools/probe_ws_input.py`：最小 WebSocket 客户端，验证握手 + 掩码帧（curl 覆盖不到 WS）。
+8. `tools/e2e_wms.ps1` 新增 `rdp` 场景 14 条断言（首页、SSE 基线、应用内容进帧、respack 容器、HTTP 与 WS 两条输入通道、kill rdp 后重启恢复画面）。总数 24 → 38。
+
+**观察（踩到的坑）**：
+
+- `uv_close` 在 `uv_write` 完成前调用会丢掉尚未进内核的数据，客户端表现为「连上了但 0 字节」。修法：`:closeAfterFlush` 标志，写队列排空后再 close。
+- `on_read` 里先 `free(buf->base)` 再 `memcpy` 是 use-after-free，`strstr` 拿到垃圾 → 请求解析不出 method/path。`buf->base` 必须用完再释放。
+- 新连接请求 fullframe 是阻塞调用（等 ACK），放在主循环而不是 HTTP 回调里，避免在 client loop 的事件分发栈里重入 `client_call`。
+- 输入 JSON 用 PowerShell 传参时容易把 `\"` 当字面量发给 curl，导致 `kind` 解析为空。e2e 用单引号包 JSON，不转义。
+
+**验收**：
+
+- `pwsh tools/e2e_wms.ps1 -SkipBuild` → **38/38 checks passed**，exit 0。
+- 浏览器（`agent-browser`）打开 `http://127.0.0.1:19090/` 截图确认：桌面背景、窗口装饰（标题栏 + 三个按钮）、应用推的文本与三个色块都正确显示（`temp/m4-visual.png`）。
+- 浏览器内点击画布 → rdp 日志 `input kind=mousedown x=135 y=137` → app 日志 `input win=1 kind=1 down=1 at (34,27)`。画布 (135,137) 减窗口原点 (100,80) 再减 body 偏移 (1,30) 得 (34,27)，坐标链路自洽。
+
+**未验证 / 遗留**：
+
+- 多个 `vm_rdp` 实例同时订阅未测；`EVT_FRAME` 是广播，多实例应该都能收到，但没有断言。
+- 慢客户端策略只做了「待写超过 8 MB 断开」，没有做真实背压压测。
+- `GET /auto/<op>` 在 rdp 未实现。现有 op（`themes` / `apply` / `theme` / `settings`）全是外壳与主题语义，按 §10 的划分归 M5 的外壳进程。
+- 主题热切换路径未验证：`EVT_THEME_CHANGED` 会触发重新请求 respack，但 `vm_host.c` 的 `on_theme` 目前只处理默认主题（M3 遗留）。
+
+**恢复点**：`vm_wms.exe` + `vm_rdp.exe` 两进程即可服务浏览器（应用仍可用 `test_wms_app` 代替）；`vm_rdp --port 19090 --web-root assets` 单独起，`/events` 有帧、`/ws` 能发输入。

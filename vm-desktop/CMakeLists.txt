@@ -312,7 +312,18 @@ target_link_libraries(test_wms_shell PRIVATE wms_client)
 add_executable(test_wms_rdp wms/test_wms_rdp.c)
 target_link_libraries(test_wms_rdp PRIVATE wms_client)
 
-set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer vm_wms test_wms_app test_wms_shell test_wms_rdp PROPERTIES
+# 呈现端服务器：HTTP / SSE / WebSocket / 静态资源 / respack。
+# 帧与资源全部来自 vm_wms（EVT_FRAME / EVT_FULLFRAME / EVT_RESOURCES），
+# 所以它不链 vm_wm / Clay：rdp 不懂桌面语义。
+add_executable(vm_rdp
+    rdp/main.c
+    rdp/rdp_server.c)
+target_include_directories(vm_rdp PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/rdp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/wms")
+target_link_libraries(vm_rdp PRIVATE wms_client ${WMS_PLATFORM_LIBS})
+
+set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer vm_wms test_wms_app test_wms_shell test_wms_rdp vm_rdp PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"

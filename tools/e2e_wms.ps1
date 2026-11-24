@@ -103,6 +103,16 @@ function Wait-ServerReady {
     return $false
 }
 
+function Wait-Log {
+    param([string]$File, [string]$Pattern, [int]$TimeoutMs = 6000)
+    $deadline = (Get-Date).AddMilliseconds($TimeoutMs)
+    while ((Get-Date) -lt $deadline) {
+        if ((Test-Path $File) -and (Select-String -Path $File -Pattern $Pattern -Quiet)) { return $true }
+        Start-Sleep -Milliseconds 100
+    }
+    return $false
+}
+
 function Stop-Tool {
     param($Proc)
     if ($null -eq $Proc) { return }
@@ -244,6 +254,98 @@ Assert-NoLog $srvE 'remove window id=1'                  '外壳退出没有连�
 Stop-Tool $app; Stop-Tool $sh1; Stop-Tool $sh2
 $app.WaitForExit(5000) | Out-Null
 Stop-Tool $srv
+
+# ---------------------------------------------------------------
+# 5. rdp：呈现端服务器（HTTP / SSE / WebSocket / respack）
+#    这一层是唯一对浏览器说话的进程：帧来自 EVT_FRAME / EVT_FULLFRAME，
+#    输入经 rdp 转成 CMD_INPUT，资源包用缓存的 EVT_RESOURCES 应答。
+# ---------------------------------------------------------------
+Write-Host "`n== scenario: rdp ==" -ForegroundColor Cyan
+$pipe    = New-Pipe 'rdp'
+$rdpPort = 19000 + (Get-Random -Maximum 900)
+$srvO  = Join-Path $LogDir 'rdp-server.out.txt'
+$srvE  = Join-Path $LogDir 'rdp-server.err.txt'
+$appO  = Join-Path $LogDir 'rdp-app.out.txt'
+$appE  = Join-Path $LogDir 'rdp-app.err.txt'
+$rdpO  = Join-Path $LogDir 'rdp-server1.out.txt'
+$rdpE  = Join-Path $LogDir 'rdp-server1.err.txt'
+$rdp2O = Join-Path $LogDir 'rdp-server2.out.txt'
+$rdp2E = Join-Path $LogDir 'rdp-server2.err.txt'
+$sseDump     = Join-Path $LogDir 'rdp-sse.txt'
+$sse2Dump    = Join-Path $LogDir 'rdp-sse2.txt'
+$idxDump     = Join-Path $LogDir 'rdp-index.html'
+$respackDump = Join-Path $LogDir 'rdp-respack.bin'
+$assetsDir   = Join-Path $RepoRoot 'assets'
+$base        = "http://127.0.0.1:$rdpPort"
+
+$srv = Start-Tool 'vm_wms.exe' @('--pipe', $pipe, '--screen', '800x600') $srvO $srvE
+if (-not (Wait-ServerReady $srvE)) { Write-Host '  server 未就绪' -ForegroundColor Red; $script:Fails++ }
+$app = Start-Tool 'test_wms_app.exe' @('--pipe', $pipe, '--seconds', '120', '--no-anim') $appO $appE
+Start-Sleep -Milliseconds 800
+
+$rdp = Start-Tool 'vm_rdp.exe' @('--port', "$rdpPort", '--pipe', $pipe, '--web-root', $assetsDir) $rdpO $rdpE
+Wait-Log $rdpE "listening on 127.0.0.1:$rdpPort" | Out-Null
+Start-Sleep -Milliseconds 800
+
+& curl.exe -s --noproxy '*' --max-time 6 "$base/" -o $idxDump 2>$null | Out-Null
+& curl.exe -s --noproxy '*' --max-time 4 "$base/events" -o $sseDump 2>$null | Out-Null
+& curl.exe -s --noproxy '*' --max-time 6 "$base/respack/default" -o $respackDump 2>$null | Out-Null
+# HTTP 回退通道（前端在 WS 不可用时用）
+& curl.exe -s --noproxy '*' --max-time 6 -X POST -H "Content-Type: application/json" `
+    -d '{"kind":"mousedown","x":220,"y":160,"button":0,"clientId":"e2e-http"}' "$base/input" 2>$null | Out-Null
+# WebSocket 主路径
+& python (Join-Path $RepoRoot 'tools\probe_ws_input.py') --port $rdpPort `
+    --kind mousedown --x 200 --y 150 --client-id e2e-ws --quiet
+$wsExit = $LASTEXITCODE
+Start-Sleep -Milliseconds 500
+
+Assert-Log $rdpE "listening on 127.0.0.1:$rdpPort" 'rdp 在独立端口监听'
+Assert-Log $rdpE 'wms connected pipe='          'rdp 以 RDP 角色连上 vm_wms'
+Assert-Log $idxDump 'vm_renderer.js'            '首页加载渲染入口'
+Assert-Log $sseDump 'event: resources'          'SSE 首帧带资源包引用'
+Assert-Log $sseDump 'event: fullframe'          'SSE 收到 fullframe 基线'
+Assert-Log $sseDump 'app_rect_0'                'fullframe 含应用内容的绘制命令'
+Assert-Log $sseDump '"setTile"'                 'fullframe 按瓦片切分'
+Assert-Log $rdpE 'input kind=mousedown'         '输入经 rdp 转成线路协议'
+Assert-Log $appO 'input win=\d+ kind=1 down=1'  '应用收到 body 局部坐标的输入'
+Assert-Log $rdpE "respack request id='default' -> 200" 'respack 用缓存的资源包应答'
+Assert-NoLog $rdpE 'too slow'                   '没有慢客户端被断开'
+
+# respack 容器：magic + 无内联图片（拆进程后只有主题资源）
+$script:Checks++
+if (Test-Path $respackDump) {
+    $rb = [System.IO.File]::ReadAllBytes($respackDump)
+    if ($rb.Length -ge 12 -and
+        [System.Text.Encoding]::ASCII.GetString($rb[0..3]) -eq 'VMRP' -and
+        [BitConverter]::ToUInt32($rb, 8) -eq 0) {
+        Write-Host '  [ OK ] respack 容器（VMRP，imgCount=0）' -ForegroundColor Green
+    } else {
+        $script:Fails++
+        Write-Host '  [FAIL] respack 容器格式不符合前端 parseResPack' -ForegroundColor Red
+    }
+} else {
+    $script:Fails++
+    Write-Host '  [FAIL] respack 未落盘' -ForegroundColor Red
+}
+
+$script:Checks++
+if ($wsExit -eq 0) {
+    Write-Host '  [ OK ] WebSocket 上行通道（101 + 输入帧）' -ForegroundColor Green
+} else {
+    $script:Fails++
+    Write-Host '  [FAIL] WebSocket 上行通道' -ForegroundColor Red
+}
+
+# kill rdp 后重启：画面靠新的 fullframe 恢复，应用无需重推内容
+Stop-Tool $rdp
+Start-Sleep -Milliseconds 400
+$rdp2 = Start-Tool 'vm_rdp.exe' @('--port', "$rdpPort", '--pipe', $pipe, '--web-root', $assetsDir) $rdp2O $rdp2E
+Wait-Log $rdp2E "listening on 127.0.0.1:$rdpPort" | Out-Null
+Start-Sleep -Milliseconds 800
+& curl.exe -s --noproxy '*' --max-time 4 "$base/events" -o $sse2Dump 2>$null | Out-Null
+Assert-Log $sse2Dump 'app_rect_0' 'kill rdp 重启后靠 fullframe 恢复应用内容'
+
+Stop-Tool $app; Stop-Tool $rdp2; Stop-Tool $srv
 
 # ---------------------------------------------------------------
 # 汇总

@@ -13,7 +13,9 @@
   - `vm_font.c/.h`：native stb_truetype 度量，口径对齐浏览器 wasm 光栅化；`vm-desktop/stb_font_wasm.c` 编出 `assets/stb_font_wasm.mjs/.wasm`。
   - `vm_theme.c/.h`、`vm_shell.c/.h`、`vm_menu.c/.h`：主题 token、任务栏外壳、弹出菜单。
   - `vm_clipboard.c/.h`、`vm_fs*.c`、`vm_sys*.c`、`vm_ipc.h`：guest 内剪贴板、文件系统/系统能力抽象与进程间协议定义。
-  - `vm_server.c/.h`：C HTTP 服务：`GET /events`（SSE 帧与资源）、`POST /input`（原始输入）、静态资源白名单；`demo_jpx` 另注册 `/auto/<op>` 与 `/respack/<id>`。
+  - `vm_server.c/.h`：C HTTP 服务：`GET /events`（SSE 帧与资源）、`POST /input`（原始输入）、静态资源白名单；`demo_jpx` 另注册 `/auto/<op>` 与 `/respack/<id>`。单进程模式（`demo_jpx` / `demo_wm` / `demo_xaml`）用它。
+  - `wms/`：WMS 进程化层（协议 v2）。`wms_ipc.h` 线路协议、`wms_client.c` 句柄式客户端 SDK、`wms_server.c` 窗口表/焦点/输入路由/连接生命周期、`vm_host.c` 本项目合成宿主（装饰 + 合成 + 瓦片 + 资源包）。产物 `vm_wms.exe`；`--mock` 挂占位宿主。
+  - `rdp/`：呈现端服务器（产物 `vm_rdp.exe`）。libuv 实现 HTTP / SSE / WebSocket / 静态资源 / respack；帧来自 `EVT_FRAME` / `EVT_FULLFRAME`，输入走 `CMD_INPUT`。不合成、不持窗口表。
   - `demo_wm.c`、`demo_jpx.c`、`demo_xaml.c`：分别演示 WM/多客户端指针、JPX 桌面外壳、jp_xaml 表单与主题热切换。
   - `jpx/`、`jpx_xaml/`：JPX 应用框架与声明式 UI 的解析、视图、主题预编译。
   - `test_*.c`：纯逻辑断言测试，统一支持 `--probe`；命令与耗时见 `docs/test-timing.md`。

@@ -30,7 +30,8 @@
   产物 `assets/stb_font_wasm.{mjs,wasm}` 受 git 管理，改源码后必须重编并一起提交。
 - `vm-desktop/font_probe.c` — native stb_truetype 度量探针，用于与 wasm 对比。
 - `vm-desktop/test_wasm_font.mjs` — wasm 度量/光栅化测试脚本。
-- `vm-desktop/vm_wm.c/.h` — guest 最小 WM：窗口树/z 序/焦点/标题栏拖动/多窗口帧合成。
+- `vm-desktop/vm_wm.c/.h` — guest 最小 WM：窗口树/z 序/焦点/标题栏拖动/多窗口帧合成。窗口内容契约是 `VmCmdBuffer`，不认识 Clay 或其它 UI 库。
+- `vm-desktop/vm_template.c/.h` — 模板层绘制：`VmCmd_AppendRect` + `VmTemplate_PaintLayers`（外 4 边 → 内 3 边 → 高光）。任务栏与将来的 XAML Direct 后端共用。
 - `vm-desktop/vm_display.c/.h` — 协议无关内部模型 `VmDisplayList`，typed 命令与自有字符串存储，结构体层 diff。
 - `vm-desktop/vm_serialize_json.c/.h` — 唯一 JSON serializer：`VmDisplayList` → frame / command array JSON。
 - `vm-desktop/clay_frame_adapter.c/.h` — Clay 命令 → `VmDisplayList`（不再直接生成 JSON）。

@@ -6,7 +6,8 @@
 ## 组成
 
 - `vm-desktop/`：guest 侧 C 程序与库。
-  - `vm_wm.c/.h`：窗口树、z 序、焦点、拖动、命中测试、多窗口帧合成；窗口语义只在 guest 内。
+  - `vm_wm.c/.h`：窗口树、z 序、焦点、拖动、命中测试、多窗口帧合成；窗口语义只在 guest 内。窗口内容只认 `VmCmdBuffer`，不依赖任何 UI 库。
+  - `vm_template.c/.h`：模板层绘制（外 4 边 → 内 3 边 → 高光），任务栏与将来的 XAML Direct 后端共用。
   - `vm_display.c/.h`、`vm_serialize_json.c/.h`：typed 内部模型 `VmDisplayList` 与唯一的 JSON 序列化；在结构体层做 retained diff，不基于字符串比较。
   - `vm_tiles.c/.h`：把全局帧切为瓦片；按命令签名只发变化块，`showLoading` / `hideLoading` 包住批次。
   - `clay_frame_adapter.c/.h`：Clay `RenderCommandArray` → `VmDisplayList`。
@@ -50,6 +51,7 @@
 ## 关键设计点
 
 - **协议只有绘制原语与原始输入**：不跨端传 `createWindow` / `raise` / `focus` 等窗口级指令；瓦片是远端小画布管理，不是窗口结构。
+- **窗口内容契约是 `VmCmdBuffer`**：`VmWindowLayout` 与 `VmWindowPaint` 同形。Clay 只是 producer 侧的适配器（`clay_frame_adapter`），`vm_wms` / `vm_shell` 的链接命令行里没有 Clay。
 - **内部模型与序列化分离**：`VmDisplayList` 是 typed 结构体，JSON 只是当前序列化格式；diff 在结构体层做，不基于字符串。
 - **自适应帧率**：有变化才出帧，空闲零帧；首帧与新连接必达。
 - **瓦片增量**：48 块 100×100 瓦片覆盖 800×600 逻辑画布，只有变化块下发；物理尺寸按 `renderScale` 放大，贴屏 1:1。

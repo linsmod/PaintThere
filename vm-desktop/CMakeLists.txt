@@ -37,6 +37,7 @@ add_executable(demo_wm
     vm_theme.c
     vm_shell.c
     vm_shell_local.c
+    vm_template.c
     vm_menu.c
     vm_clipboard.c
 )
@@ -71,6 +72,7 @@ add_executable(demo_jpx
     vm_theme.c
     vm_shell.c
     vm_shell_local.c
+    vm_template.c
     vm_menu.c
     vm_clipboard.c
     vm_sys_win32.c
@@ -110,6 +112,7 @@ add_executable(demo_xaml
     vm_theme.c
     vm_shell.c
     vm_shell_local.c
+    vm_template.c
     vm_menu.c
     vm_clipboard.c
     vm_sys_win32.c
@@ -134,6 +137,7 @@ add_executable(test_frame
     vm_theme.c
     vm_shell.c
     vm_shell_local.c
+    vm_template.c
     vm_menu.c
     vm_clipboard.c
 )
@@ -149,6 +153,7 @@ add_executable(test_menu
     vm_theme.c
     vm_shell.c
     vm_shell_local.c
+    vm_template.c
     vm_menu.c
     vm_clipboard.c
 )
@@ -280,15 +285,13 @@ target_link_libraries(test_wms_peer PRIVATE wms_peer)
 
 # 窗口管理服务。M3 起默认挂真实合成宿主（wms/vm_host.c），
 # 因此带上本项目的合成链：vm_wm / vm_display / vm_tiles / 序列化 / 字体 / 主题。
-# vm_wm.h 目前仍暴露 Clay 类型，所以编译期需要 CLAY_DIR（清理见任务文档 M7）。
+# M5.2 起 vm_wm 不再认识 Clay：窗口内容契约是 VmCmdBuffer，Clay 只在 producer 侧。
 add_executable(vm_wms
     wms/main.c
     wms/wms_server.c
     wms/wms_mock_host.c
     wms/vm_host.c
     vm_wm.c
-    clay_frame_adapter.c
-    jpx/jpx_clay_impl.c
     vm_display.c
     vm_serialize_json.c
     vm_tiles.c
@@ -296,7 +299,7 @@ add_executable(vm_wms
     vm_theme.c
 )
 target_include_directories(vm_wms PRIVATE
-    "${CLAY_DIR}" "${MSTB_DIR}"
+    "${MSTB_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/wms"
     "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(vm_wms PRIVATE
@@ -333,6 +336,7 @@ target_link_libraries(vm_rdp PRIVATE wms_client ${WMS_PLATFORM_LIBS})
 add_executable(vm_shell
     shell/main.c
     vm_shell.c
+    vm_template.c
     vm_display.c
     vm_font.c
     vm_theme.c)

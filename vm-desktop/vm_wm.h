@@ -3,8 +3,6 @@
 
 #include <time.h>
 
-#include "clay.h"
-#include "clay_frame_adapter.h"
 #include "vm_display.h"
 #include "vm_theme.h"
 
@@ -26,7 +24,11 @@ extern "C" {
    超出时合成阶段置 VmWm.layerOverflow 并在画面上大字告警。 */
 #define VM_WM_LAYER_DEFAULT_QUOTA 1024
 
-typedef Clay_RenderCommandArray (*VmWindowLayout)(void *userData);
+/* 窗口内容布局：往 out 追加绘制命令（坐标已是画布坐标）。
+   Clay / XAML / 手算布局都实现这个签名；WM 不认识任何 UI 库，
+   Clay 只是 producer 侧的一个适配器（见 jpx 与 demo_layout）。 */
+typedef void (*VmWindowLayout)(VmCmdBuffer *out, int x, int y, int w, int h,
+                               void *userData);
 /* 手绘窗口内容：直接往 out 追加绘制命令（坐标已是画布坐标）。
    用于需要渐变/图片填充这类 Clay 布局表达不了的界面（任务栏）。 */
 typedef void (*VmWindowPaint)(VmCmdBuffer *out, int x, int y, int w, int h, void *userData);
@@ -91,7 +93,6 @@ typedef struct {
     const char *bodyStyleId;            /* 正文背景样式 id；NULL 用 chrome->windowStyleId */
     VmWindowCloseHandler closeHandler;
     void *closeUserData;
-    Clay_Context *clayCtx;
     VmWindowLayout layout;
     void *userData;
     VmWindowPaint paint;              /* 非空时优先于 layout：直接输出绘制命令 */

@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "clay_frame_adapter.h"
+
 static void jpx_clay_error(Clay_ErrorData data) {
     fwrite(data.errorText.chars, 1, data.errorText.length, stderr);
 }
@@ -20,7 +22,8 @@ static Clay_Dimensions jpx_measure(Clay_StringSlice text, Clay_TextElementConfig
                              (float)config->fontSize};
 }
 
-static Clay_RenderCommandArray window_layout_cb(void *userData);
+static void window_layout_cb(VmCmdBuffer *out, int x, int y, int w, int h,
+                             void *userData);
 
 static void window_close_cb(int windowId, void *userData) {
     (void)windowId;
@@ -171,7 +174,6 @@ JpxWindow *Jpx__WindowCreate(JpxApp *app, const JpxWindowDesc *desc) {
         w->arenaMem = NULL;
         return NULL;
     }
-    vw->clayCtx = w->ctx;
     if (desc->flags) VmWm_SetWindowFlags(app->wm, w->id, desc->flags);
     VmWm_SetCloseHandler(app->wm, w->id, window_close_cb, w);
     VmWm_SetKeyHandler(app->wm, w->id, window_key_cb, w);
@@ -201,42 +203,36 @@ void Jpx__WindowDestroy(JpxApp *app, int winId) {
     app->dirty = 1;
 }
 
-static Clay_RenderCommandArray window_layout_cb(void *userData) {
-    JpxWindow *w = (JpxWindow *)userData;
-    JpxApp *app = w->app;
-    Clay_SetCurrentContext(w->ctx);
-    /* 窗口尺寸可能被 WM 改过（最大化/还原）：Clay 的布局尺寸每帧与真实
+static void window_layout_cb(VmCmdBuffer *out, int x, int y, int bodyW, int bodyH,
+                             void *userData) {
+    JpxWindow *jw = (JpxWindow *)userData;
+    JpxApp *app = jw->app;
+    Clay_SetCurrentContext(jw->ctx);
+    /* 窗口尺寸可能被 WM 改过（最大化/还原）：Clay 的布局尺寸每帧与 WM 传入的
        body 同步，否则最大化后内容仍按创建时的大小排版。 */
-    {
-        VmWindow *vw = VmWm_FindWindow(app->wm, w->id);
-        if (vw) {
-            VmRect body;
-            VmWm_WindowBody(app->wm, vw, &body);
-            if (body.w > 0 && body.h > 0) {
-                Clay_SetLayoutDimensions((Clay_Dimensions){body.w, body.h});
-            }
-        }
+    if (bodyW > 0 && bodyH > 0) {
+        Clay_SetLayoutDimensions((Clay_Dimensions){(float)bodyW, (float)bodyH});
     }
     Clay_BeginLayout();
     app->localSerial = 0;
-    w->focusableCount = 0;   /* 可聚焦控件每帧按声明序重新登记 */
+    jw->focusableCount = 0;   /* 可聚焦控件每帧按声明序重新登记 */
 
     /* 按下沿由 WM 的指针状态显式推导：Clay 的 onHover 回调在窗口上下文里
        不可靠地触发，控件交互统一用这个边沿 + Clay_Hovered() 判定。 */
     int downNow = 0;
     if (app->wm->pointerDown && app->wm->pointerValid) {
         VmWindow *hit = VmWm_HitTest(app->wm, app->wm->pointerX, app->wm->pointerY);
-        downNow = (hit && hit->id == w->id);
+        downNow = (hit && hit->id == jw->id);
     }
-    w->pressEdge = downNow && !w->pointerDownLast;
-    w->pointerDownLast = downNow;
+    jw->pressEdge = downNow && !jw->pointerDownLast;
+    jw->pointerDownLast = downNow;
 
-    Jpx__OpenRoot(app, w);
+    Jpx__OpenRoot(app, jw);
     int prev = app->currentWin;
     int prevLayout = app->layoutWinId;
-    app->currentWin = w->id;
-    app->layoutWinId = w->id;
-    if (w->desc.layout) w->desc.layout(w->id, w->desc.user);
+    app->currentWin = jw->id;
+    app->layoutWinId = jw->id;
+    if (jw->desc.layout) jw->desc.layout(jw->id, jw->desc.user);
     app->layoutWinId = prevLayout;
     app->currentWin = prev;
     Clay__CloseElement();
@@ -244,6 +240,6 @@ static Clay_RenderCommandArray window_layout_cb(void *userData) {
     Clay_RenderCommandArray cmds = Clay_EndLayout(0.016f);
     /* 元素矩形只有 layout 完成后才查得到：滚轮命中判定依赖它，
        放在 Begin 里查会永远拿到 found=false（首帧之后才有值）。 */
-    Jpx__ListRefreshRects(app, w->id);
-    return cmds;
+    Jpx__ListRefreshRects(app, jw->id);
+    ClayFrame_AppendCommands(out, cmds.internalArray, cmds.length, x, y, NULL, NULL);
 }

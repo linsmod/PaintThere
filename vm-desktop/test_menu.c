@@ -36,12 +36,9 @@ static void expect_int(int actual, int expected, const char *what) {
     }
 }
 
-/* 窗口内容布局回调：本测试不建 Clay 上下文。 */
-static Clay_RenderCommandArray dummy_layout(void *userData) {
-    (void)userData;
-    Clay_RenderCommandArray empty;
-    memset(&empty, 0, sizeof(empty));
-    return empty;
+/* 窗口内容布局回调：本测试不产出内容。 */
+static void dummy_layout(VmCmdBuffer *out, int x, int y, int w, int h, void *userData) {
+    (void)out; (void)x; (void)y; (void)w; (void)h; (void)userData;
 }
 
 /* 窗口 1 的点击探针：记录调用次数与最近一次按键。 */

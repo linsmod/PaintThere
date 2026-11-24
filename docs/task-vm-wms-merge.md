@@ -539,7 +539,7 @@ void VmTemplate_PaintLayers(VmCmdBuffer *out, const VmTaskButtonLayer *st,
 | M2 vm_wms 元数据上线 | 已完成（2026-11-24） | 见 §13.3 |
 | M3 宿主接入 | 已完成（2026-11-24） | 见 §13.4 |
 | M4 rdp 拆分 | 已完成（2026-11-24） | 见 §13.5 |
-| M5 外壳独立 | 进行中 | 5.1 迁进程已完成（§13.7）；5.2 去 Clay / 5.3 模板抽函数未做；任务栏 XAML 化另见 `docs/task-shell-xaml-framework.md` |
+| M5 外壳独立 | 已完成（2026-11-24） | 5.1 迁进程（§13.7）、5.2 去 Clay / 5.3 模板抽函数（§13.8）；任务栏 XAML 化另见 `docs/task-shell-xaml-framework.md` |
 | M6 应用独立 | 未开始 | |
 | M7 清理与文档 | 未开始 | |
 
@@ -791,3 +791,44 @@ hover 需要指针位置，而 `EVT_INPUT` 只发给命中窗口的属主，鼠�
 
 **恢复点**：`vm_wms + vm_rdp + vm_shell + app` 四进程在线；kill 外壳不影响应用；
 重启外壳重建任务栏。
+
+### 13.8 M5.2 去 Clay / M5.3 模板抽函数（2026-11-24）
+
+**做了什么**
+
+1. `vm_wm.h`：删除 `#include "clay.h"` / `"clay_frame_adapter.h"`；
+   `VmWindowLayout` 改为与 `VmWindowPaint` 同形
+   （`void (*)(VmCmdBuffer *, int x, int y, int w, int h, void *)`）；
+   删除 `VmWindow.clayCtx`。
+2. `vm_wm.c`：删 `sync_pointer_state`（Clay 专属，含 8 处调用）；
+   `build_one_window` 的 Clay 分支改为直接调用 `win->layout(...)`；
+   保留 `layoutWinId`（producer 用它把布局期间的作废收窄到本窗口）。
+3. producer 侧接管 Clay：
+   - `jpx_window.c`：`window_layout_cb` 改同形，自己 `Clay_SetCurrentContext` /
+     `Clay_SetLayoutDimensions` / `Clay_EndLayout` → `ClayFrame_AppendCommands`。
+   - `demo_wm.c`：两个窗口各持一份 `Clay_Context`，新增 `sync_clay_pointer`
+     喂指针状态（原来由 WM 代劳）。
+   - `test_frame.c` / `test_menu.c` 的 `dummy_layout` 改空体。
+4. `CMakeLists.txt`：`vm_wms` 去掉 `clay_frame_adapter.c`、`jpx/jpx_clay_impl.c`
+   与 `CLAY_DIR`。
+5. M5.3：新增 `vm_template.c/.h`：`VmCmd_AppendRect` 与
+   `VmTemplate_PaintLayers`（外 4 边 → 内 3 边 → 高光，id 命名与拆分前一致）。
+   `vm_shell.c` 改为调用它；这是 `task-shell-xaml-framework.md` P3 的积木。
+
+**验收**
+
+- `vm-desktop/build/CMakeFiles/vm_wms.dir/link.txt` 不含 `clay` / `jpx`（命令行为空输出）。
+- `demo_jpx` 抓帧 **166531 B / setTile 96**，与 M0 基线逐字节相同（去 Clay 与模板抽取都不改输出）。
+- `vm_shell` 同样不链 Clay（target 只含 `vm_shell.c` / `vm_template.c` / `vm_display` / `vm_font` / `vm_theme`）。
+- 8 个单元测试断言数不变全过；`pwsh tools/e2e_wms.ps1 -SkipBuild` → **53/53**。
+
+**观察**
+
+- Clay 的 current context 是进程级全局状态，现在是 producer 自己的事：
+  多窗口应用必须每次布局前显式切换（jpx 已这么做，demo_wm 新增 `g_ctxA/g_ctxB`）。
+- `vm_wms` 去掉 Clay 后仍包含 `vm_font`（装饰标题文字度量）与 `vm_theme`（chrome token），
+  这两者都不依赖 Clay。
+- 模板抽函数只覆盖「层集可用」的路径；旧的无层集 bevel 仍在 `vm_shell.c`，
+  等 XAML 化时一并处理。
+
+**恢复点**：`vm_wm` 不再认识任何 UI 库；窗口内容契约只有 `VmCmdBuffer`。

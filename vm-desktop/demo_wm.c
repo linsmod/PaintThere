@@ -135,8 +135,23 @@ static void OnButtonHover(Clay_ElementId id, Clay_PointerData pointerData, void 
     if (pointerData.state == CLAY_POINTER_DATA_PRESSED_THIS_FRAME) state->clicks++;
 }
 
-static Clay_RenderCommandArray LayoutA(void *userData) {
+/* 每个窗口一份 Clay 上下文；指针状态由本 demo 自己喂（WM 不再代劳）。 */
+static Clay_Context *g_ctxA;
+static Clay_Context *g_ctxB;
+
+static void sync_clay_pointer(int bx, int by, int bw, int bh) {
+    float lx = (float)g_wm->pointerX - (float)bx;
+    float ly = (float)g_wm->pointerY - (float)by;
+    int inside = g_wm->pointerValid && lx >= 0 && ly >= 0 && lx < bw && ly < bh;
+    if (inside) Clay_SetPointerState((Clay_Vector2){lx, ly}, g_wm->pointerDown);
+    else Clay_SetPointerState((Clay_Vector2){-1000.0f, -1000.0f}, 0);
+}
+
+static void LayoutA(VmCmdBuffer *out, int x, int y, int w, int h, void *userData) {
     AppStateA *state = (AppStateA *)userData;
+    Clay_SetCurrentContext(g_ctxA);
+    Clay_SetLayoutDimensions((Clay_Dimensions){(float)w, (float)h});
+    sync_clay_pointer(x, y, w, h);
     snprintf(state->label, sizeof(state->label), "Clicked: %d", state->clicks);
     Clay_String labelStr = {.chars = state->label, .length = (int)strlen(state->label)};
     Clay_String textStr = {.chars = state->text, .length = (int)state->textLen};
@@ -171,11 +186,15 @@ static Clay_RenderCommandArray LayoutA(void *userData) {
             Clay_OnHover(OnButtonHover, state);
         }
     }
-    return Clay_EndLayout(0.016f);
+    Clay_RenderCommandArray cmds = Clay_EndLayout(0.016f);
+    ClayFrame_AppendCommands(out, cmds.internalArray, cmds.length, x, y, NULL, NULL);
 }
 
-static Clay_RenderCommandArray LayoutB(void *userData) {
+static void LayoutB(VmCmdBuffer *out, int x, int y, int w, int h, void *userData) {
     (void)userData;
+    Clay_SetCurrentContext(g_ctxB);
+    Clay_SetLayoutDimensions((Clay_Dimensions){(float)w, (float)h});
+    sync_clay_pointer(x, y, w, h);
     Clay_BeginLayout();
     CLAY(CLAY_ID("B_root"), {
         .layout = {.sizing = {CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0)},
@@ -190,7 +209,8 @@ static Clay_RenderCommandArray LayoutB(void *userData) {
             .backgroundColor = (Clay_Color){240,140,40,255},
         }) {}
     }
-    return Clay_EndLayout(0.016f);
+    Clay_RenderCommandArray cmds = Clay_EndLayout(0.016f);
+    ClayFrame_AppendCommands(out, cmds.internalArray, cmds.length, x, y, NULL, NULL);
 }
 
 /* ---------------- Remote tiles ---------------- */
@@ -267,10 +287,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "[warn] 字体加载失败，度量退回估算值: %s\n", fontPath);
     }
 
-    VmWindow *a = VmWm_AddWindow(g_wm, 1, "Window A", 60, 60, 360, 260, LayoutA, &g_appA);
-    VmWindow *b = VmWm_AddWindow(g_wm, 2, "Window B", 300, 200, 360, 260, LayoutB, NULL);
-    a->clayCtx = CreateWindowContext(356, 230);
-    b->clayCtx = CreateWindowContext(356, 230);
+    g_ctxA = CreateWindowContext(356, 230);
+    g_ctxB = CreateWindowContext(356, 230);
+    VmWm_AddWindow(g_wm, 1, "Window A", 60, 60, 360, 260, LayoutA, &g_appA);
+    VmWm_AddWindow(g_wm, 2, "Window B", 300, 200, 360, 260, LayoutB, NULL);
     VmWm_SetKeyHandler(g_wm, 1, OnWindowKey, &g_appA);
     VmWm_SetCloseHandler(g_wm, 1, OnWindowClose, NULL);
     VmWm_SetCloseHandler(g_wm, 2, OnWindowClose, NULL);

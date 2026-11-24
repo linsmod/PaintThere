@@ -137,12 +137,6 @@ int VmWm_ConsumeDirty(VmWm *wm) {
 
 void VmWm_Free(VmWm *wm) {
     if (!wm) return;
-    /* Clay contexts own arenas allocated in AddWindow; free their memory via free(). */
-    for (int i = 0; i < wm->count; i++) {
-        if (wm->windows[i].clayCtx) {
-            /* Clay has no destroy API; arena memory is tracked by caller in demo. */
-        }
-    }
     free(wm);
 }
 
@@ -540,31 +534,6 @@ static void extract_str(const char *json, const char *key, char *out, size_t cap
     out[n] = '\0';
 }
 
-/* Push pointer state into every window's Clay context.
-   局部坐标按各自 body 矩形换算，非焦点窗口也能 hover；
-   press 只给指针命中的那个窗口（无焦点窗口如任务栏也要能收到点击），避免多窗口同时按下。 */
-static void sync_pointer_state(VmWm *wm) {
-    VmWindow *hit = wm->pointerValid ? VmWm_HitTest(wm, wm->pointerX, wm->pointerY) : NULL;
-    for (int i = 0; i < wm->count; i++) {
-        VmWindow *win = &wm->windows[i];
-        if (!win->clayCtx) continue;
-        Clay_SetCurrentContext(win->clayCtx);
-        VmRect body;
-        VmWm_WindowBody(wm, win, &body);
-        float localX = (float)wm->pointerX - body.x;
-        float localY = (float)wm->pointerY - body.y;
-        int inside = wm->pointerValid && !win->minimized &&
-                     localX >= 0 && localY >= 0 &&
-                     localX < body.w && localY < body.h;
-        if (inside) {
-            int press = (hit == win) && wm->pointerDown;
-            Clay_SetPointerState((Clay_Vector2){localX, localY}, press);
-        } else {
-            Clay_SetPointerState((Clay_Vector2){-1000.0f, -1000.0f}, 0);
-        }
-    }
-}
-
 static void update_cursor(VmWm *wm, const char *id, const char *color,
                           int x, int y, int visible) {
     if (!wm || !id || !*id) return;
@@ -663,17 +632,14 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
         if (size > 0 && rect_contains(closeRect, x, y)) {
             if (hit->closeHandler) hit->closeHandler(hit->id, hit->closeUserData);
             wm_dirty(wm, "close-button");
-            sync_pointer_state(wm);
             return 1;
         }
         if (size > 0 && rect_contains(maxRect, x, y)) {
             VmWm_ToggleMaximize(wm, hit->id);
-            sync_pointer_state(wm);
             return 1;
         }
         if (size > 0 && rect_contains(minRect, x, y)) {
             VmWm_Minimize(wm, hit->id);
-            sync_pointer_state(wm);
             return 1;
         }
     }
@@ -683,15 +649,13 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
     if (isDown && wm->popupWindowId > 0 &&
         (!hit || hit->id != wm->popupWindowId) && wm->popupDismiss) {
         wm->popupDismiss(wm->popupUserData);
-        sync_pointer_state(wm);
-        return 1;
+            return 1;
     }
 
     /* 手绘窗口（任务栏）没有焦点，按下即交给它自己的命中逻辑，命中就消费掉。
        左键与右键（上下文菜单）都走这条通道。 */
     if (ownsFocus && isDown && (button == 0 || button == 2) && hit && hit->clickHandler) {
         if (hit->clickHandler(hit->id, x, y, button, hit->clickUserData)) {
-            sync_pointer_state(wm);
             return 1;
         }
     }
@@ -709,8 +673,7 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
                 now - wm->lastTitleDownMs <= VM_DOUBLE_CLICK_MS) {
                 wm->lastTitleDownId = -1;
                 VmWm_ToggleMaximize(wm, hit->id);
-                sync_pointer_state(wm);
-                return 1;
+                    return 1;
             }
             wm->lastTitleDownId = hit->id;
             wm->lastTitleDownMs = now;
@@ -743,7 +706,6 @@ int VmWm_HandleInput(VmWm *wm, const char *jsonBody, size_t length) {
         if (isUp) focus->pointerDown = 0;
     }
     /* hover 与焦点无关：非焦点窗口也要按指针位置刷新，否则鼠标移过去不会高亮。 */
-    sync_pointer_state(wm);
 
     /* 滚轮：交给指针所在窗口，WM 不消费滚动语义。 */
     if (isWheel && hit && hit->wheelHandler) {
@@ -1048,15 +1010,12 @@ static int build_one_window(VmWm *wm, VmCmdBuffer *out, VmWindow *win,
         /* 手绘窗口：内容和装饰共用同一份坐标约定，paint 直接往缓冲里追加。 */
         win->paint(out, bodyX, bodyY, bodyW, bodyH, win->userData);
         truncated = (out->count >= out->cap);
-    } else if (win->layout && win->clayCtx) {
-        Clay_SetCurrentContext(win->clayCtx);
-        /* 让宿主知道「当前在跑谁的布局」：布局回调里发的作废能收窄到这一个窗口，
-           而不是退化成全量作废（任务栏这类非 JPX 窗口尤其需要）。 */
+    } else if (win->layout) {
+        /* 布局回调自己产出命令（Clay / XAML / 手算都行）：WM 只负责坐标与裁剪。
+           layoutWinId 让 producer 在布局期间的作废能收窄到这一个窗口。 */
         int prevLayout = wm->layoutWinId;
         wm->layoutWinId = win->id;
-        Clay_RenderCommandArray cmds = win->layout(win->userData);
-        ClayFrame_AppendCommands(out, cmds.internalArray, cmds.length,
-                                 bodyX, bodyY, fontResolver, NULL);
+        win->layout(out, bodyX, bodyY, bodyW, bodyH, win->userData);
         truncated = (out->count >= out->cap);
         wm->layoutWinId = prevLayout;
     }

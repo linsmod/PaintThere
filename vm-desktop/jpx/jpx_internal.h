@@ -147,7 +147,6 @@ int  Jpx__FocusKey(JpxWindow *win, const char *key, int ctrl, int shift);
 /* jpx_window.c */
 JpxWindow *Jpx__WindowCreate(JpxApp *app, const JpxWindowDesc *desc);
 void Jpx__WindowDestroy(JpxApp *app, int winId);
-Clay_RenderCommandArray Jpx__WindowRunLayout(void *userData);
 
 /* jpx_theme.c */
 const JpxTheme *Jpx__DefaultTheme(void);

@@ -8,6 +8,7 @@
 
 #include "vm_font.h"
 #include "vm_shell_internal.h"
+#include "vm_template.h"
 
 /* 任务栏内容的生产者：只读 VmShellModel 快照，产出绘制命令或动作。
    这里没有 VmWm、没有 Clay、没有 IPC —— 数据源由调用方提供，
@@ -24,13 +25,7 @@
 
 static void append_rect(VmCmdBuffer *out, const char *id, int x, int y, int w, int h,
                         const char *paint, float radius) {
-    VmDrawCommand *c = VmCmdBuffer_Append(out, VM_CMD_DRAW_RECT, id);
-    if (!c) return;
-    VmRect r = {(float)x, (float)y, (float)w, (float)h};
-    c->rect = r;
-    c->args.drawRect.rect = r;
-    VmDisplay_CopyStr(c->args.drawRect.paint, sizeof(c->args.drawRect.paint), paint);
-    c->args.drawRect.cornerRadius = radius;
+    VmCmd_AppendRect(out, id, x, y, w, h, paint, radius);
 }
 
 static void append_border(VmCmdBuffer *out, const char *id, int x, int y, int w, int h,
@@ -334,42 +329,11 @@ void VmShell_Paint(VmShell *sh, const VmShellModel *m, VmCmdBuffer *out,
 
         if (st) {
             /* RetroBar 模板层次：主渐变 → 外 4 边 → 内 3 边 → 对角高光层。
-               各状态有自己的边色，不做 bevel 反转。 */
-            if (st->borderTop) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_top_%d", it->id);
-                append_rect(out, idbuf, ix, iy, iw, 1, st->borderTop, 0.0f);
-            }
-            if (st->borderLeft) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_left_%d", it->id);
-                append_rect(out, idbuf, ix, iy + 1, 1, ih - 2, st->borderLeft, 0.0f);
-            }
-            if (st->borderBottom) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_bottom_%d", it->id);
-                append_rect(out, idbuf, ix, iy + ih - 1, iw, 1, st->borderBottom, 0.0f);
-            }
-            if (st->borderRight) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_right_%d", it->id);
-                append_rect(out, idbuf, ix + iw - 1, iy + 1, 1, ih - 2, st->borderRight, 0.0f);
-            }
-            if (st->innerLeft) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_il_%d", it->id);
-                append_rect(out, idbuf, ix + 1, iy + 1, 1, ih - 3, st->innerLeft, 0.0f);
-            }
-            if (st->innerRight) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_ir_%d", it->id);
-                append_rect(out, idbuf, ix + iw - 2, iy + 1, 1, ih - 3, st->innerRight, 0.0f);
-            }
-            if (st->innerBottom) {
-                snprintf(idbuf, sizeof(idbuf), "tb_item_ib_%d", it->id);
-                append_rect(out, idbuf, ix + 1, iy + ih - 2, iw - 2, 1, st->innerBottom, 0.0f);
-            }
-            if (st->hlStopCount >= 2) {
-                const char *hl = it->focused ? "s_task_active_hl"
-                               : (hovered && t->taskHover.stopCount >= 2) ? "s_task_hover_hl"
-                               : "s_task_hl";
-                snprintf(idbuf, sizeof(idbuf), "tb_item_hl_%d", it->id);
-                append_rect(out, idbuf, ix + 2, iy + 1, iw - 4, ih - 3, hl, radius);
-            }
+               层序与 id 命名由 vm_template 统一；XAML Direct 后端复用同一函数。 */
+            const char *hl = it->focused ? "s_task_active_hl"
+                           : (hovered && t->taskHover.stopCount >= 2) ? "s_task_hover_hl"
+                           : "s_task_hl";
+            VmTemplate_PaintLayers(out, st, "tb_item", it->id, ix, iy, iw, ih, radius, hl);
             /* hover 无层集但主题给了悬停渐变：在层集之上叠加。 */
             if (hovered && !it->focused && t->taskHover.stopCount < 2 &&
                 t->taskButtonHoverFrom) {

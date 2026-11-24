@@ -38,12 +38,9 @@ static void expect_int(int actual, int expected, const char *what) {
     }
 }
 
-/* 窗口内容布局回调：本测试不建 Clay 上下文，BuildFrame 只发裁剪对，不调用它。 */
-static Clay_RenderCommandArray dummy_layout(void *userData) {
-    (void)userData;
-    Clay_RenderCommandArray empty;
-    memset(&empty, 0, sizeof(empty));
-    return empty;
+/* 窗口内容布局回调：本测试不产出内容，回调保持空体，只验证合成与裁剪。 */
+static void dummy_layout(VmCmdBuffer *out, int x, int y, int w, int h, void *userData) {
+    (void)out; (void)x; (void)y; (void)w; (void)h; (void)userData;
 }
 
 typedef struct {

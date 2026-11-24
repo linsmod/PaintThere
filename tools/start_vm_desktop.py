@@ -2,9 +2,9 @@
 """零参数启动 vm-desktop 的桌面 demo。
 
 日常用法：
-    python tools/start_vm_desktop.py             # demo_wm，原样
-    python tools/start_vm_desktop.py demo_jpx    # JPX 应用外壳：开始菜单 / ProcMan / Files
-    python start_vm_desktop.py demo_xaml --port 9061 --theme "<theme.xaml>" --font <font.ttf>
+    python tools/start_vm_desktop.py             # 默认 demo_jpx（JPX 应用外壳）
+    python tools/start_vm_desktop.py demo_wm     # WM 双窗口 demo
+    python tools/start_vm_desktop.py demo_xaml --port 9061 --theme "<theme.xaml>" --font <font.ttf>
 
 第一个位置参数选择程序：内置 demo_wm / demo_jpx / demo_xaml 有默认端口映射；
 其他值按 build/<名字>.exe 的构建产物运行（默认端口 9000，建议显式 --port）。
@@ -22,7 +22,7 @@
 可选环境变量（仅调试用，日常无需设置）：
     VM_DESKTOP_PORT        监听端口，默认 demo_wm=9000 / demo_jpx=9050 / demo_xaml=9060
     VM_DESKTOP_NO_BROWSER  设为 1 时不自动打开浏览器
-    VM_DESKTOP_APP         默认启动的程序（demo_wm / demo_jpx / demo_xaml），命令行参数优先
+    VM_DESKTOP_APP         默认启动的程序，默认 demo_jpx（demo_wm / demo_jpx / demo_xaml），命令行参数优先
 """
 
 import os
@@ -160,7 +160,7 @@ def main():
         print(f"[start] {exc}", file=sys.stderr)
         return 1
     if app is None:
-        app = os.environ.get("VM_DESKTOP_APP", "demo_wm")
+        app = os.environ.get("VM_DESKTOP_APP", "demo_jpx")
     APP_NAME = app
     EXE = BUILD / f"{app}.exe"
     # demo 默认端口分开，可以同时开着对比；未知 exe 默认 9000。

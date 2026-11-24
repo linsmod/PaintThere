@@ -12,7 +12,11 @@ static const char *color_to_css(Clay_Color c) {
     static char buf[8][64];
     static int idx;
     char *b = buf[idx++ & 7];
-    snprintf(b, 64, "rgba(%g,%g,%g,%.3f)", c.r, c.g, c.b, c.a / 255.0f);
+    /* Clay_Color 是 float（0..255）。%g 会输出小数 RGB，canvas-cpp 的
+       ColorParser 只认整数；直接把 float 传给 %u 又会读成 0，必须先转换。 */
+    snprintf(b, 64, "rgba(%u,%u,%u,%.3f)",
+             (unsigned)(c.r + 0.5f), (unsigned)(c.g + 0.5f),
+             (unsigned)(c.b + 0.5f), c.a / 255.0f);
     return b;
 }
 

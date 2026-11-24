@@ -5,9 +5,10 @@
 ## 启动与验证
 
 - 构建：`python tools/build_vm.py`，产物为 `vm-desktop/build/demo_wm.exe` 与 `vm_renderer.exe`。
-- 启动浏览器版：`python tools/start_vm_desktop.py`（demo_wm，默认端口 9000）；`python tools/start_vm_desktop.py demo_jpx`（默认 9050）；`demo_xaml` 默认 9060。脚本会停掉自己按端口拉起的旧实例，Ctrl+C 停止由脚本启动的 demo。
-- C 渲染器版：`python tools/start_vm_renderer.py`，同时起 SSE 服务与原生渲染窗口。
-- 页面：`http://127.0.0.1:9000/`；诊断位为 `window.__vmRenderer.ready` / `tiles` / `loading` / `disconnected` / `error`。
+- 启动浏览器版：`python tools/start_vm_desktop.py` 默认 demo_jpx（端口 9050）；`python tools/start_vm_desktop.py demo_wm` 默认 9000；`demo_xaml` 默认 9060。脚本会停掉自己按端口拉起的旧实例，Ctrl+C 停止由脚本启动的 demo。
+- C 渲染器版：`python tools/build_vm.py && python tools/start_vm_renderer.py`，默认起 demo_jpx（9050）+ 原生渲染窗口；`$env:VM_RENDERER_APP="demo_wm"` 可切回 WM demo。启动脚本会设 `CANVAS_PAGE_URL` 把渲染器的 `location.origin` 指向实际端口；缺它时 C 宿主按 9000 连 SSE，`[STATE]` 会一直报 `SSE disconnected`。
+- 日志默认安静：`[jpx] frame=N` / `[jpx] changed=...` 由 `$env:JPX_LOG_LEVEL="2"` 打开，`[STATE]` 由 `$env:VM_RENDERER_STATE="1"` 打开；日常运行两者都不输出，排查连通性或失效放大时再显式开。
+- 页面：默认 JPX 为 `http://127.0.0.1:9050/`（`demo_wm` 为 9000）；诊断位为 `window.__vmRenderer.ready` / `tiles` / `loading` / `disconnected` / `error`；`pixels()` 给叠加层 `titleA/buttonA/bg` 与背景画布 `desktop` 的取样。
 - 输入合成与帧回放：`python tools/drive_vm_desktop.py 9051 down 40 582 wait 300 up 40 582 snap s1`；`python tools/inspect_vm_frame.py temp/s1.txt --hist`。
 - demo_jpx 调试接口：`GET /auto/<op>`（`themes` / `apply?name=<slug>` / `theme` / `settings`）与 `GET /respack/<id>`；排查主题先走接口，不要在浏览器里盲试。
 - 浏览器自动化：`agent-browser --session <name> open ...` / `console` / `screenshot`；常驻脚本不要用管道等 EOF。
@@ -30,7 +31,7 @@
 ### VM 桌面（guest 侧）
 
 - **调试自动化 HTTP 接口**（demo_jpx）：`GET /auto/<op>?query`，绕开浏览器合成输入直接调 shell/主题接口。op：`themes`（列主题）、`apply?name=<slug>`（加载+应用预编译主题，与设置窗口同一条路径）、`theme`（当前主题关键 token + respackId + selectedColor/accentColor）、`settings`（打开设置窗口）。回调注册在 `VmServer_SetAutoHandler`，op 实现在 `demo_jpx.c auto_handler`。排查主题切换类问题先打这套接口，别一上来就开浏览器。
-- **主题切换链路的排查顺序**：`/auto/theme` 看 guest 生效 token → `curl /respack/<respackId>`（id 从 theme 响应里拿）核对下发的 pattern → 都对再看客户端。主题资源包是 `loadResPack(id)` 命令 + client 主动 GET，每次 apply 递增 id；**C 渲染器宿主没有 fetch，respack 会被静默跳过**（`app.js loadResPack` 的 `typeof fetch !== 'function'` 分支），C 渲染器侧主题热切换当前不可用。
+- **主题切换链路的排查顺序**：`/auto/theme` 看 guest 生效 token → `curl /respack/<respackId>`（id 从 theme 响应里拿）核对下发的 pattern → 都对再看客户端。主题资源包是 `loadResPack(id)` 命令 + client 主动 GET，每次 apply 递增 id。C 渲染器同样有 `fetch`（页面 URL 指向服务端时），respack 会异步拉取并应用。`vm_renderer.js` 把帧排队等资源就绪：先等 `loadResPack` 完成、`defineStyle` 进 `styleCache`，再 `execOps`，所以首帧不会把 `s_*` 样式 id 当颜色传给 Canvas。
 - **主题派生的颜色兜底**：`system` / `system-xp` / `system-vista` 这类基础主题没有 TaskbarBackground/TrayBackground/ButtonFace，派生曾落回默认主题的近黑面板色，表现为“任务栏变黑”；SystemColors 标记扩展（`{x:Static ...}`）解析不出颜色时整个资源跳过，不进表也不进 respack。修这类问题先 `/auto/apply` 逐主题扫 `panelColor`。
 - **JPX 列表选中项的颜色 token 是 `selectedColor` 不是 `accentColor`**：accent 是任务按钮渐变的代表色，玻璃主题（longhorn-aero）派生出半透明白，白底列表的选中项会整行隐形。列表行有两条绘制路径——平铺 `Jpx_ListBox` 与虚拟化 `Jpx_ListRowEx`（XAML 带 `Rows` 属性走后者），两处都要改。
 - **guest 侧观测**：`JPX_TRACE=1` 启动 `demo_jpx` 后，每次输入处理与每帧合成后打印 `[wm]` 转储：窗口集合、z 序、焦点、以及每个窗口的 `cmds / dirty(原因) / built=<frame>`。`dirty=0` 且 `built` 停在旧帧号的窗口，就是“该重建却没人重建”的对象；`over={id need "title"}` 给出超配额窗口的真实需求条数。这份数据全在 guest 内存里，不要去抓跨端帧反推。

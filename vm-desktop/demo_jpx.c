@@ -571,7 +571,11 @@ int main(int argc, char **argv) {
     snprintf(g_webRoot, sizeof(g_webRoot), "%s", opt.webRoot);
     snprintf(fontPath, sizeof(fontPath), "%s/font.ttf", opt.webRoot);
     opt.fontPath = fontPath;
-    opt.logLevel = 2;
+    /* 默认只留告警；逐帧 [jpx] frame/changed 日志用 JPX_LOG_LEVEL=2 打开。 */
+    const char *logLevelEnv = getenv("JPX_LOG_LEVEL");
+    opt.logLevel = logLevelEnv ? atoi(logLevelEnv) : 1;
+    if (opt.logLevel < 0) opt.logLevel = 0;
+    if (opt.logLevel > 2) opt.logLevel = 2;
 
     g_app = Jpx_Create(&opt);
     if (!g_app) {

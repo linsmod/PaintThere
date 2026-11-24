@@ -55,17 +55,18 @@ gcc -std=c11 -I"H:\github_repos\clay" -I. demo_frame.c demo_layout.c clay_frame_
 gcc -std=c11 -I. test_display_diff.c vm_display.c -o test_display_diff.exe
 cd ..
 
-# 一键运行（同时起 SSE 服务 + 原生渲染窗口；脚本只检查 build_vm.py 产物）
+# 一键运行（默认 demo_jpx:9050 + 原生渲染窗口；脚本只检查 build_vm.py 产物）
 python tools/start_vm_renderer.py
 # 调试：$env:VM_RENDERER_FRAMES="90"; python tools/start_vm_renderer.py  # 跑满 90 帧自动退出
+# 切回 WM demo：$env:VM_RENDERER_APP="demo_wm"; python tools/start_vm_renderer.py
 
 # 编译 wasm 字体（先按上面设置 emsdk 环境变量）
 emcc -O2 -s EXPORTED_FUNCTIONS='["_loadFont","_measureText","_rasterizeText","_alloc","_freeMem"]' -s EXPORTED_RUNTIME_METHODS='["HEAPU8","HEAPU32"]' -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_ES6=1 -s EXPORT_NAME=StbFontWasm -s ENVIRONMENT=web,node -I"H:\github_repos\mystbfont_c" stb_font_wasm.c -o stb_font_wasm.mjs
 Copy-Item stb_font_wasm.mjs,stb_font_wasm.wasm ..\assets\
 
 # 一键启动（推荐）：先 python tools/build_vm.py，再运行本脚本停旧进程并开浏览器
-python tools/start_vm_desktop.py              # demo_wm，默认 9000
-python tools/start_vm_desktop.py demo_jpx     # JPX 应用外壳，默认 9050；两者可同时开
+python tools/start_vm_desktop.py              # 默认 demo_jpx，9050
+python tools/start_vm_desktop.py demo_wm      # WM 双窗口 demo，默认 9000；两者可同时开
 # 调试：环境变量改端口 / 不开浏览器
 # $env:VM_DESKTOP_PORT="9001"; $env:VM_DESKTOP_NO_BROWSER="1"; python tools/start_vm_desktop.py demo_jpx
 
@@ -152,6 +153,7 @@ agent-browser --session vm close
 - **Clay 的 current context 是进程级状态，销毁窗口前必须切走**。开始菜单点击启动项时会关掉菜单再开程序窗口；若被销毁的菜单正好是当前 ctx，`free(arenaMem)` 后就留下悬空指针，下一次 Clay 调用直接崩，并伴随成串的 `Clay attempted to make an out of bounds array access`。修法：`Jpx__WindowDestroy` 在 `free` 前用 `Clay_GetCurrentContext() == w->ctx` 判断，切到另一个仍存活窗口的 ctx。定位手法：临时在 error handler 里打印 `app->layoutWinId`——如果告警全是 `layoutWin=0`，说明它发生在布局之外，就在窗口创建/销毁路径上，而不是某个窗口的内容溢出。
 - **弹出菜单里的按钮在 layout 回调中只记意图，实际开关窗口放到定时器里做**。在 `layout_menu` 里直接 `Jpx_WindowClose(g_menuWin)` 等于在布局回调中途销毁自己所在的窗口；改成设置 `g_pendingLaunch`，由 60ms 定时器执行。stderr 重定向到文件时记得 `setvbuf(stderr, NULL, _IONBF, 0)` 或显式 `fflush`，否则崩溃前打的探针日志会全丢。
 - **定时器回调不要由框架无条件标脏，否则轮询型 timer 会一直刷帧**。`tick_handler` 原本只要任一 timer 触发就 `app->dirty = 1`，而开始菜单的 60ms pending 检查绝大多数时候什么都不做——结果空闲时也每帧出图，`frame=N` 日志刷到几千，看起来像「停不下来」。正确契约是回调自己在状态真变化时调 `Jpx_Invalidate`（`caret_blink` / `procs_tick` / `launcher_tick` 都已如此）。验证方法：启动后静等几秒，数 stderr 里 `frame=` 的行数是否还在增长；空闲应为 0。另外 `start_vm_desktop.py` 用 `Popen` 起的是独立进程，Ctrl+C 打断不了它，停止要用 `Stop-Process -Name demo_jpx -Force`。
+- **C 渲染器的 SSE 端口由页面 URL 决定，不是启动脚本的端口变量直接传进去的**。`vm_renderer.js` 在 `file://` 下按 `globalThis.VM_RENDERER_PORT || 9000` 拼地址；默认服务端改成 demo_jpx(9050) 后，不给渲染器进程设 `CANVAS_PAGE_URL=http://127.0.0.1:<port>/` 就会连到 9000，`[STATE]` 显示 `frames:0 / resources:0 / error:'SSE disconnected'`（canvas-cpp `CanvasAppBase::SetBaseDir` 读取该变量决定 `location.origin`）。`start_vm_renderer.py` 已自动设置；换端口时用 `[STATE]` 的 `error` 字段先判连通性，别从 `[jpx] frame=N` 猜服务端没问题。
 
 ## 退出条件
 

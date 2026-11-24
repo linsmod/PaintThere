@@ -9,9 +9,20 @@
  * 用法：vm_renderer <page.js> <assets_dir> [width] [height] [max_frames]
  * 路径由启动脚本以绝对路径传入，避免工作目录差异。 */
 
+/* [STATE] 探针默认关闭，避免控制台每 60 帧刷一次状态；
+   用 VM_RENDERER_STATE=1 打开（只读一次环境变量）。 */
+static int state_probe_on(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *v = getenv("VM_RENDERER_STATE");
+        cached = (v && *v && strcmp(v, "0") != 0) ? 1 : 0;
+    }
+    return cached;
+}
+
 static void on_frame(canvas_instance *app, int frame_index, void *user) {
     (void)user;
-    if (frame_index % 60 != 0) return;
+    if (!state_probe_on() || frame_index % 60 != 0) return;
     char state[1024];
     if (canvas_eval(app,
                     "(function(){var r=globalThis.__vmRenderer||{pending:true};"

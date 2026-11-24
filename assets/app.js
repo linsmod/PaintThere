@@ -185,13 +185,13 @@ function applyResPack(pack) {
 }
 
 function loadResPack(resPackId) {
-    if (!resPackId) return;
+    if (!resPackId) return Promise.resolve();
     const cached = resPackCache.get(resPackId);
-    if (cached) { applyResPack(cached); return; }
-    if (typeof fetch !== 'function') return;   // 无网络原语的宿主跳过
+    if (cached) { applyResPack(cached); return Promise.resolve(); }
+    if (typeof fetch !== 'function') return Promise.resolve();   // 无网络原语的宿主跳过
     const base = (typeof location !== 'undefined' && location.protocol !== 'file:')
         ? location.origin : '';
-    fetch(base + '/respack/' + encodeURIComponent(resPackId), { cache: 'no-store' })
+    return fetch(base + '/respack/' + encodeURIComponent(resPackId), { cache: 'no-store' })
         .then((r) => {
             if (!r.ok) throw new Error('respack ' + r.status);
             return r.arrayBuffer();

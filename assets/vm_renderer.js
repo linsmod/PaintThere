@@ -311,40 +311,57 @@ async function boot() {
   };
 
   let reconnectTimer = 0;
+  let resourcesReady = Promise.resolve();
+  let frameChain = Promise.resolve();
   const connectEvents = () => {
     clearTimeout(reconnectTimer);
     window.__vmRenderer.error = '';
+    resourcesReady = Promise.resolve();
+    frameChain = Promise.resolve();
     const source = new EventSource(EVENTS_URL);
     let rejected = false;
 
     function applyResources(e) {
       const list = JSON.parse(e.data);
+      let pending = Promise.resolve();
       for (const c of list) {
         const fn = commandHandlers[c.cmd];
-        if (fn) fn(...c.args);
+        if (fn) {
+          const r = fn(...c.args);
+          // loadResPack 是异步的：帧必须等 defineStyle 进表后才能应用。
+          if (r && typeof r.then === 'function') pending = pending.then(() => r);
+        }
       }
       replayBackgroundPrograms();
       window.__vmRenderer.resources += list.length;
+      return pending;
     }
+    // 帧按到达顺序排队，且每一帧都等当前资源（含 respack）就绪。
+    const queueFrame = (data, kind) => {
+      const ready = resourcesReady;
+      frameChain = frameChain.then(() => ready).then(() => {
+        const f = JSON.parse(data);
+        if (typeof f.frameId === 'number') lastFrameId = f.frameId;
+        if (Array.isArray(f.ops)) {
+          execOps(f.ops);
+          window.__vmRenderer.frames++;
+        }
+      }).catch((err) => { window.__vmRenderer.error = kind + ': ' + err; });
+    };
     source.addEventListener('resources', (e) => {
       markConnected();
-      try { applyResources(e); }
-      catch (err) { window.__vmRenderer.error = 'resource: ' + err; }
+      resourcesReady = Promise.resolve().then(() => applyResources(e))
+        .catch((err) => { window.__vmRenderer.error = 'resource: ' + err; });
     });
     /* 主题热切换：覆盖 pattern/style 缓存；随后服务端会因窗口置脏推新帧，
        新帧按新颜色绘制。definePattern 等命令按 id 覆盖，无需重连。 */
     source.addEventListener('resources-update', (e) => {
-      try { applyResources(e); }
-      catch (err) { window.__vmRenderer.error = 'resources-update: ' + err; }
+      resourcesReady = resourcesReady.then(() => applyResources(e))
+        .catch((err) => { window.__vmRenderer.error = 'resources-update: ' + err; });
     });
     source.addEventListener('fullframe', (e) => {
       markConnected();
-      try {
-        const f = JSON.parse(e.data);
-        if (typeof f.frameId === 'number') lastFrameId = f.frameId;
-        if (Array.isArray(f.ops)) execOps(f.ops);
-        window.__vmRenderer.frames++;
-      } catch (err) { window.__vmRenderer.error = 'fullframe: ' + err; }
+      queueFrame(e.data, 'fullframe');
     });
     source.addEventListener('control', (e) => {
       try {
@@ -358,14 +375,7 @@ async function boot() {
     });
     source.onmessage = (e) => {
       markConnected();
-      try {
-        const f = JSON.parse(e.data);
-        if (typeof f.frameId === 'number') lastFrameId = f.frameId;
-        if (Array.isArray(f.ops)) {
-          execOps(f.ops);
-          window.__vmRenderer.frames++;
-        }
-      } catch (err) { window.__vmRenderer.error = 'frame: ' + err; }
+      queueFrame(e.data, 'frame');
     };
     source.onerror = () => {
       if (rejected) return;
@@ -520,11 +530,18 @@ async function boot() {
 
   window.__vmRenderer.ready = true;
   window.__vmRenderer.pixels = function () {
-    const c = cv.getContext('2d');
+    const overlay = cv.getContext('2d');
+    const bgCtx = bg.getContext('2d');
     const r = cv.width / WIDTH;   // 逻辑坐标 → 物理像素
-    const at = (x, y) => Array.from(
-      c.getImageData(Math.round(x * r), Math.round(y * r), 1, 1).data).join(',');
-    return { titleA: at(100, 70), buttonA: at(100, 195), bg: at(5, 5) };
+    const at = (ctx, x, y) => Array.from(
+      ctx.getImageData(Math.round(x * r), Math.round(y * r), 1, 1).data).join(',');
+    // bg 保留旧含义：叠加层在 (5,5) 的像素；desktop 才是背景画布。
+    return {
+      titleA: at(overlay, 100, 70),
+      buttonA: at(overlay, 100, 195),
+      bg: at(overlay, 5, 5),
+      desktop: at(bgCtx, 5, 5)
+    };
   };
   /* 诊断：当前物理像素比，便于确认清晰度改动是否生效。 */
   window.__vmRenderer.scale = () => ({ cssZoom, renderScale, dpr: Number(window.devicePixelRatio) || 1 });
@@ -536,6 +553,4 @@ document.addEventListener('DOMContentLoaded', function () {
     window.__vmRenderer.error = String(err && err.stack ? err.stack : err);
     console.error('[VM_RENDER] boot failed: ' + window.__vmRenderer.error);
   });
-  function draw() { requestAnimationFrame(draw); }
-  draw();
 });

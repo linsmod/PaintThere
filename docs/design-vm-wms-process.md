@@ -1,5 +1,7 @@
 # WMS 进程模型 · 设计记录
 
+> **传输层部分已被取代（2026-11-24）。** 第 2 节图里的 TCP、第 4 节通道表、第 9 节的单线程 `select`，实际改为 libuv + 命名管道（决策见 `docs/task-vm-wms-merge.md` §4 D3）。进程划分、崩溃边界、归属决策仍然有效。
+>
 > **这不是现状。** 本文冻结于 2026-11-24 的决策讨论，只写「要改成什么」以及为什么。
 > 当前实现见 `docs/arch-vmdesk.md` 与 `vm-desktop/jpx/jpx_app.c`、`vm-desktop/vm_shell.c`。
 > 线路层（帧格式、消息表、时序、失败模式）见 `docs/design-vm-ipc.md`；本文只讲进程归属与边界。

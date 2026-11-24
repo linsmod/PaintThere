@@ -133,7 +133,7 @@ add_executable(test_frame
     vm_menu.c
     vm_clipboard.c
 )
-target_include_directories(test_frame PRIVATE "${CLAY_DIR}" "${MSTB_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(test_frame PRIVATE "${CLAY_DIR}" "${MSTB_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/wms")
 
 # 菜单控件断言：右键路由、popup 外点关闭、菜单命中与自动关闭（不开服务/浏览器）。
 add_executable(test_menu
@@ -205,7 +205,71 @@ add_executable(vm_renderer renderer/main.c)
 target_include_directories(vm_renderer PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(vm_renderer PRIVATE canvas crash_report)
 
-set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs PROPERTIES
+# ---------------------------------------------------------------
+# WMS 进程层：来自 wmwms（协议 v2，命名管道 + libuv）。
+# 只提供窗口元数据、IPC 传输与进程身份；合成/瓦片/序列化仍在本项目，
+# 由宿主回调接进去（见 docs/task-vm-wms-merge.md §6）。
+# ---------------------------------------------------------------
+set(WMS_UV_TARGET "")
+find_package(libuv CONFIG QUIET)
+if(TARGET libuv::uv)
+    set(WMS_UV_TARGET libuv::uv)
+elseif(TARGET uv)
+    set(WMS_UV_TARGET uv)
+elseif(TARGET uv_a)
+    set(WMS_UV_TARGET uv_a)
+endif()
+
+if(NOT WMS_UV_TARGET)
+    find_path(WMS_UV_INCLUDE_DIR NAMES uv.h
+              HINTS "C:/msys64/mingw64/include" /usr/include /usr/local/include)
+    find_library(WMS_UV_LIBRARY NAMES uv libuv uv_a libuv_a
+                 HINTS "C:/msys64/mingw64/lib" /usr/lib /usr/local/lib)
+    if(NOT WMS_UV_INCLUDE_DIR OR NOT WMS_UV_LIBRARY)
+        message(FATAL_ERROR
+            "libuv not found.\n"
+            "  指定头文件与库：-DWMS_UV_INCLUDE_DIR=<dir> -DWMS_UV_LIBRARY=<file>\n"
+            "  或装 MSYS2 的 mingw-w64-x86_64-libuv")
+    endif()
+    add_library(wms_uv UNKNOWN IMPORTED)
+    set_target_properties(wms_uv PROPERTIES
+        IMPORTED_LOCATION "${WMS_UV_LIBRARY}"
+        INTERFACE_INCLUDE_DIRECTORIES "${WMS_UV_INCLUDE_DIR}")
+    set(WMS_UV_TARGET wms_uv)
+endif()
+message(STATUS "WMS libuv target: ${WMS_UV_TARGET}")
+
+# 静态 libuv 在 Windows 上要显式连带一批系统库
+set(WMS_PLATFORM_LIBS "")
+if(WIN32)
+    set(WMS_PLATFORM_LIBS ws2_32 iphlpapi psapi userenv advapi32 dbghelp
+                          ole32 shell32 winmm)
+endif()
+
+# 协议编解码：纯函数，不依赖 socket，单测直接链它
+add_library(wms_core STATIC wms/wms_codec.c)
+target_include_directories(wms_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/wms")
+
+# 进程身份抽象：Windows 管道句柄 / POSIX pidfd / mock
+add_library(wms_peer STATIC wms/wms_peer.c)
+target_include_directories(wms_peer PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/wms")
+if(WIN32)
+    target_link_libraries(wms_peer PRIVATE kernel32)
+endif()
+
+# 客户端 SDK：APP / SHELL / RDP 共用，句柄式
+add_library(wms_client STATIC wms/wms_client.c)
+target_link_libraries(wms_client
+    PUBLIC  wms_core ${WMS_UV_TARGET}
+    PRIVATE ${WMS_PLATFORM_LIBS})
+
+add_executable(test_wms_ipc wms/test_wms_ipc.c)
+target_link_libraries(test_wms_ipc PRIVATE wms_core)
+
+add_executable(test_wms_peer wms/test_wms_peer.c)
+target_link_libraries(test_wms_peer PRIVATE wms_peer)
+
+set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"

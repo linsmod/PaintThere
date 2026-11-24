@@ -11,8 +11,8 @@
 
 #include "vm_clipboard.h"
 #include "vm_font.h"
-#include "vm_ipc.h"
 #include "vm_shell.h"
+#include "wms_ipc.h"
 
 static int g_failures;
 static int g_checks;
@@ -530,8 +530,8 @@ int main(int argc, char **argv) {
     /* 架构预算：资源类 args 已外置，命令结构再被撑大就会在这里失败。 */
     expect(sizeof(VmDrawCommand) <= 512, "draw command within size budget");
     /* 命令与 IPC 头都必须是定长 POD：跨进程直接 memcpy，指针会被打成垃圾。
-       vm_ipc.h 里有 _Static_assert 兜底，这里再钉住帧头尺寸。 */
-    expect(sizeof(VmIpcHeader) == 12, "ipc header stays 12 bytes");
+       wms_ipc.h 里有 _Static_assert 兜底，这里再钉住帧头尺寸。 */
+    expect(sizeof(VmWmMsgHdr) == 16, "ipc header stays 16 bytes");
     if (!g_quiet) printf("test_frame: sizeof(cmd)=%zu sizeof(list)=%zu\n",
                          sizeof(VmDrawCommand), sizeof(VmDisplayList));
     test_font(fontPath);

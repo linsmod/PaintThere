@@ -504,11 +504,73 @@ python tools\inspect_vm_frame.py temp\baseline.txt --tiles
 
 | 步 | 状态 | 备注 |
 |---|---|---|
-| M0 基线固化 | 未开始 | |
-| M1 协议层落入本项目 | 未开始 | 前置 5/6/7 |
+| M0 基线固化 | 已完成（2026-11-24） | 见 §13.1 |
+| M1 协议层落入本项目 | 已完成（2026-11-24） | 见 §13.2 |
 | M2 vm_wms 元数据上线 | 未开始 | |
 | M3 宿主接入 | 未开始 | 核心工作量：`vm_host.c` |
 | M4 rdp 拆分 | 未开始 | |
 | M5 外壳独立 | 未开始 | |
 | M6 应用独立 | 未开始 | |
 | M7 清理与文档 | 未开始 | |
+
+## 13. 执行记录
+
+### 13.1 M0（2026-11-24）
+
+命令与结果：
+
+```powershell
+C:\msys64\mingw64\bin\cmake.exe --build vm-desktop/build -j 8      # exit 0，全部 target 已是最新
+```
+
+测试基线（`--probe`，本次实测耗时）：
+
+| 测试 | 断言 | 耗时 | 结果 |
+|---|---|---|---|
+| `test_frame` | 120 | 19 ms | 全过 |
+| `test_menu` | 30 | 15 ms | 全过 |
+| `test_sys` | 16 | 63 ms | 全过 |
+| `test_text_edit` | 66 | 11 ms | 全过 |
+| `test_jpx_xaml` | 47 | 56 ms | 全过 |
+| `test_jpx_xaml_theme` | **137** | 116 ms | 全过（`test-timing.md` 原记 104，已修正） |
+| `test_fs` | 19 | 13 ms | **1 项既有失败**，见下 |
+
+基线帧：
+
+```powershell
+.\vm-desktop\build\demo_jpx.exe 9020 assets
+python tools\drive_vm_desktop.py 9020 snap baseline wait 1500
+```
+
+结果：`temp/m0-baseline-fullframe.txt` 166531 B，`fullframe=1`、`setTile=96`；瓦片里含任务栏条目（`开始` / `表单演示` / `主题面板` / `列表`）与时钟。
+
+**观察**：`test_fs` 的 `chinese filename round-trips as UTF-8` 失败，根因是测试硬编码了 `docs/arch-跨端图绘指令流.md`，而该文件已在提交 `c673c81 clearn old names` 里被改名为 `arch-vmdesk.md`。属于既有缺陷（早于本任务），已登记 `issues/INDEX.md`，本次不修以免混入无关 diff。
+
+### 13.2 M1（2026-11-24）
+
+做了什么：
+
+1. 从 `H:\myGitRepos\wmwms` 复制 19 个文件到 `vm-desktop/wms/`（原仓库只读，未改动），文件名 `vmwm_*` → `wms_*`；`test_app/test_shell/test_rdp/test_peer` 加 `wms_` 前缀避免与现有 `test_*` 重名。
+2. include 重写 30 处（`#include "vmwm_xxx.h"` → `"wms_xxx.h"`）。
+3. 唯一符号改名：`VmWm_RemoveWindow` → `VmWm_ServerRemoveWindow`（4 处：1 定义 + 2 调用 + 1 声明）。它与本项目 `vm_wm.h` 的同名函数签名冲突，两者会在 `vm_wms.exe` 里同时链接。其余符号名保持不变（`VmWm*` 类型、`VMWM_*` 宏、`VmWm_Server*` 函数、`Wms_*` 客户端 API），以降低与上游同步的成本。
+4. `test_frame.c`：删 `#include "vm_ipc.h"`，断言改 `sizeof(VmWmMsgHdr) == 16`。
+5. 删除 `vm-desktop/vm_ipc.h`（全仓已无引用）。
+6. `CMakeLists.txt` 增加 libuv 查找与 4 个 target：`wms_core` / `wms_peer` / `wms_client` / `test_wms_ipc` / `test_wms_peer`；`test_frame` 的 include 目录加 `vm-desktop/wms`。
+
+**观察（下次迁移同类文件要注意）**：
+
+- 4 个文件用了相对路径 include `#include "../common/vmwm_log.h"`，正则 `#include "vmwm_*.h"` 匹配不到，构建时才报错；迁移脚本必须同时覆盖相对路径形式。
+- `find_package(libuv CONFIG QUIET)` 在本机直接命中 `libuv::uv`（MSYS2 装了 CMake config），没有走 `find_path` 回退分支。回退分支仍未验证。
+- `wms_server.c` / `wms_mock_host.c` / `main.c` 目前**没有 target**，M1 不编译它们；它们的可编译性由 M2 建 `vm_wms` 时验证。
+
+验收结果：
+
+```powershell
+.\vm-desktop\build\test_wms_ipc.exe --probe     # 36 checks, 0 failed
+.\vm-desktop\build\test_wms_peer.exe --probe    # checks=7 failed=0, ALL PASS
+.\vm-desktop\build\test_frame.exe --probe       # 120 checks, 0 failures
+```
+
+全套 9 个测试除 `test_fs` 的既有失败外全部通过；`demo_jpx` / `demo_wm` / `demo_xaml` / `vm_renderer` 均重新链接成功。
+
+**恢复点**：`vm-desktop/wms/` 下 19 个文件可编译，`libwms_core.a` / `libwms_peer.a` / `libwms_client.a` 生成，`vm_ipc.h` 已删。

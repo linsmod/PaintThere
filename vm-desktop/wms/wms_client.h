@@ -66,9 +66,11 @@ VmWmResult Wms_Subscribe(WmsClient* c, uint32_t mask);
  * 返回本次分发的事件条数。 */
 int        Wms_PollEvents(WmsClient* c, int timeout_ms);
 
-/* ---------------- 窗口操作（APP / SHELL） ---------------- */
+/* ---------------- 窗口操作（APP / SHELL） ----------------
+ * flags 取 VmWmWinFlag 位或（与本项目 VM_WIN_* 同值）：
+ * UNDECORATED / TOPMOST / PINNED / NOFOCUS。普通应用传 0。 */
 VmWmResult Wms_CreateWindow(WmsClient* c, int x, int y, int w, int h,
-                            uint64_t* out_win_id);
+                            uint32_t flags, uint64_t* out_win_id);
 VmWmResult Wms_CloseWindow(WmsClient* c, uint64_t win_id);
 VmWmResult Wms_MoveWindow(WmsClient* c, uint64_t win_id, int x, int y);
 VmWmResult Wms_ResizeWindow(WmsClient* c, uint64_t win_id, int w, int h);
@@ -120,6 +122,7 @@ const VmWmWindowInfo*  Wms_AsWindowInfo(const WmsEvent* e);
 const VmWmEvtLayoutReq* Wms_AsLayoutReq(const WmsEvent* e);
 const VmWmReqInput*    Wms_AsInput(const WmsEvent* e);
 const VmWmReqTheme*    Wms_AsTheme(const WmsEvent* e);
+const VmWmEvtPointer*  Wms_AsPointer(const WmsEvent* e);
 
 /* 帧：返回 JSON 起点，长度/帧号写到出参；非帧事件返回 NULL */
 const char* Wms_AsFrame(const WmsEvent* e, uint32_t* out_len,

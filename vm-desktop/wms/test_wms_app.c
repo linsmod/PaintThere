@@ -182,7 +182,7 @@ int main(int argc, char** argv)
     Wms_Subscribe(c, EVT_LAYOUT_REQ | EVT_INPUT | EVT_THEME_CHANGED |
                      EVT_FOCUS_CHANGE | EVT_WINDOW_CONFIGURE);
 
-    r = Wms_CreateWindow(c, 100, 80, width, height, &g_win_id);
+    r = Wms_CreateWindow(c, 100, 80, width, height, 0, &g_win_id);
     printf("[app] create_window -> %s id=%llu\n", Wms_StrError(r),
            (unsigned long long)g_win_id);
     if (r != VMWM_OK) { Wms_ClientDestroy(c); return 1; }

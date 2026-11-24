@@ -342,6 +342,7 @@ VmWmResult VmWm_CreateWindow(const VmWmReqCreate* req, uint32_t owner,
     s->info.z           = ++g_z_top;
     s->info.created_seq = (uint32_t)++g_created_seq;
     s->info.focused     = 0;
+    s->info.flags       = req->flags;
 
     if (out_id) *out_id = s->win_id;
 
@@ -454,6 +455,8 @@ VmWmResult VmWm_SetFocus(uint64_t win_id)
 {
     WinSlot* s = slot_find(win_id);
     if (!s) return VMWM_ERR_INVALID_WINDOW;
+    /* NOFOCUS 窗口（任务栏等）不接受焦点：焦点仲裁与显式请求走同一条规则。 */
+    if (s->info.flags & VMWM_WINFLAG_NOFOCUS) return VMWM_ERR_PERMISSION;
     if (g_focus == win_id) return VMWM_OK;
     if (s->info.stack != (uint32_t)VMWM_STACK_BOTTOM) s->info.z = ++g_z_top;
     apply_focus(win_id);
@@ -574,6 +577,34 @@ static void raise_window(WinSlot* s)
     notify_host(EVT_WINDOW_CONFIGURE, &s->info);
 }
 
+/* 全局指针状态：SHELL 的窗口不抢焦点，鼠标移出任务栏后不会再收到 EVT_INPUT，
+ * hover 无法清除。这里把画布坐标的指针位置广播给 SHELL，与输入路由解耦。 */
+static int32_t  g_ptr_x = 0;
+static int32_t  g_ptr_y = 0;
+static uint32_t g_ptr_down = 0;
+
+static void broadcast_pointer(const VmWmReqInput* in)
+{
+    VmWmEvtPointer p;
+    Conn* c;
+
+    if (in->kind == 1 && in->is_down) g_ptr_down = 1;
+    else if (in->kind == 2)           g_ptr_down = 0;
+
+    p.x    = g_ptr_x;
+    p.y    = g_ptr_y;
+    p.down = g_ptr_down;
+    p.kind = in->kind;
+
+    for (c = g_conns; c; c = c->next) {
+        if (c->closing || !c->handshaked) continue;
+        if (c->type != VMWM_CLIENT_SHELL) continue;
+        if ((c->mask & (uint32_t)EVT_POINTER) == 0) continue;
+        conn_send(c, VMWM_CMD_TYPE_EVT, (uint16_t)EVT_POINTER, 0,
+                  &p, sizeof(p));
+    }
+}
+
 /* 输入统一走这里：CMD_INPUT（MSG）与后续可能的其它来源都复用
  *
  * 发出的 EVT_INPUT 一律是**body 局部坐标**：客户端回推的内容画的是 body，
@@ -603,13 +634,22 @@ static void route_input(uint32_t from_client, const VmWmReqInput* in)
         }
     }
 
+    /* 指针位置与命中无关：鼠标在空白桌面时 s 为 NULL，外壳仍需要它来清 hover。 */
+    if (in->win_id == 0 && (in->kind == 0 || in->kind == 1 || in->kind == 2)) {
+        g_ptr_x = in->x;
+        g_ptr_y = in->y;
+        broadcast_pointer(in);
+    }
+
     if (!s) return;                          /* 没有窗口接这条输入，丢弃 */
 
     body = body_of(s);                       /* 只剩 body 偏移要减 */
     lx  -= body.x;
     ly  -= body.y;
 
-    if (in->kind == 1 && in->is_down) {      /* 按下即抬升 + 焦点仲裁 */
+    /* NOFOCUS 窗口（任务栏等）不抢焦点也不抬升：点击只投递给属主。 */
+    if (in->kind == 1 && in->is_down &&
+        (s->info.flags & VMWM_WINFLAG_NOFOCUS) == 0) {
         if (g_focus != s->win_id) {
             raise_window(s);
             apply_focus(s->win_id);

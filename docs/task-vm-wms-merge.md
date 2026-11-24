@@ -183,6 +183,7 @@ rdp         ──► vm_wms   订阅 EVT_FRAME|EVT_FULLFRAME|EVT_RESOURCES + CM
 | `EVT_FULLFRAME` | `1<<8` | RDP | `VmWmEvtFrame` + JSON |
 | `EVT_THEME_CHANGED` | `1<<9` | 全部 | `VmWmReqTheme` |
 | `EVT_RESOURCES` | `1<<10` | RDP | `VmWmEvtRespack` + JSON |
+| `EVT_POINTER` | `1<<11` | SHELL | `VmWmEvtPointer`（画布坐标 + down + kind） |
 
 ### 5.4 结构尺寸（全部 `_Static_assert` 钉死）
 
@@ -191,7 +192,9 @@ rdp         ──► vm_wms   订阅 EVT_FRAME|EVT_FULLFRAME|EVT_RESOURCES + CM
 | `VmWmMsgHdr` | 16 |
 | `VmWmAck` | 16 |
 | `VmWmAckHello` | 44 |
-| `VmWmWindowInfo` | 172 |
+| `VmWmWindowInfo` | 176（含 `flags`） |
+| `VmWmReqCreate` | 20（含 `flags`） |
+| `VmWmEvtPointer` | 16 |
 | `VmWmReqInput` | 96 |
 | `VmWmReqContent` | 24 |
 | `VmWmEvtLayoutReq` | 20 |
@@ -243,6 +246,7 @@ rdp         ──► vm_wms   订阅 EVT_FRAME|EVT_FULLFRAME|EVT_RESOURCES + CM
 | 6 | 越权静默忽略 | 回 `VMWM_ERR_PERMISSION` | 采纳（D11） |
 | 7 | 先接元数据 | 一致，且用 `VMWM_ERR_NOT_READY` 显式表达「合成未接」 | 采纳，M2/M3 可分开上线 |
 | 8 | 帧 JSON 由 vm_wms 生成 | 由宿主生成，wmwms 只搬运 | 采纳（D9） |
+| 9 | 无窗口行为标志、无全局指针 | 本项目在协议副本上新增 `VmWmReqCreate.flags`、`VmWmWindowInfo.flags`、`EVT_POINTER` | 采纳（M5.1 需要；上游 wmwms 同步待定，互通时按新增字段处理） |
 
 主项目侧要跟着改的三处：`test_frame.c:534` 的 `sizeof(VmIpcHeader)==12` 断言、任何沿用 768 KB 的检查、`vm_ipc.h` 的全部引用点。
 
@@ -535,7 +539,7 @@ void VmTemplate_PaintLayers(VmCmdBuffer *out, const VmTaskButtonLayer *st,
 | M2 vm_wms 元数据上线 | 已完成（2026-11-24） | 见 §13.3 |
 | M3 宿主接入 | 已完成（2026-11-24） | 见 §13.4 |
 | M4 rdp 拆分 | 已完成（2026-11-24） | 见 §13.5 |
-| M5 外壳独立 | 未开始 | 范围 = 5.1 迁进程 + 5.2 去 Clay + 5.3 模板抽函数；任务栏 XAML 化另见 `docs/task-shell-xaml-framework.md` |
+| M5 外壳独立 | 进行中 | 范围 = 5.1 迁进程 + 5.2 去 Clay + 5.3 模板抽函数；5.1 的协议前置已完成（见 §13.6）；任务栏 XAML 化另见 `docs/task-shell-xaml-framework.md` |
 | M6 应用独立 | 未开始 | |
 | M7 清理与文档 | 未开始 | |
 
@@ -701,3 +705,38 @@ python tools\drive_vm_desktop.py 9020 snap baseline wait 1500
 - 主题热切换路径未验证：`EVT_THEME_CHANGED` 会触发重新请求 respack，但 `vm_host.c` 的 `on_theme` 目前只处理默认主题（M3 遗留）。
 
 **恢复点**：`vm_wms.exe` + `vm_rdp.exe` 两进程即可服务浏览器（应用仍可用 `test_wms_app` 代替）；`vm_rdp --port 19090 --web-root assets` 单独起，`/events` 有帧、`/ws` 能发输入。
+
+### 13.6 M5.1 协议前置：窗口 flags 与全局指针（2026-11-24）
+
+**为什么先做**：外壳进程化时，任务栏需要 UNDECORATED/TOPMOST/PINNED/NOFOCUS，而 `VmWmReqCreate` 只有几何；
+hover 需要指针位置，而 `EVT_INPUT` 只发给命中窗口的属主，鼠标移出后外壳收不到。
+
+**做了什么**
+
+1. `wms_ipc.h`：
+   - `VmWmReqCreate` 增加 `uint32_t flags`（16 → 20 B），新增 `VMWM_WINFLAG_*`（与 `VM_WIN_*` 同值）。
+   - `VmWmWindowInfo` 增加 `uint32_t flags`（172 → 176 B），宿主据此决定装饰与合成层。
+   - 新增 `EVT_POINTER = 1<<11`、`VmWmEvtPointer`（16 B）、`EVT_ALL` 0x7FF → 0xFFF。
+   - 新增尺寸断言：`VmWmReqCreate==20`、`VmWmEvtPointer==16`，`VmWmWindowInfo` 改 176。
+2. `wms_server.c`：create 保存 flags；`route_input` 对 NOFOCUS 窗口跳过 raise/focus；
+   新增 `broadcast_pointer`，把画布坐标的 move/down/up 广播给订阅 `EVT_POINTER` 的 SHELL。
+   `VmWm_SetFocus` 拒绝 NOFOCUS 窗口（`VMWM_ERR_PERMISSION`），与输入仲裁同一规则。
+3. `wms_client`：`Wms_CreateWindow` 增加 `flags` 参数；新增 `Wms_AsPointer`。
+4. `vm_host.c`：`on_window_event` 把 `info->flags` 写进渲染副本（`VmWm_SetWindowFlags`）。
+5. `test_wms_shell.c`：任务栏以 4 个 flag 建窗；新增 `--move` / `--click2`、`EVT_POINTER` 日志、
+   窗口列表打印 `flags`、收尾再列一次 `focused`；`--focus` 跳过 NOFOCUS 窗口。
+6. `tools/e2e_wms.ps1`：basic 场景新增 7 条断言（flags=15、指针广播、点击任务栏投递给属主、
+   焦点仍在应用、任务栏从未聚焦、普通窗口有标题装饰、任务栏无标题装饰）。
+
+**验收**：`pwsh tools/e2e_wms.ps1 -SkipBuild` → **45/45 checks passed**（原 38）。
+单元测试不变：`test_wms_ipc` 36、`test_wms_peer` 7、`test_frame` 120、`test_menu` 30、
+`test_text_edit` 66、`test_jpx_xaml` 47、`test_jpx_xaml_theme` 137、`test_sys` 16 全过。
+
+**观察**
+
+- 任务栏窗口 id 在 basic 场景稳定为 2（app 先建），`w2_title` 缺失即证明 UNDECORATED 生效。
+- `--focus` 原来把焦点设给 `list[0]`（z 最高），加上 flags 后 `list[0]` 是任务栏，
+  因此改为选第一个非 NOFOCUS 窗口；这条改动同时暴露了「外壳应当激活应用窗口」的正确语义。
+- 上游 wmwms 需要同样加这三个字段才能与本项目互通，已记入 §5.7 第 9 条。
+
+**恢复点**：协议可承载 flags 与指针；shell 进程化的最后两个阻塞点消除。

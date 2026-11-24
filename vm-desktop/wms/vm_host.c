@@ -111,6 +111,9 @@ static void host_on_window_event(void *user, uint32_t evt, const VmWmWindowInfo 
     vw->h = info->h;
     vw->minimized = info->mapped ? 0 : 1;
     vw->focused = info->focused ? 1 : 0;
+    /* 行为标志来自 create 请求（数值与 VM_WIN_* 对齐）：任务栏靠它在合成时
+       进 TOPMOST 层，并且不参与焦点高亮。 */
+    VmWm_SetWindowFlags(h->wm, id, info->flags);
 
     int slot = (int)(vw - h->wm->windows);
     if (slot >= 0 && slot < VM_WM_MAX_WINDOWS) {

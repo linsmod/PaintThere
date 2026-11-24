@@ -152,9 +152,22 @@ typedef enum {
     EVT_FULLFRAME        = 1 << 8,   /* RDP：fullframe JSON 基线 */
     EVT_THEME_CHANGED    = 1 << 9,   /* 全部：主题名，各自重新解析 */
     EVT_RESOURCES        = 1 << 10,  /* RDP：资源包 JSON（CMD_REQUEST_RESPACK 的应答） */
+    /* SHELL：全局指针，画布坐标。外壳的窗口不抢焦点，鼠标移出后收不到
+       EVT_INPUT，hover 无法清除；这条事件只给 SHELL，与输入路由无关。 */
+    EVT_POINTER          = 1 << 11,
 
-    EVT_ALL              = 0x7FF
+    EVT_ALL              = 0xFFF
 } VmWmEvent;
+
+/* 窗口行为标志：数值与本项目 VM_WIN_* 对齐，宿主直接赋值。
+   由 create 请求携带，服务端据此决定焦点仲裁（NOFOCUS 不抢焦点），
+   宿主据此决定装饰与合成层（TOPMOST 分两遍绘制）。 */
+typedef enum {
+    VMWM_WINFLAG_UNDECORATED = 1u << 0,
+    VMWM_WINFLAG_TOPMOST     = 1u << 1,
+    VMWM_WINFLAG_PINNED      = 1u << 2,
+    VMWM_WINFLAG_NOFOCUS     = 1u << 3
+} VmWmWinFlag;
 
 #pragma pack(push, 1)
 
@@ -176,6 +189,7 @@ typedef struct {
     uint32_t z;            /* 全局堆叠序：越大越靠前（宿主实现 z 序后可忽略 stack） */
     uint32_t created_seq;  /* 创建序：不随 raise 变化，外壳用它做稳定排序 */
     int32_t  focused;      /* 1 = 当前焦点窗口 */
+    uint32_t flags;        /* VmWmWinFlag 位或 */
     char     title[VMWM_TITLE_MAX];
 } VmWmWindowInfo;
 
@@ -209,7 +223,8 @@ typedef struct {
 } VmWmReqSubscribe;
 
 typedef struct {
-    int32_t x, y, w, h;
+    int32_t  x, y, w, h;
+    uint32_t flags;        /* VmWmWinFlag 位或；0 = 普通装饰窗口 */
 } VmWmReqCreate;
 
 typedef struct {
@@ -310,6 +325,13 @@ typedef struct {
     int32_t  width, height;
 } VmWmEvtLayoutReq;
 
+/* EVT_POINTER：全局指针（画布坐标）。kind 与 VmWmReqInput.kind 同值。 */
+typedef struct {
+    int32_t  x, y;
+    uint32_t down;         /* 1 = 左键按住 */
+    uint32_t kind;         /* 0 move / 1 down / 2 up（与 VmWmReqInput.kind 同值） */
+} VmWmEvtPointer;
+
 /* EVT_FRAME / EVT_FULLFRAME：定长头 + 紧跟 len 字节 JSON */
 typedef struct {
     uint32_t frame_id;
@@ -352,7 +374,9 @@ typedef struct {
 VMWM_STATIC_ASSERT(sizeof(VmWmMsgHdr) == 16, "VmWmMsgHdr must be 16 bytes");
 VMWM_STATIC_ASSERT(sizeof(VmWmAck) == 16, "VmWmAck must be 16 bytes");
 VMWM_STATIC_ASSERT(sizeof(VmWmAckHello) == 44, "VmWmAckHello size changed");
-VMWM_STATIC_ASSERT(sizeof(VmWmWindowInfo) == 172, "VmWmWindowInfo size changed");
+VMWM_STATIC_ASSERT(sizeof(VmWmWindowInfo) == 176, "VmWmWindowInfo size changed");
+VMWM_STATIC_ASSERT(sizeof(VmWmReqCreate) == 20, "VmWmReqCreate size changed");
+VMWM_STATIC_ASSERT(sizeof(VmWmEvtPointer) == 16, "VmWmEvtPointer size changed");
 VMWM_STATIC_ASSERT(sizeof(VmWmReqInput) == 96, "VmWmReqInput size changed");
 VMWM_STATIC_ASSERT(sizeof(VmWmReqContent) == 24, "VmWmReqContent size changed");
 VMWM_STATIC_ASSERT(sizeof(VmWmEvtLayoutReq) == 20, "VmWmEvtLayoutReq size changed");

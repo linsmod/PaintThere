@@ -543,7 +543,7 @@ int Wms_PollEvents(WmsClient* c, int timeout_ms)
 /* ================= 窗口操作 ================= */
 
 VmWmResult Wms_CreateWindow(WmsClient* c, int x, int y, int w, int h,
-                            uint64_t* out_win_id)
+                            uint32_t flags, uint64_t* out_win_id)
 {
     VmWmReqCreate req;
     uint64_t      id = 0;
@@ -551,6 +551,7 @@ VmWmResult Wms_CreateWindow(WmsClient* c, int x, int y, int w, int h,
 
     if (!c) return VMWM_ERR_BAD_ARG;
     req.x = x; req.y = y; req.w = w; req.h = h;
+    req.flags = flags;
 
     r = call_simple(c, CMD_CREATE_WINDOW, &req, sizeof(req), &id);
     if (r == VMWM_OK && out_win_id) *out_win_id = id;
@@ -889,6 +890,12 @@ const VmWmReqTheme* Wms_AsTheme(const WmsEvent* e)
 {
     if (!e || !e->payload || e->len < sizeof(VmWmReqTheme)) return NULL;
     return (const VmWmReqTheme*)e->payload;
+}
+
+const VmWmEvtPointer* Wms_AsPointer(const WmsEvent* e)
+{
+    if (!e || !e->payload || e->len < sizeof(VmWmEvtPointer)) return NULL;
+    return (const VmWmEvtPointer*)e->payload;
 }
 
 const char* Wms_AsFrame(const WmsEvent* e, uint32_t* out_len,

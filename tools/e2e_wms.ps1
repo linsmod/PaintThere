@@ -169,7 +169,7 @@ if (-not (Wait-ServerReady $srvE)) { Write-Host '  server 未就绪' -Foreground
 
 $app = Start-Tool 'test_wms_app.exe' @('--pipe', $pipe, '--seconds', "$AppSeconds") $appO $appE
 Start-Sleep -Milliseconds 400
-$sh  = Start-Tool 'test_wms_shell.exe' @('--pipe', $pipe, '--seconds', "$ShellSeconds", '--theme', 'dark', '--click', '220,160', '--focus') $shO $shE
+$sh  = Start-Tool 'test_wms_shell.exe' @('--pipe', $pipe, '--seconds', "$ShellSeconds", '--theme', 'dark', '--click', '220,160', '--click2', '400,584', '--move', '400,300', '--focus') $shO $shE
 Start-Sleep -Milliseconds 400
 $rdpDump = Join-Path $LogDir 'basic-fullframe.json'
 $rdp = Start-Tool 'test_wms_rdp.exe' @('--pipe', $pipe, '--seconds', "$RdpSeconds", '--dump', $rdpDump) $rdpO $rdpE
@@ -189,6 +189,11 @@ Assert-Log $appO 'input win=\d+ kind=1 down=1'                         'APP 收�
 Assert-Log $shO  'set_workarea 0,0 800x568 -> ok'                      'SHELL 声明工作区'
 Assert-Log $shO  'list_windows -> 2'                                   'SHELL 枚举到 2 个窗口'
 Assert-Log $shO  'set_focus \d+ -> ok'                                 'SHELL 切换焦点'
+Assert-Log $shO  "id=\d+ 'Taskbar' z=\d+ flags=15"                     '任务栏窗口带 UNDECORATED/TOPMOST/PINNED/NOFOCUS'
+Assert-Log $shO  'pointer x=400 y=300'                                 '指针位置广播到 SHELL（移出窗口也能清 hover）'
+Assert-Log $shO  'input id=\d+ kind=1 down=1 \(400,16\)'               '点击任务栏投递给 SHELL 属主'
+Assert-Log    $shO  'after #\d+ id=1 focused=1 flags=0'  '点击任务栏后应用仍是焦点窗口（NOFOCUS）'
+Assert-NoLog  $shO  "Taskbar.*focused=1"                '任务栏从未成为焦点窗口'
 Assert-Log $rdpO 'request_fullframe -> ok'                             'RDP fullframe 请求被受理'
 Assert-Log $rdpO 'fullframe frame_id=\d+'                              'RDP 收到 fullframe 数据'
 Assert-Log $rdpO 'frame frame_id=\d+'                                  'RDP 收到增量帧'
@@ -196,6 +201,8 @@ Assert-Log $rdpO "resources id='default'"                              'RDP 收�
 Assert-NoLog $srvE 'bad frame'                                         '没有任何坏帧'
 # 光有帧不够：帧里必须真的有应用推来的内容，否则可能只是装饰
 Assert-Log $rdpDump 'app_rect_0'                                       'fullframe 含应用内容的绘制命令'
+Assert-Log    $rdpDump 'w1_title'   '普通窗口带标题栏装饰'
+Assert-NoLog  $rdpDump 'w2_title'   '任务栏无标题栏装饰（UNDECORATED 生效）'
 Stop-Tool $app; Stop-Tool $sh; Stop-Tool $rdp
 
 # ---------------------------------------------------------------

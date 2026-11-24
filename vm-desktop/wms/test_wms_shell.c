@@ -17,6 +17,20 @@
 static int      g_events  = 0;
 static uint64_t g_taskbar = 0;
 
+/* 发一条画布坐标输入（win_id=0 让服务端命中）。 */
+static void send_input(WmsClient* c, int kind, int down, int x, int y)
+{
+    VmWmReqInput in;
+    memset(&in, 0, sizeof(in));
+    in.win_id  = 0;
+    in.kind    = (uint16_t)kind;
+    in.is_down = (uint16_t)down;
+    in.x       = x;
+    in.y       = y;
+    in.button  = 0;
+    Wms_SendInput(c, &in);
+}
+
 static void on_event(WmsClient* c, const WmsEvent* e, void* user)
 {
     (void)c;
@@ -63,6 +77,14 @@ static void on_event(WmsClient* c, const WmsEvent* e, void* user)
         fflush(stdout);
         break;
     }
+    case EVT_POINTER: {
+        const VmWmEvtPointer* p = Wms_AsPointer(e);
+        if (p)
+            printf("[shell] pointer x=%d y=%d down=%u kind=%u\n",
+                   p->x, p->y, (unsigned)p->down, (unsigned)p->kind);
+        fflush(stdout);
+        break;
+    }
     default:
         printf("[shell] evt 0x%x len=%u\n", (unsigned)e->evt, (unsigned)e->len);
         fflush(stdout);
@@ -77,6 +99,8 @@ int main(int argc, char** argv)
     int         seconds   = 5;
     int         do_focus  = 0;
     int         click_x   = -1, click_y = -1;
+    int         click2_x  = -1, click2_y = -1;
+    int         move_x    = -1, move_y = -1;
     WmsClient*  c;
     VmWmResult  r;
     int32_t     sw = 0, sh = 0;
@@ -92,6 +116,10 @@ int main(int argc, char** argv)
             theme = argv[++i];
         } else if (strcmp(argv[i], "--click") == 0 && i + 1 < argc) {
             sscanf(argv[++i], "%d,%d", &click_x, &click_y);
+        } else if (strcmp(argv[i], "--click2") == 0 && i + 1 < argc) {
+            sscanf(argv[++i], "%d,%d", &click2_x, &click2_y);
+        } else if (strcmp(argv[i], "--move") == 0 && i + 1 < argc) {
+            sscanf(argv[++i], "%d,%d", &move_x, &move_y);
         } else if (strcmp(argv[i], "--focus") == 0) {
             do_focus = 1;
         }
@@ -117,7 +145,10 @@ int main(int argc, char** argv)
            Wms_StrError(r));
 
     /* 外壳自己也有窗口：任务栏以窗口形式参与堆叠 */
-    r = Wms_CreateWindow(c, 0, sh - 32, sw, 32, &g_taskbar);
+    r = Wms_CreateWindow(c, 0, sh - 32, sw, 32,
+                         VMWM_WINFLAG_UNDECORATED | VMWM_WINFLAG_TOPMOST |
+                         VMWM_WINFLAG_PINNED | VMWM_WINFLAG_NOFOCUS,
+                         &g_taskbar);
     printf("[shell] create taskbar -> %s id=%llu\n", Wms_StrError(r),
            (unsigned long long)g_taskbar);
     if (r == VMWM_OK) {
@@ -136,28 +167,32 @@ int main(int argc, char** argv)
         int n = Wms_ListWindows(c, list, VMWM_MAX_WINDOWS);
         printf("[shell] list_windows -> %d\n", n);
         for (i = 0; i < n; i++)
-            printf("[shell]   #%d id=%llu '%s' z=%u\n", i,
+            printf("[shell]   #%d id=%llu '%s' z=%u flags=%u\n", i,
                    (unsigned long long)list[i].win_id, list[i].title,
-                   (unsigned)list[i].z);
-        if (n > 0) {
-            r = Wms_SetFocus(c, list[0].win_id);
+                   (unsigned)list[i].z, (unsigned)list[i].flags);
+        /* 任务栏是 NOFOCUS 窗口，不参与焦点；选第一个可聚焦窗口。 */
+        for (i = 0; i < n; i++) {
+            if ((list[i].flags & VMWM_WINFLAG_NOFOCUS) == 0) break;
+        }
+        if (i < n) {
+            r = Wms_SetFocus(c, list[i].win_id);
             printf("[shell] set_focus %llu -> %s\n",
-                   (unsigned long long)list[0].win_id, Wms_StrError(r));
+                   (unsigned long long)list[i].win_id, Wms_StrError(r));
         }
     }
 
+    if (move_x >= 0) {
+        send_input(c, 0, 0, move_x, move_y);
+        printf("[shell] input move (%d,%d)\n", move_x, move_y);
+    }
+
     if (click_x >= 0) {
-        VmWmReqInput in;
-        memset(&in, 0, sizeof(in));
-        in.win_id  = 0;                    /* 0 = 让服务端按 z 序命中 */
-        in.kind    = 1;                    /* down */
-        in.is_down = 1;
-        in.x       = click_x;
-        in.y       = click_y;
-        in.button  = 0;
-        r = Wms_SendInput(c, &in);
-        printf("[shell] input click (%d,%d) -> %s\n", click_x, click_y,
-               Wms_StrError(r));
+        send_input(c, 1, 1, click_x, click_y);
+        printf("[shell] input click (%d,%d)\n", click_x, click_y);
+    }
+    if (click2_x >= 0) {
+        send_input(c, 1, 1, click2_x, click2_y);
+        printf("[shell] input click2 (%d,%d)\n", click2_x, click2_y);
     }
 
     t0 = uv_hrtime();
@@ -165,6 +200,16 @@ int main(int argc, char** argv)
         double elapsed = (double)(uv_hrtime() - t0) / 1e9;
         if (elapsed >= (double)seconds) break;
         Wms_PollEvents(c, 50);
+    }
+
+    /* 焦点收尾核对：点击任务栏（NOFOCUS）之后，焦点必须仍在应用窗口上。 */
+    if (do_focus) {
+        VmWmWindowInfo after[VMWM_MAX_WINDOWS];
+        int n = Wms_ListWindows(c, after, VMWM_MAX_WINDOWS);
+        for (i = 0; i < n; i++)
+            printf("[shell] after #%d id=%llu focused=%d flags=%u\n", i,
+                   (unsigned long long)after[i].win_id, after[i].focused,
+                   (unsigned)after[i].flags);
     }
 
     printf("[shell] events=%d, done\n", g_events);

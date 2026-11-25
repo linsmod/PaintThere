@@ -558,6 +558,10 @@ Tab 顺序、caret、列表滚轮、按钮 hover/pressed、关闭按钮；e2e `a
 
 **恢复点**：新 app 同时具备手写命令 / Clay / XAML 三种 producer。
 
+**状态：进行中（2026-11-25）**。XAML 表单已在 `vm_app --ui xaml` 闭环
+（输入/复选框/列表/按钮，证据见 `docs/task-vm-app.md` §9.1）；主题加载与
+`{StaticResource}` 解析未做，需先把 `JpxXamlTheme_Apply` 拆出 `jpx_xaml_direct`。
+
 #### M7.5 删除旧 app 与工具链切换
 
 **做什么**

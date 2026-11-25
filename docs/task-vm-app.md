@@ -154,7 +154,7 @@ e2e（A1–A3 稳定后加入）：`tools/e2e_wms.ps1` 新增 `app` 场景，断
 | A3 崩溃隔离 | 已完成（2026-11-25） |
 | A4 几何与 epoch | 已完成（2026-11-25） |
 | A5 Clay 后端（M7） | 未开始 |
-| A6 XAML 后端（M7） | 未开始 |
+| A6 XAML 后端（M7.4） | 进行中：XAML 表单已完成；主题待做 |
 
 ## 9. 执行记录：A1–A4（2026-11-25）
 
@@ -194,6 +194,30 @@ e2e（A1–A3 稳定后加入）：`tools/e2e_wms.ps1` 新增 `app` 场景，断
   wms 合成与其他 app 不受影响（A4 已验证）。
 
 **恢复点**：`vm_app.exe` 可独立跑两实例，e2e `app` 场景通过。
+
+## 9.1 执行记录：A6 XAML 表单（2026-11-25）
+
+**做了什么**
+
+1. 新增 `app/ui_xaml.c/.h`：内置表单 XAML（两个 TextBox、两个 CheckBox、一个 ListBox、一个 Button），
+   复用 `jpx_xaml` 的 parser/state 与 Direct 后端；`--xaml <file>` 可替换为外部文件。
+2. `vm_app` 增加 `--ui xaml` / `--xaml <file>`；`push_content` 按模式分派；
+   `EVT_INPUT` 的 down/up 都交给 `JpxXaml_DirectPointer`，键盘走 `JpxXaml_DirectKey`；
+   caret 相位由 500ms timer 翻转。
+3. CMake：`vm_app` 改链 `jpx_xaml_direct`（库自带 `vm_display` / `vm_font`），源加 `app/ui_xaml.c`。
+
+**验收证据**
+
+| 项 | 实测 |
+|---|---|
+| 表单渲染 | 19 条命令；标题 `jp_xaml form (Direct backend)` @ (61,90) |
+| 文本输入 | 点 TextBox 后输入 `a`/`b`，帧文本 `ab` @ (69,122) |
+| 复选框 | 点 notify → `form ok ... notify=1` |
+| 列表/按钮 | OK 按钮读回 `name='ab' email='' notify=1 remember=0 sel=0` |
+| 回归 | 8 个单测不变；e2e 61/61 |
+
+**未做**：主题加载（`--theme` + `{StaticResource}` 解析 + `EVT_THEME_CHANGED` 重载）。
+`JpxXamlTheme_Apply` 依赖 `JpxApp`，需先拆到独立 TU 才能把主题表链进 `jpx_xaml_direct`。
 
 ## 10. 下一步（M7.3 / M7.4 / M7.5）
 

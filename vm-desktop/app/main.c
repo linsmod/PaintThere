@@ -18,6 +18,7 @@
 #include "wms_ipc.h"
 
 #include "ui_hello.h"
+#include "ui_xaml.h"
 #include "vm_display.h"
 #include "vm_font.h"
 
@@ -41,6 +42,9 @@ static uint32_t     g_epoch;
 static int          g_dirty;
 static int          g_slowLayoutMs;
 static int          g_x = 60, g_y = 60;
+static int          g_uiXaml;
+static const char  *g_xamlPath;
+static int          g_xamlCaretOn = 1;
 static int          g_resizeAfterMs, g_resizeW, g_resizeH;
 static int          g_resizeDone;
 static uint64_t     g_t0Ms;
@@ -63,7 +67,10 @@ static void push_content(void) {
     buf.cap = (int)(sizeof(g_cmds) / sizeof(g_cmds[0]));
     buf.count = 0;
     buf.rejected = 0;
-    Hello_Paint(&g_state, &buf);
+    if (g_uiXaml)
+        XamlUi_Paint(&buf, g_state.bodyW, g_state.bodyH);
+    else
+        Hello_Paint(&g_state, &buf);
 
     r = Wms_PushContent(g_wms, g_win, g_epoch, g_cmds, (uint32_t)buf.count,
                         (uint32_t)sizeof(VmDrawCommand), &accepted, &overflow);
@@ -99,6 +106,15 @@ static void on_input(const VmWmReqInput *in) {
     if (!in) return;
     APP_LOG("input kind=%u x=%d y=%d down=%d key='%s'",
             (unsigned)in->kind, in->x, in->y, in->is_down, in->key);
+
+    if (g_uiXaml) {
+        int dirty = 0;
+        if (in->kind == 1) dirty = XamlUi_Pointer(in->x, in->y, 1);
+        else if (in->kind == 2) dirty = XamlUi_Pointer(in->x, in->y, 0);
+        else if (in->kind == 4 && in->is_down) dirty = XamlUi_Key(in->key, 0, 0);
+        if (dirty) g_dirty = 1;
+        return;
+    }
 
     if (in->kind == 1 && in->is_down) {           /* mousedown */
         int x, y, w, h;
@@ -239,6 +255,12 @@ static void on_timer(uv_timer_t *t) {
 
 static void on_caret(uv_timer_t *t) {
     (void)t;
+    if (g_uiXaml) {
+        g_xamlCaretOn = !g_xamlCaretOn;
+        XamlUi_SetCaret(g_xamlCaretOn);
+        g_dirty = 1;
+        return;
+    }
     if (!g_state.focused) return;
     g_state.caretOn = !g_state.caretOn;
     g_dirty = 1;
@@ -265,9 +287,15 @@ int main(int argc, char **argv) {
             g_resizeAfterMs = atoi(argv[++i]);
             g_resizeW = atoi(argv[++i]);
             g_resizeH = atoi(argv[++i]);
+        } else if (strcmp(argv[i], "--ui") == 0 && i + 1 < argc) {
+            g_uiXaml = strcmp(argv[++i], "xaml") == 0;
+        } else if (strcmp(argv[i], "--xaml") == 0 && i + 1 < argc) {
+            g_xamlPath = argv[++i];
+            g_uiXaml = 1;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             printf("usage: vm_app [--pipe <path>] [--title <name>] [--font <ttf>]"
-                   " [--x <n>] [--y <n>] [--slow-layout <ms>]\n");
+                   " [--x <n>] [--y <n>] [--slow-layout <ms>]"
+                   " [--ui hello|xaml] [--xaml <file>]\n");
             printf("  default pipe : %s\n", VMWM_PIPE_NAME);
             printf("  protocol     : wms v%u (role APP)\n", (unsigned)VMWM_VERSION);
             return 0;
@@ -279,6 +307,13 @@ int main(int argc, char **argv) {
 
     if (VmFont_LoadFile(fontPath, 0) < 0)
         APP_LOG("font load failed: %s", fontPath);
+    if (g_uiXaml) {
+        char err[256];
+        if (!XamlUi_Init(g_xamlPath, err, sizeof(err))) {
+            APP_LOG("xaml init failed: %s", err);
+            return 1;
+        }
+    }
     g_state.caretOn = 1;
     snprintf(g_state.text, sizeof(g_state.text), "%s", "");
 

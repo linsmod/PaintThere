@@ -155,8 +155,12 @@ typedef enum {
     /* SHELL：全局指针，画布坐标。外壳的窗口不抢焦点，鼠标移出后收不到
        EVT_INPUT，hover 无法清除；这条事件只给 SHELL，与输入路由无关。 */
     EVT_POINTER          = 1 << 11,
+    /* 二进制 tile 帧：载荷头同 VmWmEvtFrame，后面跟 BFRM 二进制流。
+       与 EVT_FRAME / EVT_FULLFRAME 并存，便于灰度与回退。 */
+    EVT_FRAME_BIN        = 1 << 12,
+    EVT_FULLFRAME_BIN    = 1 << 13,
 
-    EVT_ALL              = 0xFFF
+    EVT_ALL              = 0x3FFF
 } VmWmEvent;
 
 /* 窗口行为标志：数值与本项目 VM_WIN_* 对齐，宿主直接赋值。

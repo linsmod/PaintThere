@@ -91,18 +91,32 @@ ops...
 - 字节对比：`inspect_vm_frame.py` 读 SSE 流，确认 tile 内容与旧路径一致；统计二进制 IPC 长度应小于 JSON。
 - 浏览器：启动 `python tools/start_vm_desktop.py`，agent-browser 截图/像素检查，确认画面与交互不退化。
 
-## 步骤
+## 步骤与结果（2026-11-25 完成）
 
-- [ ] 写本任务文档
-- [ ] 定义 `vm_frame_bin.h/.c` 与 `test_frame_bin`
-- [ ] wms_ipc 新增 BIN 事件 bit
-- [ ] wms_server 新增二进制帧广播/单发
-- [ ] vm_host 产出二进制 tile 帧，保留 JSON 回退
-- [ ] wms_client 暴露二进制帧访问（可复用 Wms_AsFrame）
-- [ ] rdp 订阅并解码二进制帧，转 JSON 推送
-- [ ] （可选第二步）RdpOut 引用计数 + iovec 少拷贝
-- [ ] 全量构建 + test_frame_bin + e2e_wms.ps1
-- [ ] 浏览器验证并更新索引/工作流
+- [x] 写本任务文档
+- [x] 定义 `vm_frame_bin.h/.c`：`VmBinWriter` 增量写 CONFIG/SET_TILE/SHOW_LOADING/HIDE_LOADING，`VmFrameBin_ToTiles` 解码；命令用 typed 紧凑编码（u8 type + 长度前缀字符串 + IEEE-754 float 位模式）
+- [x] `VmTiles` 同时持有 JSON buffer 与 `VmBinWriter`；`SetTileJson` 同时接收类型化命令写二进制镜像；`VmTiles_FinishBin` 输出二进制帧
+- [x] wms_ipc 新增 `EVT_FRAME_BIN = 1<<12` / `EVT_FULLFRAME_BIN = 1<<13`，`EVT_ALL` 扩到 `0x3FFF`
+- [x] wms_server 新增 `VmWm_ServerBroadcastFrameBin` / `SendFrameBin`，复用 `VmWmEvtFrame` 载荷头
+- [x] vm_host 默认双发 JSON+BIN（灰度开关 `VM_WMS_JSON_FRAMES`：0=仅 BIN，1=仅 JSON，未设=双发）
+- [x] vm_rdp 只订阅 BIN 事件，解码后 `VmTiles_Finish()` 转 JSON 再 PushFrame/PushFullframe；旧 JSON 事件保留给 `test_wms_rdp`/e2e basic 场景
+- [ ] （第二步，未做）RdpOut 引用计数 + iovec 少拷贝：当前 rdp 解码后仍每连接 memcpy JSON
+- [x] 全量构建 + `test_frame_bin` + `e2e_wms.ps1` 61/61
+- [x] 浏览器验证：blue gradient + hello 窗口 + 任务栏正常；rdp 日志 `fullframe(bin) frame_id=82 len=19122`
+
+### 验证数据
+
+- `test_frame_bin`：同一组 CONFIG/SHOW_LOADING/2 条命令/HIDE_LOADING，JSON 383 字节、BIN 172 字节（约 45%），解码后再序列化 JSON 与原始逐字节一致。
+- 构建：`python tools/build_vm.py` 全量 exit 0。
+- `pwsh tools/e2e_wms.ps1`：61/61 checks passed。
+- 浏览器：`python tools/start_vm_desktop.py --port 19055` + agent-browser，截图 `temp/binframe_desktop.png`，画面完整。
+- rdp 日志确认走二进制：`[rdp] fullframe(bin) frame_id=82 len=19122`。
+
+### 已知限制
+
+- 双发期间 wms 一帧序列化两次，CPU 尚未节省；切 `VM_WMS_JSON_FRAMES=0` 后只发 BIN，但 `test_wms_rdp` 需要 JSON（e2e basic 场景）。后续可让 test_wms_rdp 也订阅 BIN 后默认切仅 BIN。
+- `RdpOut` 仍是每连接 memcpy，未做引用计数 + iovec（任务第二步）。
+- 偶发 `rasterizeText failed: -2`：字体 wasm 异步加载竞态，既有行为，下一帧补画，非本任务引入。
 
 ## 风险与注意
 

@@ -1,4 +1,5 @@
 #include "vm_serialize_json.h"
+#include "vm_frame_bin.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -314,21 +315,31 @@ struct VmTiles {
     StrBuf b;
     int count;
     uint32_t frameId;
+    VmBinWriter *bin;
+    int binStarted;
 };
 
 VmTiles *VmTiles_Create(void) {
     VmTiles *t = (VmTiles *)calloc(1, sizeof(VmTiles));
+    if (t) t->bin = VmBinWriter_Create();
     return t;
 }
 
 void VmTiles_Destroy(VmTiles *tiles) {
     if (!tiles) return;
     free(tiles->b.data);
+    VmBinWriter_Destroy(tiles->bin);
     free(tiles);
 }
 
 void VmTiles_SetFrameId(VmTiles *tiles, uint32_t frameId) {
-    if (tiles) tiles->frameId = frameId;
+    if (tiles) {
+        tiles->frameId = frameId;
+        if (tiles->bin && !tiles->binStarted) {
+            VmBinWriter_BeginFrame(tiles->bin, frameId);
+            tiles->binStarted = 1;
+        }
+    }
 }
 
 static void op_begin(VmTiles *t) {
@@ -344,12 +355,14 @@ void VmTiles_ShowLoading(VmTiles *tiles) {
     if (!tiles) return;
     op_begin(tiles);
     puts_(&tiles->b, "{\"op\":\"showLoading\"}");
+    VmBinWriter_OpShowLoading(tiles->bin);
 }
 
 void VmTiles_HideLoading(VmTiles *tiles) {
     if (!tiles) return;
     op_begin(tiles);
     puts_(&tiles->b, "{\"op\":\"hideLoading\"}");
+    VmBinWriter_OpHideLoading(tiles->bin);
 }
 
 void VmTiles_Config(VmTiles *tiles, int cols, int rows, int tileW, int tileH, int w, int h) {
@@ -358,6 +371,7 @@ void VmTiles_Config(VmTiles *tiles, int cols, int rows, int tileW, int tileH, in
     printf_(&tiles->b,
            "{\"op\":\"config\",\"cols\":%d,\"rows\":%d,\"tileW\":%d,\"tileH\":%d,\"w\":%d,\"h\":%d}",
            cols, rows, tileW, tileH, w, h);
+    VmBinWriter_OpConfig(tiles->bin, cols, rows, tileW, tileH, w, h);
 }
 
 void VmTiles_SetTile(VmTiles *tiles, int index, const VmDrawCommand *cmds, int count) {
@@ -369,14 +383,17 @@ void VmTiles_SetTile(VmTiles *tiles, int index, const VmDrawCommand *cmds, int c
         emit_command(&tiles->b, &cmds[i]);
     }
     puts_(&tiles->b, "]}");
+    VmBinWriter_OpSetTile(tiles->bin, index, cmds, count);
 }
 
-void VmTiles_SetTileJson(VmTiles *tiles, int index, const char *cmdsJson) {
+void VmTiles_SetTileJson(VmTiles *tiles, int index, const char *cmdsJson,
+                         const VmDrawCommand *cmds, int count) {
     if (!tiles) return;
     op_begin(tiles);
     printf_(&tiles->b, "{\"op\":\"setTile\",\"index\":%d,\"cmds\":", index);
     puts_(&tiles->b, cmdsJson ? cmdsJson : "[]");
     puts_(&tiles->b, "}");
+    if (cmds && count) VmBinWriter_OpSetTile(tiles->bin, index, cmds, count);
 }
 
 char *VmTiles_Finish(VmTiles *tiles) {
@@ -387,5 +404,13 @@ char *VmTiles_Finish(VmTiles *tiles) {
     char *data = tiles->b.data;
     tiles->b.data = NULL;
     VmTiles_Destroy(tiles);
+    return data;
+}
+
+uint8_t *VmTiles_FinishBin(VmTiles *tiles, size_t *outLen) {
+    if (!tiles) { if (outLen) *outLen = 0; return NULL; }
+    if (!tiles->binStarted) VmBinWriter_BeginFrame(tiles->bin, tiles->frameId);
+    uint8_t *data = VmBinWriter_Finish(tiles->bin, outLen);
+    /* Do not destroy VmTiles here: JSON buffer may still be needed for fallback. */
     return data;
 }

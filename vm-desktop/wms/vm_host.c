@@ -54,7 +54,7 @@ static void rebuild_resources(VmHost *h) {
 }
 
 /* full=1 下发 config + 全部块（新连接的基线）；full=0 只发变化的块。 */
-static char *build_frame_json(VmHost *h, int full) {
+static VmTiles *build_frame_tiles(VmHost *h, int full) {
     VmWm_BuildFrame(h->wm, &h->frame, h->frameId, resolve_font);
     VmTiles *tiles = VmTiles_Create();
     if (!tiles) return NULL;
@@ -63,7 +63,51 @@ static char *build_frame_json(VmHost *h, int full) {
         VmTiles_Destroy(tiles);
         return NULL;
     }
-    return VmTiles_Finish(tiles);
+    return tiles;
+}
+
+/* Default: emit both JSON (legacy clients / e2e) and binary (vm_rdp fast path).
+   VM_WMS_JSON_FRAMES=0 disables JSON; =1 disables binary. */
+static int frame_mode(void) {
+    const char *v = getenv("VM_WMS_JSON_FRAMES");
+    if (v && strcmp(v, "0") == 0) return 2; /* binary only */
+    if (v && strcmp(v, "1") == 0) return 1; /* json only */
+    return 0;                               /* both */
+}
+
+/* Publish one frame in the selected wire format. Returns 1 if anything was sent. */
+static int publish_frame(VmHost *h, int full, int client_id) {
+    int mode = frame_mode();
+    VmTiles *tiles = build_frame_tiles(h, full);
+    if (!tiles) return 0;
+    int sent = 0;
+
+    if (mode != 1) {
+        size_t len = 0;
+        uint8_t *bin = VmTiles_FinishBin(tiles, &len);
+        if (bin) {
+            VmWmResult r = client_id >= 0
+                ? VmWm_ServerSendFrameBin((uint32_t)client_id, bin, (uint32_t)len, full)
+                : VmWm_ServerBroadcastFrameBin(bin, (uint32_t)len, full);
+            free(bin);
+            sent = (r == VMWM_OK);
+        }
+    }
+
+    if (mode != 2) {
+        /* VmTiles_FinishBin does not destroy tiles; JSON buffer is still intact. */
+        char *json = VmTiles_Finish(tiles);
+        if (json) {
+            VmWmResult r = client_id >= 0
+                ? VmWm_ServerSendFrame((uint32_t)client_id, json, (uint32_t)strlen(json), full)
+                : VmWm_ServerBroadcastFrame(json, (uint32_t)strlen(json), full);
+            free(json);
+            sent = 1;
+        }
+    } else {
+        VmTiles_Destroy(tiles);
+    }
+    return sent;
 }
 
 /* ---------------- VmWmHost 回调 ---------------- */
@@ -167,20 +211,14 @@ static void host_on_tick(void *user, uint32_t frame_id) {
     if (!h) return;
     if (!VmWm_ConsumeDirty(h->wm)) return;   /* 没变化就不出帧 */
     h->frameId = frame_id;
-    char *json = build_frame_json(h, 0);
-    if (!json) return;
-    VmWm_ServerBroadcastFrame(json, (uint32_t)strlen(json), 0);
-    free(json);
+    publish_frame(h, 0, -1);
 }
 
 static void host_on_frame_request(void *user, uint32_t client_id) {
     VmHost *h = (VmHost *)user;
     if (!h) return;
     h->frameId++;
-    char *json = build_frame_json(h, 1);
-    if (!json) return;
-    VmWm_ServerSendFrame(client_id, json, (uint32_t)strlen(json), 1);
-    free(json);
+    publish_frame(h, 1, (int)client_id);
 }
 
 static void host_on_respack_request(void *user, uint32_t client_id, const char *id) {

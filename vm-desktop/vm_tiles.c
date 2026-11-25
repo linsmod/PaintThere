@@ -100,7 +100,8 @@ int VmTileGrid_Build(VmTileGrid *grid, const VmDisplayList *frame, int full, VmT
                     VmTiles_Config(out, grid->cols, grid->rows, grid->tileW, grid->tileH,
                                    grid->w, grid->h);
             }
-            VmTiles_SetTileJson(out, idx, json ? json : "[]");
+            VmTiles_SetTileJson(out, idx, json ? json : "[]",
+                                s_tileScratch.commands, s_tileScratch.count);
             any = 1;
             if (!full) grid->hash[idx] = h;
         }

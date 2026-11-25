@@ -43,6 +43,11 @@ VmWmResult VmWm_ServerBroadcastFrame(const char* json, uint32_t len, int full);
 VmWmResult VmWm_ServerSendFrame(uint32_t client_id, const char* json,
                                 uint32_t len, int full);
 
+/* 二进制 tile 帧（与 JSON 版本并存） */
+VmWmResult VmWm_ServerBroadcastFrameBin(const void* data, uint32_t len, int full);
+VmWmResult VmWm_ServerSendFrameBin(uint32_t client_id, const void* data,
+                                   uint32_t len, int full);
+
 /* 只发给指定客户端的资源包 */
 VmWmResult VmWm_ServerSendRespack(uint32_t client_id, const char* id,
                                   const char* json, uint32_t len);

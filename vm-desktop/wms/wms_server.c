@@ -1317,7 +1317,8 @@ static void on_peer_timer(uv_timer_t* timer)
 
 /* ================= 帧下发 ================= */
 
-static VmWmResult send_frame_to(Conn* c, const char* json, uint32_t len, int full)
+static VmWmResult send_frame_payload_to(Conn* c, const void* payload, uint32_t len,
+                                        uint16_t evt)
 {
     VmWmBuf        body;
     VmWmEvtFrame   eh;
@@ -1325,7 +1326,7 @@ static VmWmResult send_frame_to(Conn* c, const char* json, uint32_t len, int ful
 
     if (!c || c->closing) return VMWM_ERR_NOT_CONNECTED;
     if (!(conn_caps(c) & VMWM_CAP_FRAME)) return VMWM_ERR_PERMISSION;
-    if (len && !json) return VMWM_ERR_BAD_ARG;
+    if (len && !payload) return VMWM_ERR_BAD_ARG;
     if (len > VMWM_MAX_PAYLOAD - sizeof(eh)) return VMWM_ERR_LIMIT;
 
     eh.frame_id = g_frame_id;
@@ -1333,17 +1334,22 @@ static VmWmResult send_frame_to(Conn* c, const char* json, uint32_t len, int ful
 
     vmwm_buf_init(&body);
     if (!vmwm_buf_append(&body, &eh, sizeof(eh)) ||
-        (len && !vmwm_buf_append(&body, json, len))) {
+        (len && !vmwm_buf_append(&body, payload, len))) {
         vmwm_buf_free(&body);
         return VMWM_ERR_NOMEM;
     }
 
-    r = (VmWmResult)(conn_send(c, VMWM_CMD_TYPE_EVT,
-                               (uint16_t)(full ? EVT_FULLFRAME : EVT_FRAME),
-                               0, body.data, (uint32_t)body.len) == VMWM_OK
+    r = (VmWmResult)(conn_send(c, VMWM_CMD_TYPE_EVT, evt, 0,
+                               body.data, (uint32_t)body.len) == VMWM_OK
                       ? VMWM_OK : VMWM_ERR_FAILED);
     vmwm_buf_free(&body);
     return r;
+}
+
+static VmWmResult send_frame_to(Conn* c, const char* json, uint32_t len, int full)
+{
+    return send_frame_payload_to(c, json, len,
+                                 (uint16_t)(full ? EVT_FULLFRAME : EVT_FRAME));
 }
 
 VmWmResult VmWm_ServerBroadcastFrame(const char* json, uint32_t len, int full)
@@ -1367,6 +1373,30 @@ VmWmResult VmWm_ServerSendFrame(uint32_t client_id, const char* json,
     Conn* c = conn_by_id(client_id);
     if (!c) return VMWM_ERR_NOT_CONNECTED;
     return send_frame_to(c, json, len, full);
+}
+
+VmWmResult VmWm_ServerBroadcastFrameBin(const void* data, uint32_t len, int full)
+{
+    Conn*      c;
+    VmWmResult last = VMWM_ERR_NOT_CONNECTED;
+    uint32_t   bit  = (uint32_t)(full ? EVT_FULLFRAME_BIN : EVT_FRAME_BIN);
+
+    for (c = g_conns; c; c = c->next) {
+        if (c->closing) continue;
+        if (!(conn_caps(c) & VMWM_CAP_FRAME)) continue;
+        if ((c->mask & bit) == 0) continue;
+        last = send_frame_payload_to(c, data, len, (uint16_t)bit);
+    }
+    return last;
+}
+
+VmWmResult VmWm_ServerSendFrameBin(uint32_t client_id, const void* data,
+                                   uint32_t len, int full)
+{
+    Conn* c = conn_by_id(client_id);
+    if (!c) return VMWM_ERR_NOT_CONNECTED;
+    return send_frame_payload_to(c, data, len,
+                                 (uint16_t)(full ? EVT_FULLFRAME_BIN : EVT_FRAME_BIN));
 }
 
 VmWmResult VmWm_ServerSendRespack(uint32_t client_id, const char* id,

@@ -33,10 +33,13 @@ void VmTiles_ShowLoading(VmTiles *tiles);
 void VmTiles_HideLoading(VmTiles *tiles);
 /* 更新一块 tile：index = row*cols+col，cmds 为 tile 局部坐标绘制原语。 */
 void VmTiles_SetTile(VmTiles *tiles, int index, const VmDrawCommand *cmds, int count);
-/* 直接使用已序列化的命令数组 JSON，避免二次序列化。 */
-void VmTiles_SetTileJson(VmTiles *tiles, int index, const char *cmdsJson);
+/* Use pre-serialized command JSON and the matching typed commands (for binary mirror). */
+void VmTiles_SetTileJson(VmTiles *tiles, int index, const char *cmdsJson,
+                         const VmDrawCommand *cmds, int count);
 /* 返回 {"type":"tiles","frameId":N,"ops":[...]}，调用方 free。 */
 char *VmTiles_Finish(VmTiles *tiles);
+/* Finish binary form instead of JSON. Caller frees returned bytes. */
+uint8_t *VmTiles_FinishBin(VmTiles *tiles, size_t *outLen);
 
 #ifdef __cplusplus
 }

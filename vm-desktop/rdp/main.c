@@ -25,6 +25,8 @@
 #include "wms_client.h"
 #include "wms_ipc.h"
 
+#include "vm_frame_bin.h"
+#include "vm_serialize_json.h"
 #include "rdp_server.h"
 
 #define RDP_LOG(...)                                     \
@@ -144,6 +146,28 @@ static void on_front_input(void *user, const char *body, size_t len) {
 
 /* ---------------- WMS 事件 ---------------- */
 
+static void push_binary_frame(RdpServer *srv, const WmsEvent *e, int full) {
+    uint32_t len = 0, fid = 0;
+    const char *payload = Wms_AsFrame(e, &len, &fid);
+    if (!payload || !len) return;
+    uint32_t decodedFid = 0;
+    VmTiles *tiles = VmFrameBin_ToTiles((const uint8_t *)payload, len, &decodedFid);
+    if (!tiles) {
+        RDP_LOG("binary frame decode failed (frame_id=%u len=%u)", (unsigned)fid, (unsigned)len);
+        return;
+    }
+    char *json = VmTiles_Finish(tiles);
+    if (json) {
+        if (full) {
+            RDP_LOG("fullframe(bin) frame_id=%u len=%u", (unsigned)fid, (unsigned)len);
+            RdpServer_PushFullframe(srv, json, (uint32_t)strlen(json));
+        } else {
+            RdpServer_PushFrame(srv, json, (uint32_t)strlen(json));
+        }
+    }
+    free(json);
+}
+
 static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
     RdpServer *srv = (RdpServer *)user;
     (void)c;
@@ -164,6 +188,12 @@ static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
         }
         break;
     }
+    case EVT_FRAME_BIN:
+        push_binary_frame(srv, e, 0);
+        break;
+    case EVT_FULLFRAME_BIN:
+        push_binary_frame(srv, e, 1);
+        break;
     case EVT_RESOURCES: {
         char id[64];
         uint32_t len = 0;
@@ -211,8 +241,10 @@ static void wms_try_connect(uint64_t now) {
         return;
     }
 
-    r = Wms_Subscribe(g_wms, EVT_FRAME | EVT_FULLFRAME | EVT_RESOURCES |
-                                 EVT_THEME_CHANGED);
+    /* vm_rdp consumes binary tile frames; legacy JSON events remain for
+       test_wms_rdp / debugging, but are not subscribed here to avoid duplicates. */
+    r = Wms_Subscribe(g_wms, EVT_FRAME_BIN | EVT_FULLFRAME_BIN |
+                                 EVT_RESOURCES | EVT_THEME_CHANGED);
     if (r != VMWM_OK) {
         RDP_LOG("wms subscribe failed (%s)", Wms_StrError(r));
         wms_disconnect();

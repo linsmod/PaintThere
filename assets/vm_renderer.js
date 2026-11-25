@@ -408,21 +408,15 @@ async function boot() {
       markConnected();
       queueFrame(e.data, 'fullframe');
     });
+    /* 唯一的控制事件：会话被同一 clientId 的新连接接管，本页面退出，不抢回去。
+       服务端满了是回 503（不升级、不断言事件），由 EventSource 自身重试。 */
     source.addEventListener('control', (e) => {
       try {
         const c = JSON.parse(e.data);
-        if (c.op === 'takenOver') {
-          /* 同一 clientId 在别处重连/开新标签页：本页面退出，不抢会话。 */
-          rejected = true;
-          markTakenOver();
-          return;
-        }
-        if (c.op !== 'serverFull') return;
+        if (c.op !== 'takenOver') return;
         rejected = true;
-        source.close();
-        window.__vmRenderer.error = 'serverFull';
-        reconnectTimer = setTimeout(connectEvents, Math.max(500, c.retryMs || 2000));
-      } catch (err) { /* 控制事件解析失败时交给 EventSource 自身重连 */ }
+        markTakenOver();
+      } catch (err) { /* 解析失败交给 EventSource 自身重连 */ }
     });
     source.onmessage = (e) => {
       markConnected();

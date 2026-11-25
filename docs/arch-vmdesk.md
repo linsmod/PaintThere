@@ -18,7 +18,7 @@
   - `vm_menu.c/.h`：弹出菜单控件。
   - `vm_clipboard.c/.h`、`vm_fs*.c`、`vm_sys*.c`、`vm_ipc.h`：guest 内剪贴板、文件系统/系统能力抽象与进程间协议定义。
   - `wms/`：WMS 进程化层（协议 v2）。`wms_ipc.h` 线路协议、`wms_client.c` 句柄式客户端 SDK、`wms_server.c` 窗口表/焦点/输入路由/连接生命周期、`vm_host.c` 本项目合成宿主（装饰 + 合成 + 瓦片 + 资源包）。产物 `vm_wms.exe`；`--mock` 挂占位宿主。
-  - `rdp/`：呈现端服务器（产物 `vm_rdp.exe`）。libuv 实现 HTTP / SSE / WebSocket / 静态资源 / respack；帧来自 `EVT_FRAME` / `EVT_FULLFRAME`，输入走 `CMD_INPUT`。不合成、不持窗口表。
+  - `rdp/`：呈现端服务器（产物 `vm_rdp.exe`）。libuv 实现 HTTP / SSE / WebSocket / 静态资源 / respack；帧来自 `EVT_FRAME` / `EVT_FULLFRAME`，输入走 `CMD_INPUT`。不合成、不持窗口表。按 clientId 建会话（一条会话 = 一条 SSE + 一条 WS），同 clientId 的新连接接管旧连接。
   - `shell/`：桌面外壳进程（产物 `vm_shell.exe`）。以 SHELL 角色连 wms：建任务栏窗口（flags 四件套）、推内容、把输入命中翻成 `Wms_*`；不链 `vm_wm` / Clay。
   - `app/`：新架构应用（产物 `vm_app.exe`）。以 APP 角色连 wms，按 `EVT_LAYOUT_REQ` 产出 body 局部 `VmCmdBuffer` 并推送；`--ui hello|clay|xaml` 三种内容后端。旧 `demo_jpx` / `demo_xaml` 与其依赖的 `jpx/` 已删除（M7.5）。
   - `vm_shell_local.c`、`vm_menu.c`：单进程适配与弹出菜单，现仅作 `test_frame` / `test_menu` 的夹具
@@ -27,7 +27,7 @@
   - `ui/`：`vm_ui_core`（焦点/文本编辑/命中）+ `ui/clay/`（`vm_ui_clay` 控件层）。
   - `test_*.c`：纯逻辑断言测试，统一支持 `--probe`；命令与耗时见 `docs/test-timing.md`。
 - `assets/`：浏览器与 C 渲染器共享的前端资源。
-  - `vm_renderer.js`：唯一渲染入口；连接 `/events`，管理瓦片画布与资源批次，上行 `POST /input`。
+  - `vm_renderer.js`：唯一渲染入口；连接 `/events?client=<id>` 收帧，管理瓦片画布与资源批次，上行主路径是 `/ws?client=<id>`，连不上才回退 `POST /input`。`<id>` 存在 localStorage，同浏览器多标签页共用一个身份，新标签页接管会话，旧标签页停止重连并显示接管提示。
   - `app.js`：绘制原语与资源命令执行（`commandHandlers`）、`setDrawTarget`、文本重放。
   - `font_wasm.js` + `stb_font_wasm.mjs/.wasm`：浏览器端 stb_truetype 光栅化；`font.ttf` 为浏览器与 guest 共用字体。
   - `themes/`：预编译的 RetroBar 风格主题包；`index.html` / `preview.html` 为主题列表与预览页。
@@ -40,13 +40,13 @@
 
 1. Clay 在 guest 生成 `RenderCommandArray`，`clay_frame_adapter` 填充 `VmDisplayList`；WM 合成各窗口命令，窗口装饰与内容保持 guest 内语义。
 2. `VmDisplayList` 在结构体层做 retained diff，再经 `vm_tiles` 切成瓦片：按命令 `rect` 与瓦片相交收集命令，坐标改为瓦片局部，只有签名变化的瓦片生成 `setTile`；全量帧带 `config`，变化批次前后带 `showLoading` / `hideLoading`。
-3. `vm_serialize_json` 输出 `{"type":"tiles","frameId":N,"ops":[...]}`；`vm_rdp` 通过 SSE `event: fullframe` 与默认消息下发帧，`event: resources` / `resources-update` 下发一次性资源，`event: control` 处理满载。新连接先收到 resources 与 fullframe 建立基线。
+3. `vm_serialize_json` 输出 `{"type":"tiles","frameId":N,"ops":[...]}`；`vm_rdp` 通过 SSE `event: fullframe` 与默认消息下发帧，`event: resources` / `resources-update` 下发一次性资源，`event: control` 只用于会话接管通知（`{"op":"takenOver"}`）。新连接先收到 resources 与 fullframe 建立基线。
 4. 无变化不出帧；字体位图或图片解码就绪后由前端本地重放受影响的瓦片，服务端不重发。
 5. `vm_renderer.js` 执行 `config` 建瓦片画布，`setTile` 以瓦片局部坐标执行绘制原语，`hideLoading` 时一次性贴齐主画布；`app.js` 的 `commandHandlers` 是唯一原语执行器。
 
 ### 上行：渲染器 → guest
 
-1. 浏览器把指针、键盘、滚轮等事件转成原始输入（`kind` / `x` / `y` / `clientId` / `frameId`），`POST /input` 给 C 服务；C 渲染器宿主走同一入口。
+1. 浏览器把指针、键盘、滚轮等事件转成原始输入（`kind` / `x` / `y` / `clientId` / `frameId`），经 `/ws`（主路径）发给 `vm_rdp`，WS 不可用时回退 `POST /input`；C 渲染器宿主走同一入口。
 2. `vm_rdp` 只转发原始 body，不解释窗口语义；`vm_wms` 按 z 序命中窗口、仲裁焦点，再把 body 局部输入发给窗口属主。
 3. 多客户端共用同一画面；焦点状态只在 guest，非焦点客户端只更新指针。指针由 guest 多客户端指针表生成绘制命令，不暴露窗口 API。
 
@@ -59,6 +59,7 @@
 - **瓦片增量**：48 块 100×100 瓦片覆盖 800×600 逻辑画布，只有变化块下发；物理尺寸按 `renderScale` 放大，贴屏 1:1。
 - **资源一次性下发**：`definePattern` / `defineStyle` / `defineDrawProgram` / `loadImg` 等按 id 缓存；主题包由 `loadResPack(id)` 加客户端 GET 拉取。
 - **字体同源**：guest 的 `vm_font` 与浏览器的 wasm 光栅化共用同一 TTF 与度量口径，不使用 Canvas `fillText`。
+- **一个 clientId 一条会话**：会话由 `clientId`（浏览器 localStorage）标识，最多一条 SSE + 一条 WS。同角色新连接视为重连/新标签页接管：先给旧 SSE 发 `{"op":"takenOver"}`、给旧 WS 发 close 4001，再绑新连接；前端收到后停止自动重连。会话上限 8，连接硬上限 64；超限对 `/events`、`/ws` 直接回 503 断开，不排队等待。
 
 ## 已知限制
 

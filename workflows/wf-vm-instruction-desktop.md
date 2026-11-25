@@ -115,6 +115,43 @@ agent-browser --session vm close
 8. **键盘**：焦点客户端点击窗口后发 `keydown`（key=`H`/`i`），帧中文本从空变 `Hi`；非焦点客户端发键被忽略（`changed=0`）。截图 `wm_keyboard.png`。
 9. **retained diff**：浏览器 eval 调 `applyFrameDiff(frame,cv)`，相同帧第二次返回 `false`；两命令帧只改一个时仅脏区重画。端到端渲染像素不退化。
 
+## RDP 会话与多标签验证
+
+`vm_rdp` 按 `clientId`（浏览器 localStorage）建会话：一条会话最多一条 SSE + 一条 WS，同角色
+新连接接管旧连接（旧 SSE 收 `takenOver`、旧 WS 收 close 4001），会话表满直接 503。改
+`rdp/rdp_server.c` 或 `assets/vm_renderer.js` 的连接/输入路径时按下面两步验。
+
+```powershell
+# 1. 协议层：只需 vm_rdp，不需要 vm_wms（SSE/WS 层与会话表独立于上游）
+python tools/build_vm.py
+$p = Start-Process vm-desktop\build\vm_rdp.exe -ArgumentList '--port','19099',
+     '--pipe','\\.\pipe\vmwm_probe_19099','--web-root','assets' -PassThru `
+     -RedirectStandardError 'temp\probe-rdp.err.txt'
+python tools/probe_rdp_session.py --port 19099      # 13 条断言
+Stop-Process -Id $p.Id -Force
+
+# 2. 浏览器：起一套临时桌面（独立管道名 + 独立端口，避免 start_vm_desktop.py 的
+#    stop_old_multi 把用户正在跑的实例一起杀掉），用 agent-browser 开两个标签页
+agent-browser open http://127.0.0.1:19051/
+agent-browser wait 2500
+agent-browser eval "JSON.stringify(window.__vmRenderer)+' cid='+localStorage.getItem('vmCid')"
+agent-browser tab new
+agent-browser open http://127.0.0.1:19051/
+agent-browser wait 2500
+agent-browser tab t1            # 用 tN 稳定 id，`tab 1` 会被拒绝
+agent-browser eval "JSON.stringify(window.__vmRenderer)"   # takenOver:true / input:"http"
+agent-browser screenshot temp\check-takenover.png          # 冻结帧 + 接管提示
+```
+
+期望：新标签页 `takenOver:false` 且正常出帧；旧标签页 `takenOver:true`、`disconnected:true`、
+WS 不再重连，画面为冻结帧 + 「会话已被其他标签页接管」；`vm_rdp` 日志只有一次
+`takes over`，之后没有反复重连。
+
+- 两个标签页必须同源才能共用 localStorage；`agent-browser tab new` 是同一浏览器上下文，满足。
+- `agent-browser close --all` 会关掉所有 session（包括用户/其它代理开的），收尾只用 `agent-browser close`。
+- 探针里"先发事件再关闭"的读取要用「EOF 后仍检查已到字节」的写法，否则会漏掉跟随关闭事件到达的数据。
+- 旧版前端（`/events` 不带 client）仍能连，但服务端按"无会话"处理：不做去重，也不会被拒。
+
 ## 经验与坑
 
 - `Clay_Color` 字段是 `float`，输出颜色用 `%g`，用 `%u` 会全得 0。

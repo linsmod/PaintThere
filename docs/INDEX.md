@@ -29,3 +29,4 @@
 - `task-shell-xaml-framework.md` — shell XAML 化执行文档（立项 2026-11-24，未开工）：jp_xaml 后端接口、Direct 后端、最小 XAML 子集（Canvas/DockPanel/Layers/Repeat）、列表绑定、taskbar.xaml、19 主题验证。
 - `task-vm-app.md` — 新架构 app 执行文档（A1–A6 已完成 2026-11-25）：`vm_app` 三种后端（手写/Clay/XAML）+ 主题；两实例/点击/kill/resize 证据；旧 `demo_jpx`/`demo_xaml` 已删除（M7.5）。
 - `todo-shell-roadmap.md` — 桌面外壳长期待办：外壳 UI 层重构（XAML 化）、动态托盘图标（IPC 扩展）、开始菜单 popup 化、快速启动栏、时钟 tooltip、任务条目拖拽重排、条目溢出滚动、斜体字体。
+- `task-rdp-client-session.md` — vm_rdp 按 clientId 建会话：一个浏览器一条会话（SSE+WS 各一条）、新标签页接管旧连接、会话满直接 503；含探针与双标签页浏览器验证证据。

@@ -497,6 +497,9 @@ Direct 后端与最小 XAML 子集（Canvas/DockPanel/Layers/Repeat + LIST 绑�
 
 **恢复点**：同一份 XAML 可由 Clay 后端与 Direct 后端回放。
 
+**状态：已完成（2026-11-25）**。`jpx_xaml_direct` 库、`JpxXaml_RenderDirect`、
+`JpxXamlBackend_CmdBuf`、`test_jpx_xaml` 58 项，详见 `docs/task-shell-xaml-framework.md` P1。
+
 #### M7.2 shell 补开始菜单 / 设置面板 / 右键菜单
 
 **为什么**：`demo_jpx` 里混着这三样桌面能力，M5.1 只迁了任务栏；不先补，M7.5 删旧 app 会丢功能。
@@ -626,7 +629,7 @@ Tab 顺序、caret、列表滚轮、按钮 hover/pressed、关闭按钮；e2e `a
 | M4 rdp 拆分 | 已完成（2026-11-24） | 见 §13.5 |
 | M5 外壳独立 | 已完成（2026-11-24） | 5.1 迁进程（§13.7）、5.2 去 Clay / 5.3 模板抽函数（§13.8）；任务栏 XAML 化另见 `docs/task-shell-xaml-framework.md` |
 | M6 新架构 app | 已完成（2026-11-25） | A1–A4 见 `docs/task-vm-app.md` §9；e2e `app` 场景 8 条；旧 app 保持弃用状态 |
-| M7 工具包替换与删除旧 app | 未开始 | M7.1 XAML 后端 → M7.2 shell 菜单/设置 → M7.3 Clay(A5) → M7.4 XAML(A6) → M7.5 删旧 app |
+| M7 工具包替换与删除旧 app | 进行中 | M7.1 已完成（2026-11-25）；M7.2 shell 菜单/设置 → M7.3 Clay(A5) → M7.4 XAML(A6) → M7.5 删旧 app |
 
 ## 13. 执行记录
 

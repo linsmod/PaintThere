@@ -183,10 +183,23 @@ add_executable(test_jpx_xaml
     test_jpx_xaml.c
     jpx_xaml/jpx_xaml_parser.c
     jpx_xaml/jpx_xaml_state.c
+    jpx_xaml/jpx_xaml_render_direct.c
 )
 target_include_directories(test_jpx_xaml PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml"
     "${CMAKE_CURRENT_SOURCE_DIR}/jpx")
+
+# jp_xaml 的 Direct 渲染与命令缓冲后端（M7.1）：shell / app 共用，不依赖 Clay。
+add_library(jpx_xaml_direct STATIC
+    jpx_xaml/jpx_xaml_parser.c
+    jpx_xaml/jpx_xaml_state.c
+    jpx_xaml/jpx_xaml_render_direct.c
+    jpx_xaml/jpx_xaml_backend_cmdbuf.c
+    vm_display.c
+    vm_font.c)
+target_include_directories(jpx_xaml_direct PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/jpx" "${MSTB_DIR}")
 
 # jp_xaml 主题断言：ResourceDictionary 解析/查找/渐变/派生（不链接 Clay/WM/网络）。
 add_executable(test_jpx_xaml_theme

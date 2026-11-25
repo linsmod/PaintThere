@@ -95,6 +95,16 @@ int JpxXamlView_SetItemSource(JpxXamlView *view, const char *name,
 
 **恢复点**：`jpx_xaml_backend_*.c` 可独立编译，`test_jpx_xaml --probe` 通过。
 
+**结果（2026-11-25，已完成）**
+
+- `jpx_xaml.h` 增加 `JpxXamlBackend`（rect/border/text/image/path/text_width/line_height/frame_begin/frame_end）与 `JpxXaml_RenderDirect`。
+- 新增 `jpx_xaml_render_direct.c`：只遍历元素树，不调用任何 `Jpx_*`；v1 支持绝对定位与 `StackPanel` 纵/横流式布局。
+- 新增 `jpx_xaml_backend_cmdbuf.c/.h`：`JpxXamlBackend_CmdBuf()` 把调用写成 `VmCmdBuffer`，文本度量走 `vm_font`。
+- CMake 新增静态库 `jpx_xaml_direct`（parser/state/Direct 渲染/cmdbuf 后端/vm_display/vm_font）。
+- `test_jpx_xaml` 47 → **58**（新增 11 条：两叶子文本、流式 y 位移、按钮矩形与显式宽高）。
+- 旧路径未动：`demo_xaml` 抓帧 95827 B、表单文本正常；其余单测断言数不变。
+- 布局规则（v1）：未给 `Height` 的流式项占 `line+8`；`StackPanel.Gap` 默认 6。
+
 ### P2 XAML 子集扩展（标签 + LIST + 三态）
 
 **做什么**
@@ -178,7 +188,7 @@ python tools/start_vm_desktop.py demo_xaml --port 9060
 
 | 步 | 状态 |
 |---|---|
-| P1 后端接口 + Direct 骨架 | 未开始 |
+| P1 后端接口 + Direct 骨架 | 已完成（2026-11-25） |
 | P2 XAML 子集扩展 | 未开始 |
 | P3 taskbar.xaml | 未开始 |
 | P4 19 主题验证 | 未开始 |

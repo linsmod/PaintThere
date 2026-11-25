@@ -8,7 +8,7 @@
 | `test_menu` | `.\vm-desktop\build\test_menu.exe --probe` | 30 | 38 ms | `assets/font.ttf`（右键路由/菜单命中/popup 外点关闭） |
 | `test_sys` | `.\vm-desktop\build\test_sys.exe --probe` | 16 | 53 ms | 无（进程表、内存、CPU 差分、错误分类） |
 | `test_text_edit` | `.\vm-desktop\build\test_text_edit.exe --probe` | 66 | 13 ms | 无 |
-| `test_jpx_xaml` | `.\vm-desktop\build\test_jpx_xaml.exe --probe` | 47 | 47 ms | 无（纯解析/绑定/handler 逻辑） |
+| `test_jpx_xaml` | `.\vm-desktop\build\test_jpx_xaml.exe --probe` | 58 | 48 ms | 无（纯解析/绑定/handler 逻辑 + Direct 渲染） |
 | `test_jpx_xaml_theme` | `.\vm-desktop\build\test_jpx_xaml_theme.exe --probe` | 137 | 114 ms | 无（合并/解析/查找/派生/预编译往返/css 编译）；`--file`、`--dir`、`--precompile <xaml> <outDir>`、`--compile-css <css> <outDir>` |
 | `test_fs` | `.\vm-desktop\build\test_fs.exe --probe` | 19（1 项既有失败，见 `issues/INDEX.md`） | 13 ms | cwd 必须是仓库根（读 `docs/INDEX.md`） |
 | `test_wms_ipc` | `.\vm-desktop\build\test_wms_ipc.exe --probe` | 36 | 10 ms | 无（协议编解码往返、非法 magic、超上限长度、变长尾随；不链 socket） |

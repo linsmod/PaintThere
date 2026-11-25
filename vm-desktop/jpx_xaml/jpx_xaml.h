@@ -10,6 +10,7 @@
 #include <stddef.h>
 
 #include "jpx.h"
+#include "vm_display.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -54,6 +55,28 @@ const char *JpxXamlNode_Text(const JpxXamlNode *node);
 /* 每帧回放。应用把 JpxXaml_Render 包成 JpxWindowDesc.layout 回调：
    static void layout(int win, void *user) { JpxXaml_Render((JpxXamlView *)user, win); } */
 void JpxXaml_Render(JpxXamlView *view, int winId);
+
+/* ---- 绘制后端（M7.1） ----
+   同一份 XAML 既能回放为 Jpx_*（Clay），也能直接产出绘制命令。
+   后端由调用方提供生命周期，ctx 原样回传；能力缺失的回调可以为 NULL。 */
+typedef struct {
+    void (*rect)(void *ctx, const char *id, VmRect r, const char *paint, float radius);
+    void (*border)(void *ctx, const char *id, VmRect r, const char *paint, const int w[4]);
+    void (*text)(void *ctx, const char *id, VmRect r, const char *s,
+                 int fontId, int size, const char *color);
+    void (*image)(void *ctx, const char *id, VmRect r, const char *imgRef);
+    void (*path)(void *ctx, const char *id, VmRect r, const char *svgPath, const char *paint);
+    int  (*text_width)(void *ctx, int fontId, int size, const char *s);
+    int  (*line_height)(void *ctx, int fontId, int size);
+    void (*frame_begin)(void *ctx, const char *tag, const JpxXamlNode *node, VmRect r);
+    void (*frame_end)(void *ctx, const char *tag);
+} JpxXamlBackend;
+
+/* Direct 后端回放：v1 只有绝对定位（X/Y/Width/Height）与
+   StackPanel 的纵向/横向堆叠。Repeat / Layers / States 在 P2 接入。
+   只遍历元素树并调用 backend，不依赖 JPX / Clay。 */
+void JpxXaml_RenderDirect(JpxXamlView *view, const JpxXamlBackend *backend,
+                          void *ctx, int x, int y, int w, int h);
 
 #ifdef __cplusplus
 }

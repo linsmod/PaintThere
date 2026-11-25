@@ -209,6 +209,99 @@ static void test_handler_table(void) {
     JpxXamlView_Destroy(view);
 }
 
+/* ---- Direct 后端：同一棵树不经过 Jpx_* 也能产出命令（M7.1） ---- */
+
+typedef struct {
+    int rects, borders, texts, frames;
+    int rectX[8], rectY[8], rectW[8], rectH[8];
+    char text[8][128];
+    int textY[8];
+} Recorder;
+
+static void rec_rect(void *ctx, const char *id, VmRect r, const char *paint, float radius) {
+    Recorder *rec = (Recorder *)ctx;
+    (void)id; (void)paint; (void)radius;
+    if (rec->rects < 8) {
+        rec->rectX[rec->rects] = (int)r.x;
+        rec->rectY[rec->rects] = (int)r.y;
+        rec->rectW[rec->rects] = (int)r.w;
+        rec->rectH[rec->rects] = (int)r.h;
+    }
+    rec->rects++;
+}
+
+static void rec_border(void *ctx, const char *id, VmRect r, const char *paint,
+                       const int w[4]) {
+    Recorder *rec = (Recorder *)ctx;
+    (void)id; (void)r; (void)paint; (void)w;
+    rec->borders++;
+}
+
+static void rec_text(void *ctx, const char *id, VmRect r, const char *s,
+                     int fontId, int size, const char *color) {
+    Recorder *rec = (Recorder *)ctx;
+    (void)id; (void)fontId; (void)size; (void)color;
+    if (rec->texts < 8) {
+        snprintf(rec->text[rec->texts], sizeof(rec->text[0]), "%s", s ? s : "");
+        rec->textY[rec->texts] = (int)r.y;
+    }
+    rec->texts++;
+}
+
+static void rec_frame_begin(void *ctx, const char *tag, const JpxXamlNode *node, VmRect r) {
+    Recorder *rec = (Recorder *)ctx;
+    (void)tag; (void)node; (void)r;
+    rec->frames++;
+}
+
+static int rec_line_height(void *ctx, int fontId, int size) {
+    (void)ctx; (void)fontId; (void)size;
+    return 18;
+}
+
+static void test_direct_backend(void) {
+    section("direct backend (no Jpx_*)");
+    JpxXamlView *view = JpxXamlView_Create(NULL,
+        "<Window>"
+        "  <StackPanel Orientation='Vertical' Gap='8'>"
+        "    <TextBlock Text='hello' />"
+        "    <Button Content='OK' Width='100' Height='30' />"
+        "  </StackPanel>"
+        "</Window>", NULL, NULL, 0);
+    expect(view != NULL, "direct: view created without JpxApp");
+    if (!view) return;
+
+    Recorder rec;
+    memset(&rec, 0, sizeof(rec));
+    JpxXamlBackend backend;
+    memset(&backend, 0, sizeof(backend));
+    backend.rect = rec_rect;
+    backend.border = rec_border;
+    backend.text = rec_text;
+    backend.frame_begin = rec_frame_begin;
+    backend.line_height = rec_line_height;
+
+    JpxXaml_RenderDirect(view, &backend, &rec, 10, 20, 300, 200);
+
+    expect_int(rec.texts, 2, "direct: two text leaves");
+    if (rec.texts >= 2) {
+        expect_str(rec.text[0], "hello", "direct: first leaf is TextBlock");
+        expect_str(rec.text[1], "OK", "direct: second leaf is Button content");
+        expect_int(rec.textY[0], 20, "direct: first leaf at stack top");
+        /* 未给 Height 的项占 line+8=26，再加 Gap 8：第二个从 20+26+8=54 开始，
+           Button 文本垂直居中再 +6。 */
+        expect_int(rec.textY[1], 60, "direct: second leaf after 26+8 flow");
+    }
+    expect_int(rec.rects, 1, "direct: button draws one rect");
+    if (rec.rects >= 1) {
+        expect_int(rec.rectX[0], 10, "direct: button x from container");
+        expect_int(rec.rectY[0], 54, "direct: button y follows flow");
+        expect_int(rec.rectW[0], 100, "direct: explicit Width honoured");
+        expect_int(rec.rectH[0], 30, "direct: explicit Height honoured");
+    }
+    JpxXamlView_Destroy(view);
+}
+
 static void test_binding_syntax(void) {
     section("binding expression parsing");
     JpxXamlView *view = JpxXamlView_Create(NULL,
@@ -232,6 +325,7 @@ int main(int argc, char **argv) {
     test_capacity();
     test_binding_table();
     test_handler_table();
+    test_direct_backend();
     test_binding_syntax();
 
     printf("%d checks, %d failures\n", g_checks, g_failures);

@@ -21,7 +21,7 @@
 | **A2** | 两实例并发 | 两个窗口、任务栏两条目；点条目能切焦点；内容互不覆盖 |
 | **A3** | 崩溃隔离 | kill 一个实例：只有它的窗口与条目消失；另一个窗口、浏览器连接不断 |
 | **A4** | 几何与 epoch | 拖动/resize 后 `epoch+1` 重排；期间旧内容保留不白屏；app 延迟 300ms 回内容时桌面不卡 |
-| A5 | Clay 控件层（M7.3） | 新写 `app/ui_clay.c`：表单控件、Tab/caret/列表滚轮；协议与输入行为不变 |
+| A5 | Clay 控件层（M7.3） | 控件与焦点抽成 `vm_ui_core`（跨 retain/imm 共享）+ `vm_ui_clay`（Clay 后端）；`app/` 只留宿主 |
 | A6 | XAML 与主题（M7.4） | 表单与主题能力对齐 `demo_xaml`；19 个预编译主题可切换 |
 
 A1–A4 是本任务的验收；A5/A6 属 M7。
@@ -239,8 +239,31 @@ e2e（A1–A3 稳定后加入）：`tools/e2e_wms.ps1` 新增 `app` 场景，断
 | A6 | 新 app 接 XAML 与 19 主题 | M7.4 |
 | 删除 | `jpx` / `jpx_xaml` 执行层 / `demo_jpx` / `demo_xaml` | M7.5 |
 
-**A5 的决策**：不复用 `jpx_widget.c` 的绘制代码（与 `JpxApp` 单例、focusable 表深度耦合）。
-新写 `app/ui_clay.c`，只复用纯逻辑 `JpxTextEdit` 与 `JpxList`。
+**A5 的决策（2026-11-25 更新）**：
+
+- 不复用 `jpx_widget.c` 的绘制代码（与 `JpxApp` 单例、focusable 表深度耦合），但**复用它的状态机设计**。
+- 新建 `vm-desktop/ui/` → `vm_ui_core`：焦点表/Tab 链/按下沿、文本编辑、列表状态、命中规则。
+  零布局引擎依赖，retain / imm 两种写法共用，第三方 app 可直接链接。
+- 新建 `vm-desktop/ui/clay/` → `vm_ui_clay`：Clay 布局 + 控件绘制，只依赖 `vm_ui_core` 与 Clay。
+- `app/` 只留宿主（窗口/协议/资源），不承载控件。
+
+### 分层位置
+
+```text
+vm-desktop/ui/                vm_ui_core（无布局引擎）
+  ui_focus.c/.h               焦点表、Tab 循环、按下沿
+  ui_text_edit.c/.h           文本编辑状态机（从 JpxTextEdit 迁移）
+  ui_list.c/.h                列表滚动/选中
+  ui_hit.c/.h                 矩形命中（逆序最上层）
+  ui_input.h                  与 wms 无关的事件结构
+
+vm-desktop/ui/clay/           vm_ui_clay（依赖 Clay）
+  ui_clay_widgets.c           按钮/复选框/输入框/列表的布局与绘制
+
+vm-desktop/app/              宿主
+  main.c                      窗口/协议/事件循环
+  ui_hello.c / ui_xaml.c      内容后端选择
+```
 
 旧 app 在 A5/A6 完成并验收后删除；删除前必须完成 M7.2（shell 的菜单/设置），
 否则会连带删掉尚未迁走的桌面功能。

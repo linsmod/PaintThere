@@ -529,15 +529,18 @@ Direct 后端与最小 XAML 子集（Canvas/DockPanel/Layers/Repeat + LIST 绑�
 
 #### M7.3 新 app 接 Clay 控件层（A5）
 
-**决策**：不复用 `jpx_widget.c` 的绘制代码——它与 `JpxApp` 单例、`Jpx__App()`、
-focusable 表深度耦合，抽取成本高于重写。新写 `app/ui_clay.c`（约 400 行）：
-`Row/Column/Panel/Scroll/Spacer/Label/Button/Checkbox/TextInput/ListBox`；
-只复用纯逻辑 `JpxTextEdit`（文本编辑状态机）与 `JpxList`（列表滚动状态）。
+**决策（2026-11-25 更新）**：不复用 `jpx_widget.c` 的绘制代码（与 `JpxApp` 单例、
+focusable 表深度耦合），但按“共享核心 + 后端”拆成两个库：
+
+- `vm_ui_core`（`vm-desktop/ui/`）：焦点表/Tab 链/按下沿、文本编辑、列表状态、命中规则。
+  零布局引擎依赖，retain / imm 两种写法共用，第三方 app 可直接链接。
+- `vm_ui_clay`（`vm-desktop/ui/clay/`）：Clay 布局 + 控件绘制，依赖 `vm_ui_core` 与 Clay。
+- `app/` 只留宿主（窗口/协议/资源），不承载控件。
 
 **做什么**
 
-1. 新控件层持自己的焦点表与按下沿，不依赖任何进程单例。
-2. 布局用 Clay，产出 `VmCmdBuffer`（与 A1 同一出口）。
+1. `vm_ui_core` 持焦点表与按下沿，不依赖任何进程单例；`ui_text_edit.c` 从 `JpxTextEdit` 迁移。
+2. `vm_ui_clay` 用 Clay 布局，产出 `VmCmdBuffer`（与 A1 同一出口）。
 3. `vm_app --ui clay` 选择后端；`ui_hello.c` 保留作最小回归。
 
 **验收**：`demo_jpx` 的表单场景（三个输入框、两个勾选框、两个按钮、一个列表）在新 app 上行为一致：

@@ -32,6 +32,7 @@
 - `vm-desktop/test_wasm_font.mjs` — wasm 度量/光栅化测试脚本。
 - `vm-desktop/vm_wm.c/.h` — guest 最小 WM：窗口树/z 序/焦点/标题栏拖动/多窗口帧合成。窗口内容契约是 `VmCmdBuffer`，不认识 Clay 或其它 UI 库。
 - `vm-desktop/vm_template.c/.h` — 模板层绘制：`VmCmd_AppendRect` + `VmTemplate_PaintLayers`（外 4 边 → 内 3 边 → 高光）。任务栏与将来的 XAML Direct 后端共用。
+- `vm-desktop/ui/` — `vm_ui_core` 静态库（M7.3）：`ui_focus.c` 焦点表/Tab 循环、`ui_text_edit.c` 文本编辑状态机（从 `JpxTextEdit` 迁移）、`ui_hit.c` 逆序命中、`ui_input.h` 与 wms 无关的事件结构。零布局引擎依赖，retain/imm 共用，第三方 app 可链。`test_ui.exe --probe` 26 项。
 - `vm-desktop/vm_menu_view.c/.h` — 弹出菜单的纯绘制/命中层（M7.2）：不认识 `VmWm`，窗口由 `vm_shell` 建；`VmMenuView_Layout/Paint/Hit/SetHover`。
 - `vm-desktop/vm_display.c/.h` — 协议无关内部模型 `VmDisplayList`，typed 命令与自有字符串存储，结构体层 diff。
 - `vm-desktop/vm_serialize_json.c/.h` — 唯一 JSON serializer：`VmDisplayList` → frame / command array JSON。

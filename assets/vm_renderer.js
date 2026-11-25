@@ -13,10 +13,26 @@ const HEIGHT = 600;
 const BASE = (typeof location !== 'undefined' && location.protocol !== 'file:')
   ? location.origin
   : `http://127.0.0.1:${PORT}`;
-const EVENTS_URL = `${BASE}/events`;
+/* 客户端身份：同一浏览器的所有标签页共用一个 id（localStorage），服务端据此
+   只保留一条 rdpSession。新标签页接管时会话，旧标签页收到 takenOver 后停止
+   重连，不会出现两个页面互抢连接。 */
+const CLIENT_ID = (() => {
+  try {
+    const saved = localStorage.getItem('vmCid');
+    if (saved) return saved;
+    const id = Math.random().toString(36).slice(2);
+    localStorage.setItem('vmCid', id);
+    return id;
+  } catch (e) {
+    /* 无存储环境（内部页、隐私模式）：退化为每次加载一个新身份。 */
+    return Math.random().toString(36).slice(2);
+  }
+})();
+const CLIENT_QUERY = `?client=${encodeURIComponent(CLIENT_ID)}`;
+const EVENTS_URL = `${BASE}/events${CLIENT_QUERY}`;
 const INPUT_URL = `${BASE}/input`;
 
-window.__vmRenderer = { ready: false, frames: 0, resources: 0, tiles: 0, loading: false, disconnected: false, error: '' };
+window.__vmRenderer = { ready: false, frames: 0, resources: 0, tiles: 0, loading: false, disconnected: false, takenOver: false, error: '' };
 
 // 字体位图与图片解码是异步的：就绪后由本地重放受影响的 tile，不惊动服务端。
 // boot() 建立 tile 状态后接入真正的重放函数；此前的就绪通知由首次重放兜底。
@@ -243,6 +259,7 @@ async function boot() {
   let disconnectTimer = 0;
   let showDisconnectOverlay = false;
   let disconnectTextPending = false;
+  let disconnectText = '连接已断开';
 
   const drawDisconnectOverlay = () => {
     cvCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -252,7 +269,7 @@ async function boot() {
     if (disconnectTextPending) return;
     disconnectTextPending = true;
     const px = Math.max(1, Math.round(15 * renderScale));
-    rasterizeText(0, px, '连接已断开').then((r) => {
+    rasterizeText(0, px, disconnectText).then((r) => {
       disconnectTextPending = false;
       if (!showDisconnectOverlay) return;
       drawRasterScaled(cvCtx, r, Math.round((cv.width - r.w) / 2),
@@ -313,12 +330,40 @@ async function boot() {
   let reconnectTimer = 0;
   let resourcesReady = Promise.resolve();
   let frameChain = Promise.resolve();
+  let eventSource = null;
+  let inputWs = null;
+  /* 会话被同一 clientId 的新标签页接管：停止一切重连，冻结最后一帧并提示。 */
+  let takenOver = false;
+  const markTakenOver = () => {
+    if (takenOver) return;
+    takenOver = true;
+    window.__vmRenderer.takenOver = true;
+    window.__vmRenderer.error = 'takenOver';
+    clearTimeout(reconnectTimer);
+    reconnectTimer = 0;
+    disconnectTimer = 0;
+    disconnectTextPending = false;
+    disconnectText = '会话已被其他标签页接管';
+    showDisconnectOverlay = true;
+    window.__vmRenderer.disconnected = true;
+    if (eventSource) {
+      try { eventSource.close(); } catch (e) { /* 已关闭 */ }
+      eventSource = null;
+    }
+    if (inputWs) {
+      try { inputWs.close(); } catch (e) { /* 已关闭 */ }
+      inputWs = null;
+    }
+    present();
+  };
   const connectEvents = () => {
+    if (takenOver) return;
     clearTimeout(reconnectTimer);
     window.__vmRenderer.error = '';
     resourcesReady = Promise.resolve();
     frameChain = Promise.resolve();
     const source = new EventSource(EVENTS_URL);
+    eventSource = source;
     let rejected = false;
 
     function applyResources(e) {
@@ -366,6 +411,12 @@ async function boot() {
     source.addEventListener('control', (e) => {
       try {
         const c = JSON.parse(e.data);
+        if (c.op === 'takenOver') {
+          /* 同一 clientId 在别处重连/开新标签页：本页面退出，不抢会话。 */
+          rejected = true;
+          markTakenOver();
+          return;
+        }
         if (c.op !== 'serverFull') return;
         rejected = true;
         source.close();
@@ -391,28 +442,25 @@ async function boot() {
   };
   connectEvents();
 
-  let cid = null;
-  try { cid = sessionStorage.getItem('vmCid'); } catch (e) { /* 无存储环境 */ }
-  if (!cid) {
-    cid = Math.random().toString(36).slice(2);
-    try { sessionStorage.setItem('vmCid', cid); } catch (e) { /* 忽略 */ }
-  }
+  const cid = CLIENT_ID;
   const palette = ['#F44336', '#2196F3', '#4CAF50', '#FF9800', '#9C27B0', '#00BCD4'];
   let h = 0;
   for (let i = 0; i < cid.length; i++) h = (h * 31 + cid.charCodeAt(i)) | 0;
   const color = palette[Math.abs(h) % palette.length];
 
   // 上行输入：优先 WebSocket（无 HTTP 头、无新连接、无请求排队），失败回退 HTTP POST。
-  const WS_URL = `${BASE.replace(/^http/, 'ws')}/ws`;
-  let inputWs = null;
+  const WS_URL = `${BASE.replace(/^http/, 'ws')}/ws${CLIENT_QUERY}`;
   const connectInput = () => {
+    if (takenOver) return;
     let ws;
     try { ws = new WebSocket(WS_URL); } catch (e) { inputWs = null; return; }
     inputWs = ws;
     ws.onopen = () => { window.__vmRenderer.input = 'ws'; };
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       if (inputWs === ws) inputWs = null;
       window.__vmRenderer.input = 'http';
+      /* 4001：会话被接管，本页面不再重连。 */
+      if (takenOver || e.code === 4001) { markTakenOver(); return; }
       setTimeout(connectInput, 1000);
     };
   };

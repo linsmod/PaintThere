@@ -9,6 +9,9 @@
   python tools/probe_ws_input.py --port 19080 --kind keydown --key Tab
   python tools/probe_ws_input.py --port 9000 --kind mousedown --x 220 --y 160 --quiet
 
+`--client-id` 同时写进 `/ws?client=<id>` 查询串和输入体的 `clientId`：
+服务端按它归属会话，与浏览器同一 id 的连接会互相接管。
+
 退出码：0 握手与发送成功；1 失败（连接失败、握手非 101、发送异常）。
 """
 
@@ -19,6 +22,7 @@ import os
 import socket
 import sys
 import time
+import urllib.parse
 
 POINTER_KINDS = {"mousemove", "mousedown", "mouseup", "wheel", "click"}
 KEY_KINDS = {"keydown", "keyup"}
@@ -79,14 +83,16 @@ def main():
 
     try:
         key = base64.b64encode(os.urandom(16)).decode()
+        client_q = ("?client=" + urllib.parse.quote(args.client_id, safe="")) \
+            if args.client_id else ""
         req = (
-            "GET /ws HTTP/1.1\r\n"
+            "GET /ws%s HTTP/1.1\r\n"
             "Host: %s:%d\r\n"
             "Upgrade: websocket\r\n"
             "Connection: Upgrade\r\n"
             "Sec-WebSocket-Key: %s\r\n"
             "Sec-WebSocket-Version: 13\r\n\r\n"
-            % (args.host, args.port, key)
+            % (client_q, args.host, args.port, key)
         )
         sock.sendall(req.encode())
         resp = recv_until(sock, b"\r\n\r\n")

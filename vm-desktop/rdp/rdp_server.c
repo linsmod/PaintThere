@@ -14,6 +14,14 @@
  * 写队列：每条连接一个输出缓冲。uv_write 异步，缓冲在写完成前必须有效，
  * 所以待写字节先拷进 out.buf，flush 时整体转给 uv_write，写完成回调里释放。
  * SSE 连接待写量超过 8 MB 视为慢客户端断开（对齐旧 vm_server 策略）。
+ *
+ * 会话：前端在 `/events?client=<id>` 与 `/ws?client=<id>` 上带同一个 clientId
+ * （浏览器 localStorage，同浏览器多标签页共用）。服务端按 clientId 建会话，
+ * 一个会话最多一条 SSE + 一条 WS：同角色再来新连接就是重连/新标签页接管，
+ * 先断旧的再绑新的。旧 SSE 收到 `event: control {"op":"takenOver"}`、旧 WS 收到
+ * close 4001，前端据此停止自动重连，避免两个标签页互抢同一条会话。
+ * 连接数有硬上限；会话数另有上限，超了直接回 503 并断开，不把连接挂在队列里
+ * 等槽位（挂住会让客户端看到 pending 请求）。
  */
 #include "rdp_server.h"
 
@@ -30,7 +38,9 @@
         fflush(stderr);                                  \
     } while (0)
 
-#define RDP_MAX_CONNS        16
+#define RDP_MAX_CONNS        64   /* 连接硬上限：含静态资源/input 等短连接 */
+#define RDP_MAX_SESSIONS      8   /* 一个浏览器 = 一条会话（SSE + WS 各一条） */
+#define RDP_CLIENT_ID_MAX    64
 #define RDP_RECV_CHUNK       65536
 #define RDP_SSE_MAX_PENDING  (8u * 1024u * 1024u)
 #define RDP_HTTP_MAX_PENDING (48u * 1024u * 1024u)
@@ -51,6 +61,7 @@ typedef struct RdpOut {
 typedef struct RdpConn {
     struct RdpConn *next;
     RdpServer      *srv;
+    struct RdpSession *session;   /* 带 clientId 的连接所属会话，可空 */
     uv_tcp_t        sock;
     RdpOut          out;
     char           *in;
@@ -63,6 +74,14 @@ typedef struct RdpConn {
     int             closing;
 } RdpConn;
 
+/* 一条会话对应一个浏览器客户端：最多一条 SSE + 一条 WS。
+   同角色连接被替换时，旧连接先收到接管通知再断开。 */
+typedef struct RdpSession {
+    char        clientId[RDP_CLIENT_ID_MAX];
+    RdpConn    *sse;
+    RdpConn    *ws;
+} RdpSession;
+
 struct RdpServer {
     uv_loop_t       *loop;
     uv_tcp_t         listener;
@@ -70,6 +89,8 @@ struct RdpServer {
     int              listening;
     RdpConn         *conns;
     int              connCount;
+    RdpSession       sessions[RDP_MAX_SESSIONS];
+    int              sessionCount;
 
     unsigned short   port;
     char             webRoot[512];
@@ -203,8 +224,20 @@ static void on_conn_closed(uv_handle_t *handle) {
             pp = &(*pp)->next;
         }
         s->connCount--;
+        /* 只清自己占的槽：接管时新连接已经写进同一槽位，不能被旧连接带走。 */
+        if (c->session) {
+            RdpSession *sess = c->session;
+            if (sess->sse == c) sess->sse = NULL;
+            if (sess->ws == c) sess->ws = NULL;
+            if (!sess->sse && !sess->ws) {
+                sess->clientId[0] = '\0';
+                s->sessionCount--;
+            }
+            c->session = NULL;
+        }
         if (c->isSse)
-            RDP_LOG("sse client closed (sse=%d)", s->connCount);
+            RDP_LOG("sse client closed (conns=%d sessions=%d)", s->connCount,
+                    s->sessionCount);
     }
     out_free(&c->out);
     free(c->in);
@@ -264,6 +297,35 @@ static void respond(RdpConn *c, int code, const char *reason,
 
 static void respond_text(RdpConn *c, int code, const char *reason, const char *text) {
     respond(c, code, reason, "text/plain; charset=utf-8", text, strlen(text));
+}
+
+/* 取查询参数：只认 [A-Za-z0-9._-]，别的一律当作没有（id 只用于会话键，
+   不做 URL 解码，非法字符直接拒绝比半解半留安全）。 */
+static int query_param(const char *query, const char *key, char *out, size_t cap) {
+    size_t klen = strlen(key);
+    const char *p = query;
+
+    if (!query || !cap) return 0;
+    while (*p) {
+        if (strncmp(p, key, klen) == 0 && p[klen] == '=') {
+            const char *v = p + klen + 1;
+            size_t n = 0;
+            while (v[n] && v[n] != '&' && n + 1 < cap) {
+                char ch = v[n];
+                if (!((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') ||
+                      (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' ||
+                      ch == '.'))
+                    return 0;
+                out[n++] = ch;
+            }
+            out[n] = '\0';
+            return n > 0;
+        }
+        p = strchr(p, '&');
+        if (!p) break;
+        p++;
+    }
+    return 0;
 }
 
 /* ---------------- WebSocket 上行 ----------------
@@ -403,6 +465,82 @@ static void ws_send_frame(RdpConn *c, int opcode, const unsigned char *payload, 
     conn_send(c, (const char *)frame, n);
 }
 
+/* 服务端主动 close：带状态码，前端据此区分「被接管」和网络抖动。
+   4001 = 会话被同一 clientId 的新连接接管，不要自动重连。 */
+static void ws_send_close(RdpConn *c, unsigned code, const char *reason) {
+    unsigned char frame[2 + 125];
+    size_t rlen = strlen(reason);
+    size_t n;
+
+    if (rlen > 123) rlen = 123;
+    frame[0] = 0x88;   /* FIN + close */
+    frame[1] = (unsigned char)(2 + rlen);
+    frame[2] = (unsigned char)((code >> 8) & 0xFF);
+    frame[3] = (unsigned char)(code & 0xFF);
+    if (rlen) memcpy(frame + 4, reason, rlen);
+    n = 4 + rlen;
+    conn_send(c, (const char *)frame, n);
+}
+
+/* ---------------- 会话（每个 clientId 一条） ---------------- */
+
+static void conn_takeover_close(RdpConn *c) {
+    if (!c || c->closing) return;
+    if (c->isSse) {
+        static const char evt[] = "event: control\ndata: {\"op\":\"takenOver\"}\n\n";
+        conn_send(c, evt, sizeof(evt) - 1);
+    } else if (c->isWs) {
+        ws_send_close(c, 4001, "taken over");
+    } else {
+        conn_close(c);
+        return;
+    }
+    /* 通知要先出内核再关，否则前端只能看到连接被重置，会当成断线疯狂重连。 */
+    c->closeAfterFlush = 1;
+    conn_flush(c);
+}
+
+static RdpSession *session_find(RdpServer *s, const char *clientId) {
+    int i;
+    for (i = 0; i < RDP_MAX_SESSIONS; i++) {
+        if (s->sessions[i].clientId[0] &&
+            strcmp(s->sessions[i].clientId, clientId) == 0)
+            return &s->sessions[i];
+    }
+    return NULL;
+}
+
+/* 找不到就新建；会话表满返回 NULL，调用方必须直接断开。 */
+static RdpSession *session_acquire(RdpServer *s, const char *clientId) {
+    RdpSession *sess = session_find(s, clientId);
+    int i;
+
+    if (sess) return sess;
+    if (s->sessionCount >= RDP_MAX_SESSIONS) return NULL;
+    for (i = 0; i < RDP_MAX_SESSIONS; i++) {
+        if (!s->sessions[i].clientId[0]) {
+            snprintf(s->sessions[i].clientId, sizeof(s->sessions[i].clientId), "%s",
+                     clientId);
+            s->sessionCount++;
+            return &s->sessions[i];
+        }
+    }
+    return NULL;
+}
+
+/* 绑定连接；同角色已有旧连接时先断旧的（重连/新标签页接管）。 */
+static void session_bind(RdpConn *c, RdpSession *sess, int isWs) {
+    RdpConn **slot = isWs ? &sess->ws : &sess->sse;
+
+    if (*slot && *slot != c) {
+        RDP_LOG("client '%s' takes over: closing previous %s connection",
+                sess->clientId, isWs ? "ws" : "sse");
+        conn_takeover_close(*slot);
+    }
+    *slot = c;
+    c->session = sess;
+}
+
 /* 解析 c->in 里已到达的完整帧。浏览器发来的帧必须带掩码。 */
 static void ws_consume(RdpConn *c) {
     size_t off = 0;
@@ -459,11 +597,23 @@ static void ws_consume(RdpConn *c) {
     }
 }
 
-static void start_ws(RdpConn *c, size_t hdrLen) {
+static void start_ws(RdpConn *c, size_t hdrLen, const char *clientId) {
     const char *key = find_header(c->in, "Sec-WebSocket-Key");
     char accept[64];
     char resp[512];
+    RdpSession *sess = NULL;
     int n;
+
+    if (clientId && *clientId) {
+        sess = session_acquire(c->srv, clientId);
+        if (!sess) {
+            /* 会话满：直接 503 断开，不升级、不排队等槽位。 */
+            RDP_LOG("ws client '%s' rejected: %d sessions already", clientId,
+                    c->srv->sessionCount);
+            respond_text(c, 503, "Service Unavailable", "too many clients");
+            return;
+        }
+    }
 
     if (!key || !ws_accept(key, accept, sizeof(accept))) {
         respond_text(c, 400, "Bad Request", "bad ws");
@@ -477,6 +627,7 @@ static void start_ws(RdpConn *c, size_t hdrLen) {
     if (n <= 0 || !conn_send(c, resp, (size_t)n)) return;
 
     c->isWs = 1;
+    if (sess) session_bind(c, sess, 1);
     /* 握手请求之后可能已经跟着帧数据：保留并按帧解析。 */
     if (c->inLen > hdrLen) {
         memmove(c->in, c->in + hdrLen, c->inLen - hdrLen);
@@ -484,7 +635,8 @@ static void start_ws(RdpConn *c, size_t hdrLen) {
     } else {
         c->inLen = 0;
     }
-    RDP_LOG("ws input channel opened (total=%d)", c->srv->connCount);
+    RDP_LOG("ws input channel opened (client='%s' conns=%d sessions=%d)",
+            sess ? sess->clientId : "-", c->srv->connCount, c->srv->sessionCount);
     ws_consume(c);
 }
 
@@ -627,18 +779,35 @@ static void push_resources_to(RdpConn *c, const char *id) {
     if (n > 0) conn_send(c, payload, (size_t)n);
 }
 
-static void start_sse(RdpConn *c) {
+static void start_sse(RdpConn *c, const char *clientId) {
     RdpServer *s = c->srv;
+    RdpSession *sess = NULL;
     static const char header[] =
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: text/event-stream\r\n"
         "Cache-Control: no-cache\r\n"
         "Connection: keep-alive\r\n\r\n";
 
+    if (clientId && *clientId) {
+        sess = session_acquire(s, clientId);
+        if (!sess) {
+            /* 会话满：回 503 直接断开。EventSource 会按自身节奏重试，
+               比把连接挂在队列里让客户端等 pending 请求更可控。 */
+            RDP_LOG("sse client '%s' rejected: %d sessions already", clientId,
+                    s->sessionCount);
+            respond_text(c, 503, "Service Unavailable", "too many clients");
+            return;
+        }
+    } else {
+        RDP_LOG("sse without client id: no session, reconnects will not be deduped");
+    }
+
     if (!conn_send(c, header, sizeof(header) - 1)) return;
     c->isSse = 1;
     c->inLen = 0;
-    RDP_LOG("sse client opened (total=%d)", s->connCount);
+    if (sess) session_bind(c, sess, 0);
+    RDP_LOG("sse client opened (client='%s' conns=%d sessions=%d)",
+            sess ? sess->clientId : "-", s->connCount, s->sessionCount);
 
     if (s->respackId[0]) push_resources_to(c, s->respackId);
     c->waitFull = 1;
@@ -654,6 +823,8 @@ static void handle_http(RdpConn *c) {
     const char *cl;
     char method[16] = {0};
     char path[512] = {0};
+    char clientId[RDP_CLIENT_ID_MAX] = {0};
+    char *query = NULL;
 
     if (!hdrEnd) {
         if (c->inLen > 32768) {
@@ -667,7 +838,12 @@ static void handle_http(RdpConn *c) {
         respond_text(c, 400, "Bad Request", "bad request");
         return;
     }
-    RDP_LOG("%s %s", method, path);
+    /* 路径与查询串在同一个 token 里：先切开，后面只比较路径。 */
+    {
+        char *q = strchr(path, '?');
+        if (q) { *q = '\0'; query = q + 1; }
+    }
+    RDP_LOG("%s %s%s%s", method, path, query ? "?" : "", query ? query : "");
 
     cl = find_header(c->in, "Content-Length");
     if (cl) bodyLen = (size_t)strtoul(cl, NULL, 10);
@@ -678,13 +854,15 @@ static void handle_http(RdpConn *c) {
     if (c->inLen < hdrLen + bodyLen) return;   /* body 未到齐，等下一次读 */
 
     if (strcmp(method, "GET") == 0 && strcmp(path, "/events") == 0) {
-        start_sse(c);
+        query_param(query, "client", clientId, sizeof(clientId));
+        start_sse(c, clientId);
         return;
     }
 
     /* 上行主路径：WebSocket。握手之后这条连接只承载输入帧。 */
     if (strcmp(method, "GET") == 0 && strcmp(path, "/ws") == 0) {
-        start_ws(c, hdrLen);
+        query_param(query, "client", clientId, sizeof(clientId));
+        start_ws(c, hdrLen, clientId);
         return;
     }
 
@@ -766,6 +944,25 @@ static void on_read(uv_stream_t *stream, ssize_t nread, const uv_buf_t *buf) {
     else handle_http(c);
 }
 
+static void on_reject_closed(uv_handle_t *handle) {
+    free(handle);
+}
+
+/* 硬上限也只是防内存失控：满了照样 accept 再立刻关，不把连接留在 backlog
+   里让客户端等 pending 请求；正常拒连由会话表在 /events、/ws 处回 503。 */
+static void reject_connection(uv_stream_t *server) {
+    RdpServer *s = (RdpServer *)server->data;
+    uv_tcp_t *tmp = (uv_tcp_t *)malloc(sizeof(*tmp));
+
+    if (!tmp) return;
+    if (uv_tcp_init(s->loop, tmp) != 0) {
+        free(tmp);
+        return;
+    }
+    uv_accept(server, (uv_stream_t *)tmp);   /* 失败也无所谓，反正要关 */
+    uv_close((uv_handle_t *)tmp, on_reject_closed);
+}
+
 static void on_new_connection(uv_stream_t *server, int status) {
     RdpServer *s = (RdpServer *)server->data;
     RdpConn *c;
@@ -776,15 +973,8 @@ static void on_new_connection(uv_stream_t *server, int status) {
         return;
     }
     if (s->connCount >= RDP_MAX_CONNS) {
-        /* 槽位满：接了就立刻关，别留在 backlog 里让对端空等。 */
-        uv_tcp_t tmp;
-        if (uv_tcp_init(s->loop, &tmp) == 0) {
-            if (uv_accept(server, (uv_stream_t *)&tmp) == 0)
-                uv_close((uv_handle_t *)&tmp, NULL);
-            else
-                uv_close((uv_handle_t *)&tmp, NULL);
-        }
-        RDP_LOG("connection rejected: %d clients already", s->connCount);
+        reject_connection(server);
+        RDP_LOG("connection rejected: %d conns already", s->connCount);
         return;
     }
 

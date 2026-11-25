@@ -1,7 +1,10 @@
 #ifndef JPX_XAML_H
 #define JPX_XAML_H
 
-/* jp_xaml：声明式 UI 层。应用只 include jpx.h 与 jpx_xaml.h，
+/* DEPRECATED（2026-11-25）：old infra。parser/state 将被新 app 复用，
+   执行层（Jpx_* 回放）随旧 app 在 M7 删除；见 docs/task-vm-app.md A6。
+
+   jp_xaml：声明式 UI 层。应用只 include jpx.h 与 jpx_xaml.h，
    不接触 Clay / VmDisplay / tiles / JSON / frameId。 */
 
 #include <stddef.h>

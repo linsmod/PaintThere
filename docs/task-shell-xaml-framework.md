@@ -189,7 +189,11 @@ python tools/start_vm_desktop.py demo_xaml --port 9060
 ```text
 M5.1 外壳进程化 ──┐
 M5.2 vm_wm 去 Clay ├──► 本任务 P1 ──► P2 ──► P3 ──► P4 ──► P5
-M5.3 VmTemplate_Paint ─┘   （Direct 后端直接复用 M5.3 抽出的层绘制函数）
+M5.3 VmTemplate_Paint ─┘        │
+                                └──► M7：新 app 的 XAML 后端（task-vm-app.md A6）
 ```
 
 M5.3 的 `VmTemplate_Paint` 是本任务 P3 的现成积木：先有「按 `VmTaskButtonLayer` 描述绘制」的函数，再让 XAML 后端调用它。若 M5.3 未完成，P3 会退化成在 XAML 后端里重写一遍层绘制。
+
+P1/P2（后端接口 + Direct 后端 + 最小 XAML 子集）同时是 `docs/task-vm-app.md` A6 的前置：
+旧 `jpx_xaml` 只有 parser/state 可复用，执行层（`Jpx_*`）随旧 app 一起删除，新 app 的 XAML 能力全靠这条后端。

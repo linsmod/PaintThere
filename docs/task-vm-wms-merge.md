@@ -458,30 +458,51 @@ void VmTemplate_PaintLayers(VmCmdBuffer *out, const VmTaskButtonLayer *st,
 
 **恢复点**：三进程（wms / rdp / shell）跑通，应用仍可用单进程模式；`vm_wms` / `vm_shell` 不链 Clay。
 
-### M6 应用独立
+### M6 新架构 app（从零写，不改造 jpx）
+
+**决策（2026-11-25 更新）**：不新增 local/remote 两种语义，也不给 jpx 抽宿主抽象。
+`jpx/`、`jpx_xaml/`、`demo_jpx`、`demo_xaml` 是 **old infra**：保留代码、标 DEPRECATED、不重构；
+新 app 从零写，验收通过后整体删除旧 app。
 
 **做什么**
 
-1. `Jpx_Create` 加远程模式（`JpxOptions.wmsPipe` 非空）：连 `vm_wms`（APP），不再 `VmWm_Create` / `VmShell_Create` / `VmServer_Create`。
-2. `Jpx_WindowOpen` → `Wms_CreateWindow`；`Jpx_WindowSetTitle` → `Wms_SetTitle`。
-3. 收 `EVT_LAYOUT_REQ` → 用 `lr->width/height` 重跑 layout → `Wms_PushContent(win, lr->epoch, cmds, n, sizeof(VmDrawCommand))`。
-4. 收 `EVT_INPUT` → 坐标已是 body 局部，直接进现有按下沿/键盘路由。
-5. `demo_jpx` 改远程模式启动。
+1. 新增 `vm-desktop/app/`（产物 `vm_app.exe`），以 APP 角色连 `vm_wms`：
+   - `Wms_CreateWindow` 建窗，等 `EVT_LAYOUT_REQ(win, epoch, w, h)`。
+   - 布局产出 `VmCmdBuffer`（第一版手写命令，不引入 Clay / XAML）。
+   - `Wms_PushContent(win, epoch, cmds, n, sizeof(VmDrawCommand))`。
+   - `EVT_INPUT` 已是 body 局部，直接分发；`EVT_WINDOW_CLOSE` 销毁本地窗口。
+2. 第一版单窗口：标题条、按钮（按下变色）、一行文本、caret 闪烁。
+3. 起两个实例：窗口 id 归属、任务栏两条目、焦点切换。
+4. kill 一个实例只掉自己的窗口；拖动/resize 后 `epoch` 更新重排，期间旧内容保留。
+5. 旧 app 标弃用：`jpx/`、`jpx_xaml/`、`demo_jpx`、`demo_xaml` 文件头加 DEPRECATED 注释，
+   CMake target 暂不动。
 
-**验收**：§1 第 2 条；`test_frame --probe` / `test_menu --probe` 仍通过。
+执行细节、时序与验收命令见 `docs/task-vm-app.md`。
 
-**恢复点**：`demo_jpx` 不再链接 `vm_wm.c` / `vm_server.c` / `vm_shell.c`。
+**验收**：§1 第 2 条；`docs/task-vm-app.md` 的 A1–A4 全过。
 
-### M7 清理与文档同步
+**恢复点**：`vm_app.exe` 可独立跑两个实例，kill 隔离成立。
+
+### M7 UI 工具包替换验证与旧 app 删除
 
 **做什么**
 
-1. 删 `jpx.h` 的 6 个 `Jpx_Shell*` 转发与实现。
-2. 改写 `docs/design-vm-ipc.md`（顶部标注已被取代，保留决策历史）与 `docs/design-vm-wms-process.md`（传输层与落地步骤按实际改）。
-3. 更新 `docs/arch-vmdesk.md`、`docs/INDEX.md`、`docs/test-timing.md`、`tools/INDEX.md`。
-4. 新工作流写入 `workflows/` 并登记。
+1. 新 app 接入 Clay 后端：把控件层迁到 `app/`（复用 `jpx_widget.c` 的绘制逻辑），
+   验证「换 UI 库不改协议」。
+2. 新 app 接入 XAML 后端：复用 `jpx_xaml` 的 parser/state，输出走
+   `docs/task-shell-xaml-framework.md` 的 Direct 后端；表单能力对齐 `demo_xaml`。
+3. 删除旧 app：`jpx/`、`jpx_xaml/` 的执行层、`demo_jpx`、`demo_xaml`，
+   以及 `jpx.h` 的 6 个 `Jpx_Shell*` 转发。
+4. 文档与索引同步：`arch-vmdesk.md`、`docs/INDEX.md`、`test-timing.md`、`tools/INDEX.md`。
+5. 新工作流写入 `workflows/`。
 
-**验收**：`git grep -n "vm_ipc.h"` 无结果；文档里的可执行体列表与 CMake target 一致。
+**前置**：`docs/task-shell-xaml-framework.md` 的 P1/P2（jp_xaml 后端接口 + Direct 后端）完成，
+否则 XAML 能力无法从旧 app 迁出。
+
+**验收**：`git grep -n "demo_jpx\|demo_xaml"` 无结果（历史文档除外）；19 个预编译主题在新 app 上可切换；
+e2e 全过；文档里的可执行体列表与 CMake target 一致。
+
+**恢复点**：旧 app 已删除，新 app 同时具备手写命令 / Clay / XAML 三种 producer。
 
 ## 9. 测试与验证
 
@@ -492,6 +513,7 @@ void VmTemplate_PaintLayers(VmCmdBuffer *out, const VmTaskButtonLayer *st,
 | 窗口元数据 + 端到端 | `tools/e2e_wms.ps1`（53 条断言，五进程场景；含真实 `vm_shell`） |
 | 合成与瓦片 | `test_frame --probe` + `inspect_vm_frame.py` 对比 M0 基线 |
 | 崩溃容错 | §1 的 5 条手工验收 |
+| 新 app（producer） | `docs/task-vm-app.md` A1–A4；两实例 / kill / resize / epoch |
 | 界面语义 | `test_menu --probe`、`test_jpx_xaml_theme --probe` |
 
 **测试隔离**：`vm_wms` / `vm_rdp` / `vm_shell` 的 e2e 各用独立管道名（`--pipe \\.\pipe\vmwm_test_<pid>`）与端口（`19xxx`），不碰用户正在运行的实例。`test_wms_ipc` / `test_peer` 不开 socket。
@@ -506,6 +528,8 @@ void VmTemplate_PaintLayers(VmCmdBuffer *out, const VmTaskButtonLayer *st,
 | **全帧 JSON 跨进程** | 已知 | 全帧约 48 KB，只在 fullframe 时发生；增量帧是变化块。若接近 1 MB 上限，wmwms 返回 `VMWM_ERR_LIMIT`，需要宿主自己切块 |
 | **输入两跳延迟** | 已知 | 浏览器 → rdp → wms → app，每跳单向无阻塞；实测目标 < 2 ms |
 | **`vm_wm.c` 的窗口管理逻辑变成死代码** | 待清理 | 远程模式下 `VmWm_Move/Focus/HandleInput` 不再被调用，只服务 `demo_wm` 本地模式。M7 评估是否删除 |
+| **旧 app 删除前 XAML 能力需先迁出** | 已知 | `jpx_xaml` 只有 parser/state 可复用，执行层（`Jpx_*`）不可复用；前置 `task-shell-xaml-framework.md` P1/P2 的 Direct 后端 |
+| **新旧 app 并存期** | 已知 | 两套 target 同时编，构建时间增加；不共享代码，避免为删除而改旧代码 |
 | **帧不分片** | 已知 | 单帧 JSON ≤ `VMWM_MAX_PAYLOAD - sizeof(VmWmEvtFrame)`；当前 800×600 远低于此 |
 | **退出不 flush** | 已知 | `VmWm_ServerStop` 直接关 loop，已入队未写出的数据会丢；窗口状态本来不持久化 |
 
@@ -540,8 +564,8 @@ void VmTemplate_PaintLayers(VmCmdBuffer *out, const VmTaskButtonLayer *st,
 | M3 宿主接入 | 已完成（2026-11-24） | 见 §13.4 |
 | M4 rdp 拆分 | 已完成（2026-11-24） | 见 §13.5 |
 | M5 外壳独立 | 已完成（2026-11-24） | 5.1 迁进程（§13.7）、5.2 去 Clay / 5.3 模板抽函数（§13.8）；任务栏 XAML 化另见 `docs/task-shell-xaml-framework.md` |
-| M6 应用独立 | 未开始 | |
-| M7 清理与文档 | 未开始 | |
+| M6 新架构 app | 未开始 | 从零写 `vm_app`，见 `docs/task-vm-app.md`；旧 app 标弃用、不重构 |
+| M7 工具包替换与删除旧 app | 未开始 | 依赖 `docs/task-shell-xaml-framework.md` P1/P2；删除 `jpx`/`demo_jpx`/`demo_xaml` |
 
 ## 13. 执行记录
 

@@ -1,7 +1,10 @@
 #ifndef JPX_H
 #define JPX_H
 
-/* JPX：guest 侧应用框架的唯一公开入口。
+/* DEPRECATED（2026-11-25）：old infra。新应用请用 vm-desktop/app（vm_app）的
+   wms 客户端路径；本头随旧 app 在 M7 删除。不要在此扩展新能力。
+
+   JPX：guest 侧应用框架的唯一公开入口。
    应用只 include 这个头文件，不接触 Clay / VmDisplay / tiles / JSON / frameId。 */
 
 #include <stddef.h>

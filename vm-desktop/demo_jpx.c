@@ -1,4 +1,7 @@
-/* JPX 等价示例：与 demo_wm 同样的两个窗口，但应用代码只 include jpx.h。
+/* DEPRECATED（2026-11-25）：old infra。由 vm-desktop/app（vm_app）取代，M6 验收后删除。
+   不要在此文件上继续开发。
+
+   JPX 等价示例：与 demo_wm 同样的两个窗口，但应用代码只 include jpx.h。
    构建：python tools/build_vm.py → demo_jpx.exe
    运行：demo_jpx.exe 9000 ../assets */
 

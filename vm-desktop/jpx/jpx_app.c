@@ -1,3 +1,6 @@
+/* DEPRECATED（2026-11-25）：old infra。新应用走 vm-desktop/app（vm_app）。
+   本文件随旧 app 在 M7 删除；不要在此加“远程模式”分支。 */
+
 #include "jpx_internal.h"
 
 #include <stdarg.h>

@@ -36,6 +36,7 @@
 - `vm-desktop/vm_serialize_json.c/.h` — 唯一 JSON serializer：`VmDisplayList` → frame / command array JSON。
 - `vm-desktop/clay_frame_adapter.c/.h` — Clay 命令 → `VmDisplayList`（不再直接生成 JSON）。
 - `vm-desktop/jpx_xaml/` — jp_xaml 声明式 UI 层：`jpx_xaml.h` 公开头；`jpx_xaml_parser.c` XAML 子集解析；`jpx_xaml_state.c` 视图/绑定/handler 纯逻辑；`jpx_xaml_view.c` 每帧回放为 JPX 调用。`test_jpx_xaml.exe --probe` 纯逻辑断言。
+- **old infra（2026-11-25 弃用）**：`demo_jpx` / `demo_xaml` / `jpx/` / `jpx_xaml/` 保留代码但不再开发，由 `vm-desktop/app`（`vm_app.exe`）取代，M6 验收后删除。见 `docs/task-vm-app.md`。
 - `vm-desktop/demo_xaml.c` — jp_xaml 表单 demo：XAML 内嵌描述界面，C 侧只有 state 结构体与 handler。构建由 `python tools/build_vm.py` 统一完成；启动 `python tools/start_vm_desktop.py demo_xaml`（默认 9060）。demo 含「切换主题」按钮，演示 RetroBar 风格 ResourceDictionary 热切换。
 - `vm-desktop/jpx_xaml/jpx_xaml_theme.c/.h` — ResourceDictionary 主题：解析 Solid/Linear/Radial Brush 与数值资源、按 key 查询、派生 VmTheme、展开 `{StaticResource}`。
 - `vm-desktop/jpx_xaml/jpx_xaml_theme_apply.c` — 一步应用主题（需要 JPX 完整依赖，单独成 TU 便于纯逻辑测试）。

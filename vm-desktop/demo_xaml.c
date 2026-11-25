@@ -1,4 +1,7 @@
-/* jp_xaml 表单示例：界面结构写在 XAML 里，应用代码只有 state + handler。
+/* DEPRECATED（2026-11-25）：old infra。由 vm-desktop/app（vm_app）取代，M7 删除。
+   不要在此文件上继续开发；XAML 能力迁移见 docs/task-vm-app.md A6。
+
+   jp_xaml 表单示例：界面结构写在 XAML 里，应用代码只有 state + handler。
    构建：python tools/build_vm.py → demo_xaml.exe
    运行：demo_xaml.exe 9060 ../assets
    验证：应用源码不出现 clay / vm_display / vm_tiles / json 词汇。 */

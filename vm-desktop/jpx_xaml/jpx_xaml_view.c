@@ -1,3 +1,6 @@
+/* DEPRECATED（2026-11-25）：old infra 的执行层（回放为 Jpx_*）。
+   parser/state 会被新 app 复用；本文件随旧 app 在 M7 删除。 */
+
 #include "jpx_xaml_internal.h"
 
 #include <stdio.h>

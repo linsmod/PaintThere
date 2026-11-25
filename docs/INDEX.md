@@ -24,4 +24,5 @@
 - `task-taskbar-template-layer.md` — 任务栏按钮模板层次化（对标 RetroBar TaskButton 模板）：三态模板层集（主渐变多 stop + 外 4 边 + 内 3 边 + 对角高光）、宋体字体源替换；含线路与视觉验证。
 - `design-ui-producer-decoupling.md` — UI 生产层解耦设计（冻结于 2026-11-24）：displayList 为唯一契约、Clay 降级为 jp_xaml 后端之一、双后端分工、能力矩阵与禁止项。
 - `task-shell-xaml-framework.md` — shell XAML 化执行文档（立项 2026-11-24，未开工）：jp_xaml 后端接口、Direct 后端、最小 XAML 子集（Canvas/DockPanel/Layers/Repeat）、列表绑定、taskbar.xaml、19 主题验证。
+- `task-vm-app.md` — 新架构 app 执行文档（立项 2026-11-25，未开工）：`vm_app` 从零写、只依赖 VmCmdBuffer 与 wms 协议；A1–A4 验收；旧 app 标弃用，M7 删除。
 - `todo-shell-roadmap.md` — 桌面外壳长期待办：外壳 UI 层重构（XAML 化）、动态托盘图标（IPC 扩展）、开始菜单 popup 化、快速启动栏、时钟 tooltip、任务条目拖拽重排、条目溢出滚动、斜体字体。

@@ -48,6 +48,10 @@ JpxXamlView *JpxXamlView_Create(JpxApp *app, const char *xaml, void *model,
 
 void JpxXamlView_Destroy(JpxXamlView *view) { free(view); }
 
+void JpxXamlView_SetResources(JpxXamlView *view, const struct JpxXamlResourceTable *table) {
+    if (view) view->resources = table;
+}
+
 void *JpxXamlView_Model(JpxXamlView *view) { return view ? view->model : NULL; }
 JpxApp *JpxXamlView_App(JpxXamlView *view) { return view ? view->app : NULL; }
 

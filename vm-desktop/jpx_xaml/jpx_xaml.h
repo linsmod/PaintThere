@@ -18,6 +18,7 @@ extern "C" {
 
 typedef struct JpxXamlView JpxXamlView;
 typedef struct JpxXamlNode JpxXamlNode;
+struct JpxXamlResourceTable;
 
 typedef enum {
     JPX_XAML_BIND_BOOL = 0,   /* 1 字节；CheckBox.IsChecked */
@@ -89,6 +90,10 @@ int JpxXaml_DirectKey(JpxXamlView *view, const char *key, int ctrl, int shift);
 
 /* caret 相位（宿主每 500ms 翻转一次）。 */
 void JpxXaml_DirectSetCaret(JpxXamlView *view, int on);
+
+/* Direct 渲染的资源表：`{StaticResource X}` 里的颜色从这里查。
+   表由调用方长期持有；传 NULL 表示不解析资源（字面色值仍可用）。 */
+void JpxXamlView_SetResources(JpxXamlView *view, const struct JpxXamlResourceTable *table);
 
 #ifdef __cplusplus
 }

@@ -185,6 +185,9 @@ add_executable(test_jpx_xaml
     jpx_xaml/jpx_xaml_state.c
     jpx_xaml/jpx_xaml_render_direct.c
     jpx_xaml/jpx_xaml_direct_ui.c
+    jpx_xaml/jpx_xaml_theme.c
+    vm_display.c
+    vm_theme.c
 )
 target_include_directories(test_jpx_xaml PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml"
@@ -197,8 +200,10 @@ add_library(jpx_xaml_direct STATIC
     jpx_xaml/jpx_xaml_render_direct.c
     jpx_xaml/jpx_xaml_direct_ui.c
     jpx_xaml/jpx_xaml_backend_cmdbuf.c
+    jpx_xaml/jpx_xaml_theme.c
     vm_display.c
-    vm_font.c)
+    vm_font.c
+    vm_theme.c)
 target_include_directories(jpx_xaml_direct PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml"
     "${CMAKE_CURRENT_SOURCE_DIR}/jpx" "${MSTB_DIR}")
@@ -352,8 +357,7 @@ add_executable(vm_shell
     shell/main.c
     vm_shell.c
     vm_template.c
-    vm_menu_view.c
-    vm_theme.c)
+    vm_menu_view.c)
 target_include_directories(vm_shell PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/wms"

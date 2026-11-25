@@ -49,7 +49,7 @@ typedef struct {
     char uri[256];
 } JpxXamlResource;
 
-typedef struct {
+typedef struct JpxXamlResourceTable {
     JpxXamlResource items[JPX_XAML_MAX_RESOURCES];
     int count;
 } JpxXamlResourceTable;

@@ -47,7 +47,7 @@
 - `vm-desktop/vm_server.c/.h` — C 跨平台 HTTP 服务：`GET /events` SSE 推帧、`POST /input` 收原始输入、白名单静态资源。单进程模式（`demo_jpx` / `demo_wm`）仍用它；拆进程后由 `rdp/` 接替。
 - `vm-desktop/rdp/` — 呈现端服务器 `vm_rdp.exe`：libuv 实现的 HTTP / SSE / WebSocket / 静态资源 / respack。帧与资源全部来自 `vm_wms` 的事件，自己不合成；不链 `vm_wm` / Clay。`--port`（默认 9000）、`--pipe`、`--web-root`、`--font`。
 - `vm-desktop/shell/` — 桌面外壳进程 `vm_shell.exe`：`--pipe`、`--font`。以 SHELL 角色连 `vm_wms`，提供任务栏、开始菜单（XAML）、右键菜单（`vm_menu_view`）、设置面板（XAML，无装饰窗口）。不链 `vm_wm` / Clay；链接 `jpx_xaml_direct`。
-- `vm-desktop/app/` — 新架构应用 `vm_app.exe`（M6）：`--pipe`、`--title`、`--x`、`--y`、`--font`、`--slow-layout <ms>`、`--resize-after <ms> <w> <h>`。以 APP 角色连 `vm_wms`，只回 body 局部 `VmCmdBuffer`；A1 界面是手写命令（`ui_hello.c`），不链 Clay。
+- `vm-desktop/app/` — 新架构应用 `vm_app.exe`（M6/M7.4）：`--pipe`、`--title`、`--x`、`--y`、`--font`、`--slow-layout <ms>`、`--resize-after <ms> <w> <h>`、`--ui hello|xaml`、`--xaml <file>`、`--theme <slug>`、`--themes-root <dir>`、`--check-theme <slug>`。以 APP 角色连 `vm_wms`，只回 body 局部 `VmCmdBuffer`；`--ui hello` 手写命令，`--ui xaml` 走 `jpx_xaml_direct`。不链 `vm_wm` / Clay。
 - `vm-desktop/vm_shell.c/.h` — 任务栏纯绘制层：`VmShellModel`（条目快照 + 指针）→ `VmCmdBuffer` 或 `VmShellAction`；`vm_shell_local.c` 是单进程适配（`VmWm` → model，action → `VmWm_*`）。
 - `vm-desktop/wms/` — WMS 协议层与服务：`wms_ipc.h`（v2 线路协议）、`wms_client.c`（句柄式 SDK）、`wms_server.c`（窗口表/焦点/输入路由）、`vm_host.c`（本项目合成宿主，10 个回调）。
 - `vm-desktop/demo_server.c` — SSE 服务 demo。构建：`gcc -std=c11 -I<clay-dir> -I. demo_server.c demo_layout.c clay_frame_adapter.c vm_server.c -lws2_32 -o demo_server.exe`；运行：`./demo_server 9000`（webRoot 默认 `../assets`）。本机 clay 目录 `H:\github_repos\clay`；验证截图 `vm-desktop/demo_render.png`。

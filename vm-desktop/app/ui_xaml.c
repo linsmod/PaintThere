@@ -7,6 +7,7 @@
 
 #include "jpx_xaml.h"
 #include "jpx_xaml_backend_cmdbuf.h"
+#include "jpx_xaml_theme.h"
 
 typedef struct {
     char name[64];
@@ -19,6 +20,7 @@ typedef struct {
 static JpxXamlView *g_view;
 static XamlFormModel g_model;
 static char *g_ownedXaml;
+static JpxXamlResourceTable g_themeTable;   /* 768 项，只放 BSS，按需加载 */
 
 static const char kFormXaml[] =
     "<Window>"
@@ -95,6 +97,17 @@ int XamlUi_Init(const char *xamlPath, char *err, size_t errCap) {
     JpxXamlView_Bind(g_view, "sel", JPX_XAML_BIND_INT,
                      offsetof(XamlFormModel, sel), sizeof(int));
     JpxXamlView_On(g_view, "OnOk", on_ok, NULL);
+    return 1;
+}
+
+int XamlUi_LoadTheme(const char *themeDir, char *err, size_t errCap) {
+    if (!themeDir || !*themeDir) return 0;
+    JpxXamlTheme_Init(&g_themeTable);
+    if (!JpxXamlTheme_LoadPrecompiled(&g_themeTable, themeDir, err, errCap)) return 0;
+    JpxXamlTheme_ResolveImages(&g_themeTable, themeDir);
+    if (g_view) JpxXamlView_SetResources(g_view, &g_themeTable);
+    fprintf(stderr, "[app] theme loaded '%s' resources=%d\n", themeDir, g_themeTable.count);
+    fflush(stderr);
     return 1;
 }
 

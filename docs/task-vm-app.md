@@ -154,7 +154,7 @@ e2e（A1–A3 稳定后加入）：`tools/e2e_wms.ps1` 新增 `app` 场景，断
 | A3 崩溃隔离 | 已完成（2026-11-25） |
 | A4 几何与 epoch | 已完成（2026-11-25） |
 | A5 Clay 后端（M7） | 未开始 |
-| A6 XAML 后端（M7.4） | 进行中：XAML 表单已完成；主题待做 |
+| A6 XAML 后端（M7.4） | 已完成（2026-11-25）：XAML 表单 + 主题加载/热切换 |
 
 ## 9. 执行记录：A1–A4（2026-11-25）
 
@@ -216,8 +216,18 @@ e2e（A1–A3 稳定后加入）：`tools/e2e_wms.ps1` 新增 `app` 场景，断
 | 列表/按钮 | OK 按钮读回 `name='ab' email='' notify=1 remember=0 sel=0` |
 | 回归 | 8 个单测不变；e2e 61/61 |
 
-**未做**：主题加载（`--theme` + `{StaticResource}` 解析 + `EVT_THEME_CHANGED` 重载）。
-`JpxXamlTheme_Apply` 依赖 `JpxApp`，需先拆到独立 TU 才能把主题表链进 `jpx_xaml_direct`。
+**主题（同日补齐）**
+
+- `JpxXamlResourceTable` 改为命名 struct，`jpx_xaml.h` 可前向声明；新增
+  `JpxXamlView_SetResources`，Direct 渲染遇到 `{StaticResource X}` 时查表取颜色。
+- `jpx_xaml_direct` 库加入 `jpx_xaml_theme.c` + `vm_theme.c`（`Apply` 已在独立 TU，不引入 `JpxApp`）。
+- `vm_app` 增加 `--theme <slug>`、`--themes-root <dir>`、`--check-theme <slug>`（自检后退出）。
+- `EVT_THEME_CHANGED` → 重新 `LoadPrecompiled` 并重推内容。
+
+**主题验收**：19 个预编译主题逐个 `--check-theme`，全部加载成功
+（`2000`=29、`xp-silver`=507、`xp-zune-style`=514 …，`failed=0`）；
+运行中由 `test_wms_shell --theme xp-blue` 触发热切换，app 日志出现
+`theme changed -> 'xp-blue'` 与 `theme loaded ... resources=491`。
 
 ## 10. 下一步（M7.3 / M7.4 / M7.5）
 

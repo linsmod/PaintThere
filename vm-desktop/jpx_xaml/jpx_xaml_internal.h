@@ -102,6 +102,7 @@ struct JpxXamlView {
     int pressNode;
     int focusNode;
     int directCaretOn;   /* 由宿主每 500ms 翻转，控制输入框 caret 可见 */
+    const struct JpxXamlResourceTable *resources;   /* Direct 渲染的 {StaticResource} 来源 */
 };
 
 /* 解析 XAML 子集到 doc。失败返回 0 并写 err（含行号）。 */

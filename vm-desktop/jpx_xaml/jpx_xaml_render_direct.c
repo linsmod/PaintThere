@@ -6,6 +6,7 @@
  * StackPanel 的纵向/横向堆叠；Repeat / Layers / States 在 P2 接入。
  */
 #include "jpx_xaml_internal.h"
+#include "jpx_xaml_theme.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -99,9 +100,14 @@ static int line_h(DirectCtx *dc) {
     return h > 0 ? h : DIRECT_LINE_DEFAULT;
 }
 
-static const char *paint_of(const JpxXamlNode *n, const char *key, const char *def) {
+static const char *paint_of(DirectCtx *dc, const JpxXamlNode *n, const char *key,
+                            const char *def) {
     const char *v = attr(n, key);
-    return (v && *v) ? v : def;
+    if (!v || !*v) return def;
+    /* {StaticResource X} / {DynamicResource X}：颜色从资源表查（M7.4）。 */
+    if (v[0] == '{' && dc->view && dc->view->resources)
+        return JpxXamlTheme_Resolve(dc->view->resources, v, def);
+    return v;
 }
 
 static void emit_rect(DirectCtx *dc, const char *id, int x, int y, int w, int h,
@@ -169,23 +175,19 @@ static void walk(DirectCtx *dc, int index, int x, int y, int w, int h) {
     }
 
     if (strcmp(n->tag, "Border") == 0) {
-        const char *bg = paint_of(n, "Background", NULL);
-        int began = 0;
-        if (bg && dc->b && dc->b->frame_begin) {
-            dc->b->frame_begin(dc->ctx, n->tag, n,
-                               (VmRect){(float)x, (float)y, (float)w, (float)h});
-            began = 1;
-        }
+        const char *bg = paint_of(dc, n, "Background", NULL);
+        JpxXaml__NodeId(n, index, idbuf, sizeof(idbuf));
+        record_rect(dc, index, x, y, w, h);
+        if (bg) emit_rect(dc, idbuf, x, y, w, h, bg, 0.0f);
         int pad = attr_int(n, "Padding", 0);
         flow_children(dc, n, x + pad, y + pad, w - pad * 2, h - pad * 2, 0);
-        if (began && dc->b->frame_end) dc->b->frame_end(dc->ctx, n->tag);
         return;
     }
 
     if (strcmp(n->tag, "TextBlock") == 0) {
         const char *t = attr(n, "Text");
         if (!t) t = JpxXamlNode_Text(n);
-        const char *color = paint_of(n, "Foreground", DIRECT_TEXT_COLOR);
+        const char *color = paint_of(dc, n, "Foreground", DIRECT_TEXT_COLOR);
         JpxXaml__NodeId(n, index, idbuf, sizeof(idbuf));
         record_rect(dc, index, x, y, w, h);
         emit_text(dc, idbuf, x, y, w, h, t, color);
@@ -198,8 +200,8 @@ static void walk(DirectCtx *dc, int index, int x, int y, int w, int h) {
         int pressed = (dc->view && index < JPX_XAML_MAX_NODES)
                           ? dc->view->direct[index].pressed : 0;
         const char *bg = pressed ? DIRECT_BTN_PRESSED
-                                 : paint_of(n, "Background", DIRECT_BTN_COLOR);
-        const char *fg = paint_of(n, "Foreground", "rgba(255,255,255,1)");
+                                 : paint_of(dc, n, "Background", DIRECT_BTN_COLOR);
+        const char *fg = paint_of(dc, n, "Foreground", "rgba(255,255,255,1)");
         JpxXaml__NodeId(n, index, idbuf, sizeof(idbuf));
         record_rect(dc, index, x, y, w, h);
         emit_rect(dc, idbuf, x, y, w, h, bg, 4.0f);

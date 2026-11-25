@@ -44,6 +44,9 @@ static int          g_slowLayoutMs;
 static int          g_x = 60, g_y = 60;
 static int          g_uiXaml;
 static const char  *g_xamlPath;
+static const char  *g_themeName;
+static const char  *g_checkTheme;
+static const char  *g_themesRoot = "assets/themes";
 static int          g_xamlCaretOn = 1;
 static int          g_resizeAfterMs, g_resizeW, g_resizeH;
 static int          g_resizeDone;
@@ -186,7 +189,14 @@ static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
     }
     case EVT_THEME_CHANGED: {
         const VmWmReqTheme *t = Wms_AsTheme(e);
-        APP_LOG("theme changed -> '%s' (ignored in A1)", t ? t->name : "");
+        APP_LOG("theme changed -> '%s'", t ? t->name : "");
+        if (g_uiXaml && t && t->name[0]) {
+            char dir[512], err[256];
+            snprintf(dir, sizeof(dir), "%s/%s", g_themesRoot, t->name);
+            if (!XamlUi_LoadTheme(dir, err, sizeof(err)))
+                APP_LOG("theme load failed: %s", err);
+            g_dirty = 1;
+        }
         break;
     }
     default:
@@ -292,10 +302,17 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--xaml") == 0 && i + 1 < argc) {
             g_xamlPath = argv[++i];
             g_uiXaml = 1;
+        } else if (strcmp(argv[i], "--theme") == 0 && i + 1 < argc) {
+            g_themeName = argv[++i];
+        } else if (strcmp(argv[i], "--themes-root") == 0 && i + 1 < argc) {
+            g_themesRoot = argv[++i];
+        } else if (strcmp(argv[i], "--check-theme") == 0 && i + 1 < argc) {
+            g_checkTheme = argv[++i];
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             printf("usage: vm_app [--pipe <path>] [--title <name>] [--font <ttf>]"
                    " [--x <n>] [--y <n>] [--slow-layout <ms>]"
-                   " [--ui hello|xaml] [--xaml <file>]\n");
+                   " [--ui hello|xaml] [--xaml <file>]"
+                   " [--theme <slug>] [--themes-root <dir>]\n");
             printf("  default pipe : %s\n", VMWM_PIPE_NAME);
             printf("  protocol     : wms v%u (role APP)\n", (unsigned)VMWM_VERSION);
             return 0;
@@ -307,11 +324,35 @@ int main(int argc, char **argv) {
 
     if (VmFont_LoadFile(fontPath, 0) < 0)
         APP_LOG("font load failed: %s", fontPath);
+
+    /* 主题自检：只加载表并退出，用于逐个验证 19 个预编译主题。 */
+    if (g_checkTheme) {
+        char err[256], dir[512];
+        if (!XamlUi_Init(NULL, err, sizeof(err))) {
+            APP_LOG("xaml init failed: %s", err);
+            return 1;
+        }
+        snprintf(dir, sizeof(dir), "%s/%s", g_themesRoot, g_checkTheme);
+        if (!XamlUi_LoadTheme(dir, err, sizeof(err))) {
+            APP_LOG("theme check failed: %s", err);
+            return 1;
+        }
+        return 0;
+    }
+
     if (g_uiXaml) {
         char err[256];
         if (!XamlUi_Init(g_xamlPath, err, sizeof(err))) {
             APP_LOG("xaml init failed: %s", err);
             return 1;
+        }
+        if (g_themeName) {
+            char dir[512];
+            snprintf(dir, sizeof(dir), "%s/%s", g_themesRoot, g_themeName);
+            if (!XamlUi_LoadTheme(dir, err, sizeof(err))) {
+                APP_LOG("theme load failed: %s", err);
+                return 1;
+            }
         }
     }
     g_state.caretOn = 1;

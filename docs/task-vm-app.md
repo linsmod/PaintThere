@@ -21,8 +21,8 @@
 | **A2** | 两实例并发 | 两个窗口、任务栏两条目；点条目能切焦点；内容互不覆盖 |
 | **A3** | 崩溃隔离 | kill 一个实例：只有它的窗口与条目消失；另一个窗口、浏览器连接不断 |
 | **A4** | 几何与 epoch | 拖动/resize 后 `epoch+1` 重排；期间旧内容保留不白屏；app 延迟 300ms 回内容时桌面不卡 |
-| A5 | Clay 后端（M7） | 同一个窗口内容换 Clay 产出，协议与输入行为不变 |
-| A6 | XAML 后端（M7） | 表单 demo 能力对齐 `demo_xaml`；19 主题可切换 |
+| A5 | Clay 控件层（M7.3） | 新写 `app/ui_clay.c`：表单控件、Tab/caret/列表滚轮；协议与输入行为不变 |
+| A6 | XAML 与主题（M7.4） | 表单与主题能力对齐 `demo_xaml`；19 个预编译主题可切换 |
 
 A1–A4 是本任务的验收；A5/A6 属 M7。
 
@@ -195,7 +195,18 @@ e2e（A1–A3 稳定后加入）：`tools/e2e_wms.ps1` 新增 `app` 场景，断
 
 **恢复点**：`vm_app.exe` 可独立跑两实例，e2e `app` 场景通过。
 
-## 10. 下一步
+## 10. 下一步（M7.3 / M7.4 / M7.5）
 
-A5/A6 属 M7：接 Clay 与 XAML 后端，前置 `docs/task-shell-xaml-framework.md` P1/P2。
-旧 app（`demo_jpx` / `demo_xaml` / `jpx` / `jpx_xaml`）在 A5/A6 完成并验收后删除。
+| 步 | 内容 | 归属 |
+|---|---|---|
+| M7.1 | `JpxXamlBackend` + Direct 后端 + 最小 XAML 子集 | `docs/task-shell-xaml-framework.md` P1/P2 |
+| M7.2 | shell 补开始菜单 / 设置面板 / 右键菜单 | `task-vm-wms-merge.md` §8 M7.2 |
+| A5 | 新 app 接 Clay 控件层 | M7.3 |
+| A6 | 新 app 接 XAML 与 19 主题 | M7.4 |
+| 删除 | `jpx` / `jpx_xaml` 执行层 / `demo_jpx` / `demo_xaml` | M7.5 |
+
+**A5 的决策**：不复用 `jpx_widget.c` 的绘制代码（与 `JpxApp` 单例、focusable 表深度耦合）。
+新写 `app/ui_clay.c`，只复用纯逻辑 `JpxTextEdit` 与 `JpxList`。
+
+旧 app 在 A5/A6 完成并验收后删除；删除前必须完成 M7.2（shell 的菜单/设置），
+否则会连带删掉尚未迁走的桌面功能。

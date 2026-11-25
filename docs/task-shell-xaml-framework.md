@@ -195,5 +195,10 @@ M5.3 VmTemplate_Paint ─┘        │
 
 M5.3 的 `VmTemplate_Paint` 是本任务 P3 的现成积木：先有「按 `VmTaskButtonLayer` 描述绘制」的函数，再让 XAML 后端调用它。若 M5.3 未完成，P3 会退化成在 XAML 后端里重写一遍层绘制。
 
-P1/P2（后端接口 + Direct 后端 + 最小 XAML 子集）同时是 `docs/task-vm-app.md` A6 的前置：
-旧 `jpx_xaml` 只有 parser/state 可复用，执行层（`Jpx_*`）随旧 app 一起删除，新 app 的 XAML 能力全靠这条后端。
+P1/P2（后端接口 + Direct 后端 + 最小 XAML 子集）同时是 M7 的公共前置：
+
+- `docs/task-vm-app.md` A6（新 app 的 XAML 能力）；
+- `docs/task-vm-wms-merge.md` M7.2（shell 的开始菜单与设置面板）。
+
+旧 `jpx_xaml` 只有 parser/state 可复用，执行层（`Jpx_*`）随旧 app 一起删除，
+新 app 与 shell 的 XAML 能力全靠这条后端。

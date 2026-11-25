@@ -483,26 +483,87 @@ void VmTemplate_PaintLayers(VmCmdBuffer *out, const VmTaskButtonLayer *st,
 
 **恢复点**：`vm_app.exe` 可独立跑两个实例，kill 隔离成立。
 
-### M7 UI 工具包替换验证与旧 app 删除
+### M7 UI 工具包替换与旧 app 删除
+
+拆成五步：前四步补足/重构能力，最后一步替换并删除。每步独立可验收；
+M7.5 之前旧 app 一直可用，随时可回退。
+
+#### M7.1 XAML 后端（前置）
+
+**做什么**：按 `docs/task-shell-xaml-framework.md` P1/P2 实现 `JpxXamlBackend`、
+Direct 后端与最小 XAML 子集（Canvas/DockPanel/Layers/Repeat + LIST 绑定）。
+
+**验收**：该文档 P1/P2 的验收项；`test_jpx_xaml --probe` 断言只增不减。
+
+**恢复点**：同一份 XAML 可由 Clay 后端与 Direct 后端回放。
+
+#### M7.2 shell 补开始菜单 / 设置面板 / 右键菜单
+
+**为什么**：`demo_jpx` 里混着这三样桌面能力，M5.1 只迁了任务栏；不先补，M7.5 删旧 app 会丢功能。
 
 **做什么**
 
-1. 新 app 接入 Clay 后端：把控件层迁到 `app/`（复用 `jpx_widget.c` 的绘制逻辑），
-   验证「换 UI 库不改协议」。
-2. 新 app 接入 XAML 后端：复用 `jpx_xaml` 的 parser/state，输出走
-   `docs/task-shell-xaml-framework.md` 的 Direct 后端；表单能力对齐 `demo_xaml`。
-3. 删除旧 app：`jpx/`、`jpx_xaml/` 的执行层、`demo_jpx`、`demo_xaml`，
-   以及 `jpx.h` 的 6 个 `Jpx_Shell*` 转发。
+1. `vm_menu.c` 去 `VmWm` 依赖，成为纯绘制层；菜单窗口由 `vm_shell` 建
+   （UNDECORATED|TOPMOST|PINNED|NOFOCUS），点外关闭用 `EVT_POINTER` 判断。
+2. 开始菜单：`vm_shell` 建窗，内容走 M7.1 的 Direct 后端 + XAML；条目来自固定注册表。
+3. 设置面板：`jpx_shell_settings` 的界面改为 XAML 描述（表单控件），配置持久化保留。
+4. 三个入口由 M5.1 已定义的 `VM_SHELL_ACTION_*` 触发（现在只记日志）。
+
+**验收**：任务栏右键菜单可打开并执行「属性」；开始菜单可打开、点外部关闭；
+设置面板可改主题/时钟/托盘并持久化；kill shell 后三者一起消失、重启重建。
+
+**恢复点**：`vm_shell` 独立提供任务栏 + 开始菜单 + 右键菜单 + 设置面板。
+
+#### M7.3 新 app 接 Clay 控件层（A5）
+
+**决策**：不复用 `jpx_widget.c` 的绘制代码——它与 `JpxApp` 单例、`Jpx__App()`、
+focusable 表深度耦合，抽取成本高于重写。新写 `app/ui_clay.c`（约 400 行）：
+`Row/Column/Panel/Scroll/Spacer/Label/Button/Checkbox/TextInput/ListBox`；
+只复用纯逻辑 `JpxTextEdit`（文本编辑状态机）与 `JpxList`（列表滚动状态）。
+
+**做什么**
+
+1. 新控件层持自己的焦点表与按下沿，不依赖任何进程单例。
+2. 布局用 Clay，产出 `VmCmdBuffer`（与 A1 同一出口）。
+3. `vm_app --ui clay` 选择后端；`ui_hello.c` 保留作最小回归。
+
+**验收**：`demo_jpx` 的表单场景（三个输入框、两个勾选框、两个按钮、一个列表）在新 app 上行为一致：
+Tab 顺序、caret、列表滚轮、按钮 hover/pressed、关闭按钮；e2e `app` 场景不改协议仍通过。
+
+**恢复点**：`vm_app --ui clay` 可替代 `demo_jpx` 的表单示例。
+
+#### M7.4 新 app 接 XAML 与主题（A6）
+
+**做什么**
+
+1. `jpx_xaml` 的 parser/state 迁到 `app/xaml/`（不引用 `jpx.h`），执行层走 M7.1 的 Direct 后端。
+2. 主题：`jpx_xaml_theme.c`（纯逻辑）迁入；`EVT_THEME_CHANGED` 重新解析并重推所有窗口。
+3. `vm_app --ui xaml --theme <slug>`；19 个预编译主题逐一验证。
+
+**验收**：`demo_xaml` 的表单与主题切换在新 app 上等价；19 主题下条目/控件命令语义一致；
+主题热切换无需重启 app。
+
+**恢复点**：新 app 同时具备手写命令 / Clay / XAML 三种 producer。
+
+#### M7.5 删除旧 app 与工具链切换
+
+**做什么**
+
+1. 删除 `jpx/`、`jpx_xaml/` 执行层与附属组件、`demo_jpx.c`、`demo_xaml.c` 及对应 CMake target。
+2. 删除 `jpx.h` 的 6 个 `Jpx_Shell*` 转发与实现。
+3. 工具链切换：`start_vm_desktop.py` / `start_vm_renderer.py` 的默认应用改为
+   `vm_wms + vm_rdp + vm_app`（单进程 demo 只剩 `demo_wm`）。
 4. 文档与索引同步：`arch-vmdesk.md`、`docs/INDEX.md`、`test-timing.md`、`tools/INDEX.md`。
 5. 新工作流写入 `workflows/`。
 
-**前置**：`docs/task-shell-xaml-framework.md` 的 P1/P2（jp_xaml 后端接口 + Direct 后端）完成，
-否则 XAML 能力无法从旧 app 迁出。
+**验收**
 
-**验收**：`git grep -n "demo_jpx\|demo_xaml"` 无结果（历史文档除外）；19 个预编译主题在新 app 上可切换；
-e2e 全过；文档里的可执行体列表与 CMake target 一致。
+- `git grep -n "demo_jpx\|demo_xaml\|Jpx_Shell"` 无结果（历史 `docs/task-*` 除外）。
+- 构建目标只剩 `vm_wms` / `vm_rdp` / `vm_shell` / `vm_app` / `demo_wm` / `vm_renderer` 与测试。
+- 19 主题在新 app 与 shell 上均可切换。
+- `pwsh tools/e2e_wms.ps1` 全过。
 
-**恢复点**：旧 app 已删除，新 app 同时具备手写命令 / Clay / XAML 三种 producer。
+**恢复点**：旧 app 已删除，仓库只剩当前 infra；三种 producer 都在 `vm_app` 里。
 
 ## 9. 测试与验证
 
@@ -565,7 +626,7 @@ e2e 全过；文档里的可执行体列表与 CMake target 一致。
 | M4 rdp 拆分 | 已完成（2026-11-24） | 见 §13.5 |
 | M5 外壳独立 | 已完成（2026-11-24） | 5.1 迁进程（§13.7）、5.2 去 Clay / 5.3 模板抽函数（§13.8）；任务栏 XAML 化另见 `docs/task-shell-xaml-framework.md` |
 | M6 新架构 app | 已完成（2026-11-25） | A1–A4 见 `docs/task-vm-app.md` §9；e2e `app` 场景 8 条；旧 app 保持弃用状态 |
-| M7 工具包替换与删除旧 app | 未开始 | 依赖 `docs/task-shell-xaml-framework.md` P1/P2；删除 `jpx`/`demo_jpx`/`demo_xaml` |
+| M7 工具包替换与删除旧 app | 未开始 | M7.1 XAML 后端 → M7.2 shell 菜单/设置 → M7.3 Clay(A5) → M7.4 XAML(A6) → M7.5 删旧 app |
 
 ## 13. 执行记录
 

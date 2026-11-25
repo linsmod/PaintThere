@@ -353,14 +353,13 @@ add_executable(vm_shell
     vm_shell.c
     vm_template.c
     vm_menu_view.c
-    vm_display.c
-    vm_font.c
     vm_theme.c)
 target_include_directories(vm_shell PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/wms"
     "${MSTB_DIR}")
-target_link_libraries(vm_shell PRIVATE wms_client ${WMS_PLATFORM_LIBS})
+# 开始菜单用 XAML（Direct 后端）；jpx_xaml_direct 已带 vm_display / vm_font。
+target_link_libraries(vm_shell PRIVATE wms_client jpx_xaml_direct ${WMS_PLATFORM_LIBS})
 
 # 新架构应用（M6）：只依赖 VmCmdBuffer 与 wms 协议。
 # 不链 vm_wm / vm_server / vm_shell / Clay；A1 的界面是手写命令。

@@ -22,6 +22,9 @@
 #include "wms_client.h"
 #include "wms_ipc.h"
 
+#include "jpx_xaml.h"
+#include "jpx_xaml_backend_cmdbuf.h"
+
 #include "vm_display.h"
 #include "vm_font.h"
 #include "vm_menu_view.h"
@@ -69,6 +72,28 @@ static int          g_pendingMenuTarget, g_pendingMenuX, g_pendingMenuY;
 static int          g_pendingMenuAct, g_pendingMenuActTarget;
 static VmShellAction g_pendingShellAct;
 static int          g_hasPendingShellAct;
+
+/* 开始菜单：XAML（Direct 后端）描述的固定条目。 */
+static JpxXamlView *g_startView;
+static uint64_t     g_startWin;
+static uint32_t     g_startEpoch;
+static int32_t      g_startBodyW, g_startBodyH;
+static int          g_startOpen;
+static int          g_startDirty;
+static int          g_pendingOpenStart;
+static int          g_pendingCloseStart;
+static int          g_pendingOpenSettings;
+static VmDrawCommand g_startCmds[VM_DISPLAY_MAX_COMMANDS];
+
+static const char kStartXaml[] =
+    "<Window>"
+    "  <StackPanel Orientation='Vertical' Gap='2'>"
+    "    <Button Name='settings' Content='设置' Height='28' Click='OnItem' />"
+    "    <Button Name='showdesktop' Content='显示桌面' Height='28' Click='OnItem' />"
+    "    <Separator Height='6' />"
+    "    <Button Name='about' Content='关于 vm_shell' Height='28' Click='OnItem' />"
+    "  </StackPanel>"
+    "</Window>";
 
 enum {
     MENU_ACT_NONE = 0,
@@ -259,13 +284,112 @@ static int inside_menu(int x, int y) {
            y >= g_menu.y && y < g_menu.y + g_menu.h;
 }
 
+/* ---------------- 开始菜单（XAML Direct 后端） ---------------- */
+
+static void on_start_item(JpxXamlView *view, int nodeIndex, void *userData) {
+    const JpxXamlNode *n = JpxXamlView_Node(view, nodeIndex);
+    const char *name = n ? JpxXamlNode_Attr(n, "Name") : NULL;
+    (void)userData;
+    if (!name || !*name) return;
+
+    if (!strcmp(name, "settings")) {
+        g_pendingOpenSettings = 1;
+    } else if (!strcmp(name, "showdesktop")) {
+        int anyVisible = 0;
+        for (int i = 0; i < g_model.count; i++) {
+            const VmShellItem *it = &g_model.items[i];
+            if (it->undecorated || it->id == (int)g_taskbar) continue;
+            if (!it->minimized) anyVisible = 1;
+        }
+        memset(&g_pendingShellAct, 0, sizeof(g_pendingShellAct));
+        g_pendingShellAct.kind = VM_SHELL_ACTION_TOGGLE_DESKTOP;
+        g_pendingShellAct.minimizeAll = anyVisible;
+        g_hasPendingShellAct = 1;
+    } else {
+        SHELL_LOG("start item '%s'", name);
+    }
+    g_pendingCloseStart = 1;
+}
+
+static void push_start(void) {
+    VmCmdBuffer buf;
+    int accepted = 0, overflow = 0;
+    VmWmResult r;
+    if (!g_wms || !g_startView || !g_startWin || g_startEpoch == 0) return;
+    buf.commands = g_startCmds;
+    buf.cap = (int)(sizeof(g_startCmds) / sizeof(g_startCmds[0]));
+    buf.count = 0;
+    buf.rejected = 0;
+    JpxXaml_RenderDirect(g_startView, JpxXamlBackend_CmdBuf(), &buf,
+                         0, 0, g_startBodyW, g_startBodyH);
+    r = Wms_PushContent(g_wms, g_startWin, g_startEpoch, g_startCmds, (uint32_t)buf.count,
+                        (uint32_t)sizeof(VmDrawCommand), &accepted, &overflow);
+    SHELL_LOG("start push count=%d accepted=%d -> %s", buf.count, accepted, Wms_StrError(r));
+    if (r == VMWM_OK && accepted) g_startDirty = 0;
+}
+
+static void close_start(void) {
+    if (!g_startOpen && !g_startWin) return;
+    if (g_wms && g_startWin) Wms_CloseWindow(g_wms, g_startWin);
+    SHELL_LOG("start menu close");
+    g_startOpen = 0;
+    g_startWin = 0;
+    g_startEpoch = 0;
+    g_startDirty = 0;
+}
+
+static void open_start(void) {
+    char err[256];
+    const int w = 200, h = 132;
+    int y;
+    VmWmResult r;
+
+    if (!g_wms) return;
+    if (!g_startView) {
+        g_startView = JpxXamlView_Create(NULL, kStartXaml, NULL, err, sizeof(err));
+        if (!g_startView) {
+            SHELL_LOG("start menu parse failed: %s", err);
+            return;
+        }
+        JpxXamlView_On(g_startView, "OnItem", on_start_item, NULL);
+    }
+    if (g_startOpen) close_start();
+
+    y = g_screenH - VmShell_Height(g_shell) - h;
+    if (y < 0) y = 0;
+    g_startOpen = 1;
+    g_startWin = 0;
+    g_startEpoch = 0;
+    g_startDirty = 0;
+
+    r = Wms_CreateWindow(g_wms, 0, y, w, h,
+                         VMWM_WINFLAG_UNDECORATED | VMWM_WINFLAG_TOPMOST |
+                         VMWM_WINFLAG_PINNED | VMWM_WINFLAG_NOFOCUS,
+                         &g_startWin);
+    if (r != VMWM_OK) {
+        SHELL_LOG("start menu create failed (%s)", Wms_StrError(r));
+        g_startOpen = 0;
+        g_startWin = 0;
+        return;
+    }
+    Wms_SetTitle(g_wms, g_startWin, "StartMenu");
+    Wms_SetClassHint(g_wms, g_startWin, "VmShell.StartMenu");
+    Wms_MapWindow(g_wms, g_startWin);
+    SHELL_LOG("start menu open at (0,%d) size=%dx%d", y, w, h);
+}
+
+static int inside_start(int x, int y) {
+    return g_startOpen && g_startWin && x >= 0 && x < 200 &&
+           y >= (g_screenH - VmShell_Height(g_shell) - 132) &&
+           y < (g_screenH - VmShell_Height(g_shell));
+}
+
 /* ---------------- 动作执行 ---------------- */
 
 static void apply_action(const VmShellAction *a) {
     switch (a->kind) {
         case VM_SHELL_ACTION_START:
-            /* 开始菜单尚未迁入外壳进程（M7.2b）。 */
-            SHELL_LOG("start button (start menu not migrated yet)");
+            g_pendingOpenStart = 1;
             break;
         case VM_SHELL_ACTION_SETTINGS:
         case VM_SHELL_ACTION_CONTEXT_MENU:
@@ -330,6 +454,10 @@ static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
             }
             if (VmMenuView_SetHover(&g_menu, p->x, p->y)) g_menuDirty = 1;
         }
+        if (g_startOpen && p->down && !inside_start(p->x, p->y)) {
+            g_pendingCloseStart = 1;
+            break;
+        }
         g_model.pointerX = p->x;
         g_model.pointerY = p->y;
         g_model.pointerValid = 1;
@@ -348,6 +476,16 @@ static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
             g_pendingMenuAct = idx >= 0 ? g_menuAction[idx] : MENU_ACT_NONE;
             g_pendingMenuActTarget = g_menuTarget;
             g_pendingCloseMenu = 1;
+            g_dirty = 1;
+            break;
+        }
+        /* 开始菜单点击：交给 XAML Direct 交互层，动作在主循环执行。 */
+        if (g_startOpen && in->win_id == g_startWin) {
+            if (in->kind == 1 && in->is_down && g_startView) {
+                JpxXaml_DirectPointer(g_startView, in->x, in->y, 1);
+                JpxXaml_DirectPointer(g_startView, in->x, in->y, 0);
+                g_startDirty = 1;
+            }
             g_dirty = 1;
             break;
         }
@@ -374,6 +512,17 @@ static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
             g_menuBodyH = lr->height;
             g_menuDirty = 1;
             SHELL_LOG("menu layout epoch=%u body=%dx%d",
+                      (unsigned)lr->epoch, lr->width, lr->height);
+            break;
+        }
+        if (g_startOpen && g_startWin == 0 && lr->win_id != g_taskbar &&
+            lr->win_id != g_menuWin) {
+            g_startWin = lr->win_id;
+            g_startEpoch = lr->epoch;
+            g_startBodyW = lr->width;
+            g_startBodyH = lr->height;
+            g_startDirty = 1;
+            SHELL_LOG("start layout epoch=%u body=%dx%d",
                       (unsigned)lr->epoch, lr->width, lr->height);
             break;
         }
@@ -514,8 +663,21 @@ static void on_timer(uv_timer_t *t) {
         g_hasPendingShellAct = 0;
         apply_action(&g_pendingShellAct);
     }
+    if (g_pendingCloseStart) {
+        g_pendingCloseStart = 0;
+        close_start();
+    }
+    if (g_pendingOpenStart) {
+        g_pendingOpenStart = 0;
+        open_start();
+    }
+    if (g_pendingOpenSettings) {
+        g_pendingOpenSettings = 0;
+        SHELL_LOG("settings panel not migrated yet");
+    }
 
     if (g_menuDirty) push_menu();
+    if (g_startDirty) push_start();
     if (g_dirty) push_content();
 }
 

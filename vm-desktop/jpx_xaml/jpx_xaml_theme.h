@@ -5,7 +5,6 @@
 
 #include <stddef.h>
 
-#include "jpx.h"
 #include "vm_display.h"
 #include "vm_theme.h"
 
@@ -107,11 +106,6 @@ void JpxXamlTheme_DeriveTheme(const JpxXamlResourceTable *table, VmTheme *out);
    否则返回 fallback。v1 两者等价。 */
 const char *JpxXamlTheme_Resolve(const JpxXamlResourceTable *table,
                                  const char *expr, const char *fallback);
-
-/* 一步应用主题：派生 VmTheme → Jpx_SetVmTheme（WM/shell/控件）→
-   序列化资源包 → Jpx_ResPack_Register（下发 loadResPack(id)，client 自取）。
-   资源表必须由调用方长期持有（颜色指针借给 VmTheme/JpxTheme）。 */
-int JpxXamlTheme_Apply(JpxApp *app, const JpxXamlResourceTable *table);
 
 #ifdef __cplusplus
 }

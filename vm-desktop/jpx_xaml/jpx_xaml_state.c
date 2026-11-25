@@ -28,7 +28,7 @@ JpxXamlHandlerSlot *JpxXaml__FindHandler(JpxXamlView *view, const char *name) {
     return NULL;
 }
 
-JpxXamlView *JpxXamlView_Create(JpxApp *app, const char *xaml, void *model,
+JpxXamlView *JpxXamlView_Create(void *app, const char *xaml, void *model,
                                 char *err, size_t errCap) {
     if (err && errCap) err[0] = '\0';
     if (!xaml) return NULL;
@@ -53,7 +53,7 @@ void JpxXamlView_SetResources(JpxXamlView *view, const struct JpxXamlResourceTab
 }
 
 void *JpxXamlView_Model(JpxXamlView *view) { return view ? view->model : NULL; }
-JpxApp *JpxXamlView_App(JpxXamlView *view) { return view ? view->app : NULL; }
+
 
 static int blank_name(const char *name) {
     if (!name || !*name) return 1;

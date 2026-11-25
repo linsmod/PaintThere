@@ -655,7 +655,7 @@ Tab 顺序、caret、列表滚轮、按钮 hover/pressed、关闭按钮；e2e `a
 | M4 rdp 拆分 | 已完成（2026-11-24） | 见 §13.5 |
 | M5 外壳独立 | 已完成（2026-11-24） | 5.1 迁进程（§13.7）、5.2 去 Clay / 5.3 模板抽函数（§13.8）；任务栏 XAML 化另见 `docs/task-shell-xaml-framework.md` |
 | M6 新架构 app | 已完成（2026-11-25） | A1–A4 见 `docs/task-vm-app.md` §9；e2e `app` 场景 8 条；旧 app 保持弃用状态 |
-| M7 工具包替换与删除旧 app | 进行中 | M7.1 / M7.2 / M7.4 已完成（2026-11-25）；下一步 M7.3 Clay(A5) → M7.5 删旧 app |
+| M7 工具包替换与删除旧 app | 已完成（2026-11-25） | M7.1 XAML 后端、M7.2 shell 菜单/设置、M7.3 `vm_ui_core`+`vm_ui_clay`、M7.4 XAML 表单/主题、M7.5 删旧 app；见 §13.10 |
 
 ## 13. 执行记录
 
@@ -980,3 +980,39 @@ hover 需要指针位置，而 `EVT_INPUT` 只发给命中窗口的属主，鼠�
 - `Wms_PushContent` 在 app 侧同步等 ACK；`--slow-layout` 只卡本进程，wms 合成与其他 app 不受影响。
 
 **恢复点**：`vm_app.exe` 两实例在线，kill 隔离成立；旧 app 仍在（M7 删除）。
+
+### 13.10 M7.5 删除旧 app（2026-11-25）
+
+**删除**
+
+- `vm-desktop/jpx/`（9 个文件）：`jpx.h`、`jpx_app.c`、`jpx_window.c`、`jpx_widget.c`、
+  `jpx_theme.c`、`jpx_text_edit.c/.h`、`jpx_internal.h`、`jpx_clay_impl.c`。
+- `demo_jpx.c`、`demo_xaml.c` 与对应 CMake target。
+- `jpx_xaml/` 的旧执行层：`jpx_xaml_view.c`、`jpx_xaml_theme_apply.c`、
+  `jpx_shell_settings.c/.h`。
+- `jpx_xaml.h` / `jpx_xaml_internal.h` / `jpx_xaml_theme.h` 去掉 `jpx.h` 依赖；
+  `JpxXamlView_Create` 的 `app` 改成 `void *`，删除 `JpxXamlView_App` 与
+  `JpxXamlTheme_Apply` 声明。
+
+**保留并迁移**
+
+- `jpx_xaml/` 的 parser/state/Direct 渲染/交互/cmdbuf 后端/ResourceDictionary 主题
+  （含纯 CSS 解析 `jpx_html_theme.c`）。
+- `jpx_clay_impl.c` → `ui/clay/clay_impl.c`（供 `vm_ui_clay`）。
+- `test_text_edit.c` 改用 `ui/ui_text_edit.c`（`VmUiTextEdit_*`），66 项断言不变。
+
+**工具链**
+
+- `start_vm_desktop.py` / `start_vm_renderer.py` 默认从 `demo_jpx` 改为单进程 `demo_wm`；
+  `DEFAULT_PORTS` 只留 `demo_wm`。多进程桌面暂时用 e2e 或手动
+  `vm_wms + vm_rdp + vm_shell + vm_app`（一键启动器未做）。
+
+**验收**
+
+- 构建目标只剩 `demo_wm` / `vm_renderer` / `vm_wms` / `vm_rdp` / `vm_shell` / `vm_app`
+  与测试（`demo_jpx` / `demo_xaml` 已不存在）。
+- 9 个单测全过：`test_frame` 120、`test_menu` 30、`test_wms_ipc` 36、`test_wms_peer` 7、
+  `test_text_edit` 66、`test_jpx_xaml` 67、`test_jpx_xaml_theme` 137、`test_sys` 16、`test_ui` 26。
+- `pwsh tools/e2e_wms.ps1 -SkipBuild` → **61/61**。
+
+**恢复点**：仓库只剩当前 infra；旧 app 与 `Jpx_*` 执行层已删除。

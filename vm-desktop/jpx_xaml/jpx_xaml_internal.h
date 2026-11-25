@@ -5,7 +5,6 @@
 
 #include <stddef.h>
 
-#include "jpx.h"
 #include "jpx_xaml.h"
 
 #ifdef __cplusplus
@@ -85,7 +84,7 @@ typedef struct {
 } JpxXamlDirectState;
 
 struct JpxXamlView {
-    JpxApp *app;
+    void *app;
     void *model;
     JpxXamlDoc doc;
     JpxXamlBinding bindings[JPX_XAML_MAX_BINDINGS];

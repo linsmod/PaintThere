@@ -40,11 +40,12 @@ BUILD = VM_DIR / "build"
 ASSETS = ROOT / "assets"
 FONT_SOURCE = Path(r"H:\github_repos\mystbfont_c\fonts\NotoSans-Regular.ttf")
 
-APP_NAME = "demo_jpx"
-EXE = BUILD / "demo_jpx.exe"
+APP_NAME = "demo_wm"
+EXE = BUILD / "demo_wm.exe"
 
 # 内置 demo 的默认端口；不在表里的 exe 一律默认 9000。
-DEFAULT_PORTS = {"demo_wm": 9000, "demo_jpx": 9050, "demo_xaml": 9060}
+# 多进程桌面（vm_wms + vm_rdp + vm_shell + vm_app）暂用 e2e 或手动启动，见 docs/task-vm-app.md。
+DEFAULT_PORTS = {"demo_wm": 9000}
 
 REQUIRED_ASSETS = (
     "app.js",
@@ -160,7 +161,7 @@ def main():
         print(f"[start] {exc}", file=sys.stderr)
         return 1
     if app is None:
-        app = os.environ.get("VM_DESKTOP_APP", "demo_jpx")
+        app = os.environ.get("VM_DESKTOP_APP", "demo_wm")
     APP_NAME = app
     EXE = BUILD / f"{app}.exe"
     # demo 默认端口分开，可以同时开着对比；未知 exe 默认 9000。

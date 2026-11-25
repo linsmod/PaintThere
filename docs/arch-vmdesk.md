@@ -17,13 +17,14 @@
   - `vm_shell_local.c`：单进程适配：把 `VmWm` 填成 model、把 action 翻译回 `VmWm_*`（含右键菜单与显示桌面）。
   - `vm_menu.c/.h`：弹出菜单控件。
   - `vm_clipboard.c/.h`、`vm_fs*.c`、`vm_sys*.c`、`vm_ipc.h`：guest 内剪贴板、文件系统/系统能力抽象与进程间协议定义。
-  - `vm_server.c/.h`：C HTTP 服务：`GET /events`（SSE 帧与资源）、`POST /input`（原始输入）、静态资源白名单；`demo_jpx` 另注册 `/auto/<op>` 与 `/respack/<id>`。单进程模式（`demo_jpx` / `demo_wm` / `demo_xaml`）用它。
+  - `vm_server.c/.h`：C HTTP 服务：`GET /events`（SSE 帧与资源）、`POST /input`（原始输入）、静态资源白名单。单进程模式（`demo_wm`）用它。
   - `wms/`：WMS 进程化层（协议 v2）。`wms_ipc.h` 线路协议、`wms_client.c` 句柄式客户端 SDK、`wms_server.c` 窗口表/焦点/输入路由/连接生命周期、`vm_host.c` 本项目合成宿主（装饰 + 合成 + 瓦片 + 资源包）。产物 `vm_wms.exe`；`--mock` 挂占位宿主。
   - `rdp/`：呈现端服务器（产物 `vm_rdp.exe`）。libuv 实现 HTTP / SSE / WebSocket / 静态资源 / respack；帧来自 `EVT_FRAME` / `EVT_FULLFRAME`，输入走 `CMD_INPUT`。不合成、不持窗口表。
   - `shell/`：桌面外壳进程（产物 `vm_shell.exe`）。以 SHELL 角色连 wms：建任务栏窗口（flags 四件套）、推内容、把输入命中翻成 `Wms_*`；不链 `vm_wm` / Clay。
-  - `app/`：新架构应用（产物 `vm_app.exe`）。以 APP 角色连 wms，按 `EVT_LAYOUT_REQ` 产出 body 局部 `VmCmdBuffer` 并推送；不链 `vm_wm` / `vm_server` / Clay。旧 `demo_jpx` / `demo_xaml` 已标弃用，M7 删除。
-  - `demo_wm.c`、`demo_jpx.c`、`demo_xaml.c`：分别演示 WM/多客户端指针、JPX 桌面外壳、jp_xaml 表单与主题热切换。
-  - `jpx/`、`jpx_xaml/`：JPX 应用框架与声明式 UI 的解析、视图、主题预编译。
+  - `app/`：新架构应用（产物 `vm_app.exe`）。以 APP 角色连 wms，按 `EVT_LAYOUT_REQ` 产出 body 局部 `VmCmdBuffer` 并推送；`--ui hello|clay|xaml` 三种内容后端。旧 `demo_jpx` / `demo_xaml` 与其依赖的 `jpx/` 已删除（M7.5）。
+  - `demo_wm.c`：单进程 WM / 多客户端指针 demo（保留作单进程回归）。
+  - `jpx_xaml/`：声明式 UI 的 parser/state、Direct 渲染与交互、ResourceDictionary 主题预编译（`JpxApp`/`Jpx_*` 执行层已删除）。
+  - `ui/`：`vm_ui_core`（焦点/文本编辑/命中）+ `ui/clay/`（`vm_ui_clay` 控件层）。
   - `test_*.c`：纯逻辑断言测试，统一支持 `--probe`；命令与耗时见 `docs/test-timing.md`。
 - `assets/`：浏览器与 C 渲染器共享的前端资源。
   - `vm_renderer.js`：唯一渲染入口；连接 `/events`，管理瓦片画布与资源批次，上行 `POST /input`。
@@ -64,6 +65,7 @@
 - C 渲染器宿主没有 `fetch`，`loadResPack` 会被静默跳过；C 侧主题热切换当前不可用。
 - `assets/font.ttf` 当前为宋体子集，覆盖 XP 中文 UI 用字；替换字体需同时满足 stb 轮廓渲染与两端一致性。
 - 静态资源上限由 `vm_server.c` 决定（当前 16 MB），新增大资源需要核对。
-- 现行测试为 `vm-desktop/test_*.exe --probe` 纯逻辑断言；跨进程链路由 `tools/e2e_wms.ps1`（53 条）覆盖，浏览器视觉验证仍依赖 `agent-browser` 与截图，未形成像素回归。
-- 外壳进程只迁了任务栏：开始菜单、设置面板、任务栏右键菜单仍在单进程 `demo_jpx` 内，`vm_shell` 对这三类输入只记日志。
+- 现行测试为 `vm-desktop/test_*.exe --probe` 纯逻辑断言；跨进程链路由 `tools/e2e_wms.ps1`（61 条）覆盖，浏览器视觉验证仍依赖 `agent-browser` 与截图，未形成像素回归。
+- `vm_shell` 已提供任务栏、开始菜单、右键菜单、设置面板；设置面板不持久化，远程模式装饰按钮（×/□/—）无处理者（见 `issues/INDEX.md`）。
 - wmwms 不管理最大化状态，`VmShellItem.maximized` 在外壳进程里恒 0。
+- 多进程桌面没有一键启动器：`start_vm_desktop.py` 只拉单进程 `demo_wm`，多进程用 e2e 或手动 `vm_wms + vm_rdp + vm_shell + vm_app`。

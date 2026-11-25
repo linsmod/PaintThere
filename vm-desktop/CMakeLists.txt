@@ -46,87 +46,6 @@ if(WIN32)
     target_link_libraries(demo_wm PRIVATE ws2_32 crash_report)
 endif()
 
-# JPX 宿主示例：应用代码只 include jpx.h，Clay 实现单独放一个 TU。
-add_executable(demo_jpx
-    demo_jpx.c
-    jpx/jpx_clay_impl.c
-    jpx/jpx_app.c
-    jpx/jpx_window.c
-    jpx/jpx_theme.c
-    jpx/jpx_widget.c
-    jpx/jpx_text_edit.c
-    jpx_xaml/jpx_xaml_parser.c
-    jpx_xaml/jpx_xaml_state.c
-    jpx_xaml/jpx_xaml_view.c
-    jpx_xaml/jpx_xaml_theme.c
-    jpx_xaml/jpx_html_theme.c
-    jpx_xaml/jpx_xaml_theme_apply.c
-    jpx_xaml/jpx_shell_settings.c
-    clay_frame_adapter.c
-    vm_display.c
-    vm_serialize_json.c
-    vm_tiles.c
-    vm_wm.c
-    vm_server.c
-    vm_font.c
-    vm_theme.c
-    vm_shell.c
-    vm_shell_local.c
-    vm_template.c
-    vm_menu.c
-    vm_clipboard.c
-    vm_sys_win32.c
-    vm_sys_stub.c
-    vm_fs_win32.c
-    vm_fs_stub.c
-)
-target_include_directories(demo_jpx PRIVATE "${CLAY_DIR}" "${MSTB_DIR}"
-    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx"
-    "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml")
-if(WIN32)
-    target_link_libraries(demo_jpx PRIVATE ws2_32 psapi crash_report)
-endif()
-
-# jp_xaml 表单示例：应用源码只 include jpx.h 与 jpx_xaml.h。
-add_executable(demo_xaml
-    demo_xaml.c
-    jpx_xaml/jpx_xaml_parser.c
-    jpx_xaml/jpx_xaml_state.c
-    jpx_xaml/jpx_xaml_view.c
-    jpx_xaml/jpx_xaml_theme.c
-    jpx_xaml/jpx_html_theme.c
-    jpx_xaml/jpx_xaml_theme_apply.c
-    jpx/jpx_clay_impl.c
-    jpx/jpx_app.c
-    jpx/jpx_window.c
-    jpx/jpx_theme.c
-    jpx/jpx_widget.c
-    jpx/jpx_text_edit.c
-    clay_frame_adapter.c
-    vm_display.c
-    vm_serialize_json.c
-    vm_tiles.c
-    vm_wm.c
-    vm_server.c
-    vm_font.c
-    vm_theme.c
-    vm_shell.c
-    vm_shell_local.c
-    vm_template.c
-    vm_menu.c
-    vm_clipboard.c
-    vm_sys_win32.c
-    vm_sys_stub.c
-    vm_fs_win32.c
-    vm_fs_stub.c
-)
-target_include_directories(demo_xaml PRIVATE "${CLAY_DIR}" "${MSTB_DIR}"
-    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx"
-    "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml")
-if(WIN32)
-    target_link_libraries(demo_xaml PRIVATE ws2_32 psapi crash_report)
-endif()
-
 # 帧断言测试：不开服务、不开浏览器，直接断言度量/装饰/裁剪/脏标记/输入路由。
 add_executable(test_frame
     test_frame.c
@@ -162,8 +81,9 @@ target_include_directories(test_menu PRIVATE "${CLAY_DIR}" "${MSTB_DIR}" "${CMAK
 # 文本编辑状态机断言：纯逻辑，不链接 Clay / WM / 网络，毫秒级。
 add_executable(test_text_edit
     test_text_edit.c
-    jpx/jpx_text_edit.c
+    ui/ui_text_edit.c
 )
+target_include_directories(test_text_edit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/ui")
 
 # 平台能力抽象层断言：只验证内核事实（进程表、内存、CPU 差分、错误分类）。
 # 两个实现文件互斥：win32 用 #ifdef _WIN32，stub 用 #ifndef _WIN32。
@@ -208,7 +128,7 @@ target_include_directories(vm_ui_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ui")
 # Clay 后端的控件层（M7.3b）：布局交给 Clay，状态/焦点来自 vm_ui_core。
 add_library(vm_ui_clay STATIC
     ui/clay/ui_clay.c
-    jpx/jpx_clay_impl.c
+    ui/clay/clay_impl.c
     clay_frame_adapter.c)
 target_include_directories(vm_ui_clay PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -230,7 +150,7 @@ add_library(jpx_xaml_direct STATIC
     vm_theme.c)
 target_include_directories(jpx_xaml_direct PUBLIC
     "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml"
-    "${CMAKE_CURRENT_SOURCE_DIR}/jpx" "${MSTB_DIR}")
+    "${MSTB_DIR}")
 
 # jp_xaml 主题断言：ResourceDictionary 解析/查找/渐变/派生（不链接 Clay/WM/网络）。
 add_executable(test_jpx_xaml_theme
@@ -243,8 +163,7 @@ add_executable(test_jpx_xaml_theme
     vm_theme.c
 )
 target_include_directories(test_jpx_xaml_theme PRIVATE
-    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml"
-    "${CMAKE_CURRENT_SOURCE_DIR}/jpx")
+    "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}/jpx_xaml")
 
 # 文件抽象层断言：路径 UTF-8 往返、元数据、错误分类。与 test_sys 同理，两个实现互斥。
 add_executable(test_fs
@@ -404,7 +323,7 @@ target_include_directories(vm_app PRIVATE
 # 两个库都带 vm_display / vm_font，静态链接时链接器按需取一份。
 target_link_libraries(vm_app PRIVATE wms_client jpx_xaml_direct vm_ui_clay ${WMS_PLATFORM_LIBS})
 
-set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer vm_wms test_wms_app test_wms_shell test_wms_rdp vm_rdp vm_shell vm_app test_ui PROPERTIES
+set_target_properties(demo_wm vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer vm_wms test_wms_app test_wms_shell test_wms_rdp vm_rdp vm_shell vm_app test_ui PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"

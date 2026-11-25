@@ -1,15 +1,12 @@
 #ifndef JPX_XAML_H
 #define JPX_XAML_H
 
-/* DEPRECATED（2026-11-25）：old infra。parser/state 将被新 app 复用，
-   执行层（Jpx_* 回放）随旧 app 在 M7 删除；见 docs/task-vm-app.md A6。
-
-   jp_xaml：声明式 UI 层。应用只 include jpx.h 与 jpx_xaml.h，
-   不接触 Clay / VmDisplay / tiles / JSON / frameId。 */
+/* jp_xaml：声明式 UI 层的 parser/state（M7 之后只剩这一层）。
+   执行走 Direct 后端（jpx_xaml_render_direct.c）或旧回放已删除；
+   不依赖 jpx.h / Clay / VmWm。 */
 
 #include <stddef.h>
 
-#include "jpx.h"
 #include "vm_display.h"
 
 #ifdef __cplusplus
@@ -28,14 +25,13 @@ typedef enum {
 
 typedef void (*JpxXamlHandler)(JpxXamlView *view, int nodeIndex, void *userData);
 
-/* 解析 XAML 并建视图。model 为应用状态结构体基址；err 可 NULL。
+/* 解析 XAML 并建视图。app 只是宿主透传（可为 NULL）；model 为应用状态基址。
    失败返回 NULL，err 收到含行号的错误。 */
-JpxXamlView *JpxXamlView_Create(JpxApp *app, const char *xaml, void *model,
+JpxXamlView *JpxXamlView_Create(void *app, const char *xaml, void *model,
                                 char *err, size_t errCap);
 void JpxXamlView_Destroy(JpxXamlView *view);
 
 void *JpxXamlView_Model(JpxXamlView *view);
-JpxApp *JpxXamlView_App(JpxXamlView *view);
 
 /* 把 state 结构体里的字段登记为绑定目标。重复名字覆盖。
    offset 相对 model；cap 只在 JPX_XAML_BIND_TEXT 有意义。返回 0 表示槽满。 */

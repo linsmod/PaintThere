@@ -38,7 +38,7 @@ ASSETS = ROOT / "assets"
 EXE = VM_DIR / "build" / "vm_renderer.exe"
 PAGE = ASSETS / "vm_renderer.js"
 DLL_SRC = Path(r"E:\canvas-cpp\recovery\out\recovered\build-ant\antjsb.dll")
-SERVER_APP = "demo_jpx"
+SERVER_APP = "demo_wm"
 DEFAULT_PORT = 9050
 
 

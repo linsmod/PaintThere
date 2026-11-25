@@ -3,8 +3,7 @@
 
 日常用法：
     python tools/start_vm_desktop.py              # 多进程桌面：vm_wms + vm_shell + vm_app + vm_rdp
-    python tools/start_vm_desktop.py demo_wm      # 单进程 WM demo（9000）
-    python tools/start_vm_desktop.py vm_app ...   # 单独跑 build/<name>.exe
+    python tools/start_vm_desktop.py vm_app       # 单独跑 build/<name>.exe（需自行提供 wms 侧）
 
 多进程模式（默认）：按顺序拉起 vm_wms / vm_shell / vm_app / vm_rdp，共用一条本次运行
 独有的命名管道（`vmwm_ui_<pid>`）；Ctrl+C 或脚本退出时按逆序收掉全部子进程。
@@ -17,7 +16,7 @@
 源码改动后先运行 python tools/build_vm.py。
 
 可选环境变量（仅调试用）：
-    VM_DESKTOP_PORT        监听端口，默认 多进程=9050 / demo_wm=9000
+    VM_DESKTOP_PORT        监听端口，默认 9050
     VM_DESKTOP_NO_BROWSER  设为 1 时不自动打开浏览器
     VM_DESKTOP_APP         默认启动项，默认 multi
 """
@@ -41,7 +40,7 @@ APP_NAME = "multi"
 EXE = BUILD / "multi.exe"
 
 # 内置启动项的默认端口；不在表里的 exe 一律默认 9000。
-DEFAULT_PORTS = {"multi": 9050, "demo_wm": 9000}
+DEFAULT_PORTS = {"multi": 9050}
 
 # 多进程桌面的组成与启动顺序（rdp 最后，它连上就请求 fullframe）。
 MULTI_EXES = ("vm_wms", "vm_shell", "vm_app", "vm_rdp")

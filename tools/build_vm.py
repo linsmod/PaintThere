@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""一次构建两个 C 项目：桌面服务端 demo_wm.exe 与 C 渲染器 vm_renderer.exe。
+"""一次构建 vm-desktop 的全部 C 目标。
 
 一条命令：
     python tools/build_vm.py
 
 CMake 工程在 vm-desktop/，产物统一输出到 vm-desktop/build/：
-    vm-desktop/build/demo_wm.exe
+    vm-desktop/build/vm_wms.exe / vm_rdp.exe / vm_shell.exe / vm_app.exe
     vm-desktop/build/vm_renderer.exe
 
 流程：
   1. 检查工具链、canvas-cpp 产物与 Clay 头文件
   2. 同步 libcanvas.a / antjsb.dll 到 build 目录与 assets
-  3. cmake 配置 + 构建两个目标
+  3. cmake 配置 + 构建
 
 可选环境变量（仅调试用，日常无需设置）：
     CANVAS_BUILD_DIR   canvas-cpp 构建目录，默认 E:/canvas-cpp/recovery/out/recovered/build-ant
@@ -47,7 +47,8 @@ SRC_A = CANVAS_BUILD / "libcanvas.a"
 SRC_DLL = CANVAS_BUILD / "antjsb.dll"
 DST_A = BUILD / "canvas-cpp" / "libcanvas.a"
 DST_DLLS = (BUILD / "antjsb.dll", ASSETS / "antjsb.dll")
-EXES = (BUILD / "demo_wm.exe", BUILD / "vm_renderer.exe")
+EXES = (BUILD / "vm_wms.exe", BUILD / "vm_rdp.exe", BUILD / "vm_shell.exe",
+        BUILD / "vm_app.exe", BUILD / "vm_renderer.exe")
 
 
 def fail(msg):
@@ -125,7 +126,7 @@ def main():
     if r.returncode != 0:
         return fail(f"cmake 配置失败（{r.returncode}）")
 
-    print("[build] cmake 构建 demo_wm + vm_renderer ...")
+    print("[build] cmake 构建 vm-desktop ...")
     r = subprocess.run([str(CMAKE), "--build", str(BUILD), "-j4"], text=True)
     if r.returncode != 0:
         return fail(f"cmake 构建失败（{r.returncode}）")

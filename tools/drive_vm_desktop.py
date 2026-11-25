@@ -1,4 +1,4 @@
-"""用 HTTP /input 合成指针事件驱动 VM 桌面（demo_jpx / demo_wm），
+"""用 HTTP /input 合成指针事件驱动 VM 桌面（vm_rdp 呈现端），
 同时保持一条 SSE 连接累积帧流，供 inspect_vm_frame.py 回放。
 
 为什么不用浏览器点击：这里要的是「确定的逻辑坐标 + 精确时序」，
@@ -17,7 +17,7 @@
   alive         打印服务是否可达
 
 注意：POST /input 的 body 必须与请求头在同一次 send 里发出，
-服务端按单次 recv 取 body（见 vm_server.c 的 POST 分支）。
+服务端按单次 recv 取 body（见 rdp/rdp_server.c 的 POST 分支）。
 """
 import os
 import re

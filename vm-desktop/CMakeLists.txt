@@ -24,28 +24,6 @@ add_executable(crash_probe crash_probe.c)
 target_include_directories(crash_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(crash_probe PRIVATE crash_report)
 
-# 桌面服务端：窗口管理、remote tiles 切分与 SSE 服务，全部在 guest 侧。
-add_executable(demo_wm
-    demo_wm.c
-    clay_frame_adapter.c
-    vm_display.c
-    vm_serialize_json.c
-    vm_tiles.c
-    vm_wm.c
-    vm_server.c
-    vm_font.c
-    vm_theme.c
-    vm_shell.c
-    vm_shell_local.c
-    vm_template.c
-    vm_menu.c
-    vm_clipboard.c
-)
-target_include_directories(demo_wm PRIVATE "${CLAY_DIR}" "${MSTB_DIR}" "${CMAKE_CURRENT_SOURCE_DIR}")
-if(WIN32)
-    target_link_libraries(demo_wm PRIVATE ws2_32 crash_report)
-endif()
-
 # 帧断言测试：不开服务、不开浏览器，直接断言度量/装饰/裁剪/脏标记/输入路由。
 add_executable(test_frame
     test_frame.c
@@ -323,7 +301,7 @@ target_include_directories(vm_app PRIVATE
 # 两个库都带 vm_display / vm_font，静态链接时链接器按需取一份。
 target_link_libraries(vm_app PRIVATE wms_client jpx_xaml_direct vm_ui_clay ${WMS_PLATFORM_LIBS})
 
-set_target_properties(demo_wm vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer vm_wms test_wms_app test_wms_shell test_wms_rdp vm_rdp vm_shell vm_app test_ui PROPERTIES
+set_target_properties(vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer vm_wms test_wms_app test_wms_shell test_wms_rdp vm_rdp vm_shell vm_app test_ui PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"

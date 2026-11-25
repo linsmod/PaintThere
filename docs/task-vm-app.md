@@ -54,7 +54,7 @@ vm-desktop/app/
 ```
 
 CMake target `vm_app`：`app/main.c app/ui_hello.c vm_display.c vm_font.c` + `wms_client`；
-不链 `vm_wm` / `vm_server` / `vm_shell` / Clay。
+不链 `vm_wm` / `vm_shell` / Clay。
 
 ## 5. 步骤
 
@@ -166,7 +166,7 @@ e2e（A1–A3 稳定后加入）：`tools/e2e_wms.ps1` 新增 `app` 场景，断
 2. `app/ui_hello.c/.h`：9 条手写命令（bg / label / btn / btn_label / input / input_border /
    input_text / caret / hint），按钮 toggle，输入框尾部截断 + caret。
 3. CMake target `vm_app`：`app/main.c app/ui_hello.c vm_display.c vm_font.c` + `wms_client`；
-   不链 `vm_wm` / `vm_server` / `vm_shell` / Clay。
+   不链 `vm_wm` / `vm_shell` / Clay。
 
 **验收证据**
 

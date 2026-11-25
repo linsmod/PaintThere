@@ -17,7 +17,7 @@
 2. `taskkill /F /IM demo_jpx.exe` → 该应用窗口消失，任务栏与其他应用不受影响，浏览器连接不断。
 3. `taskkill /F /IM vm_rdp.exe` → 窗口状态与内容保留；重启 rdp 后浏览器重新拿到 fullframe 恢复画面，应用无需重推内容。
 4. 跨端协议（SSE / tiles / POST /input / respack）零改动，浏览器端代码不动。
-5. 单进程模式保留可用，`test_frame --probe` 等纯逻辑测试不依赖 IPC。
+5. `test_frame --probe` 等纯逻辑测试不依赖 IPC（单进程运行时已在 M7.6 移除，本地适配层只作测试夹具）。
 
 ## 2. 现状基线（2026-11-24 实测/核对）
 
@@ -581,14 +581,14 @@ Tab 顺序、caret、列表滚轮、按钮 hover/pressed、关闭按钮；e2e `a
 1. 删除 `jpx/`、`jpx_xaml/` 执行层与附属组件、`demo_jpx.c`、`demo_xaml.c` 及对应 CMake target。
 2. 删除 `jpx.h` 的 6 个 `Jpx_Shell*` 转发与实现。
 3. 工具链切换：`start_vm_desktop.py` / `start_vm_renderer.py` 的默认应用改为
-   `vm_wms + vm_rdp + vm_app`（单进程 demo 只剩 `demo_wm`）。
+   `vm_wms + vm_rdp + vm_app`（已无单进程桌面；`vm_shell_local.c` / `vm_menu.c` 仅作测试夹具）。
 4. 文档与索引同步：`arch-vmdesk.md`、`docs/INDEX.md`、`test-timing.md`、`tools/INDEX.md`。
 5. 新工作流写入 `workflows/`。
 
 **验收**
 
 - `git grep -n "demo_jpx\|demo_xaml\|Jpx_Shell"` 无结果（历史 `docs/task-*` 除外）。
-- 构建目标只剩 `vm_wms` / `vm_rdp` / `vm_shell` / `vm_app` / `demo_wm` / `vm_renderer` 与测试。
+- 构建目标只剩 `vm_wms` / `vm_rdp` / `vm_shell` / `vm_app` / `vm_renderer` 与测试（`demo_wm` 于 M7.6 删除）。
 - 19 主题在新 app 与 shell 上均可切换。
 - `pwsh tools/e2e_wms.ps1` 全过。
 
@@ -617,7 +617,7 @@ Tab 顺序、caret、列表滚轮、按钮 hover/pressed、关闭按钮；e2e `a
 | **wm_wms 崩溃 = 全丢** | 设计边界 | 元数据、渲染副本、合成状态一起没；rdp 只保留最后一帧 JSON（画面冻结）。不做自动恢复 |
 | **全帧 JSON 跨进程** | 已知 | 全帧约 48 KB，只在 fullframe 时发生；增量帧是变化块。若接近 1 MB 上限，wmwms 返回 `VMWM_ERR_LIMIT`，需要宿主自己切块 |
 | **输入两跳延迟** | 已知 | 浏览器 → rdp → wms → app，每跳单向无阻塞；实测目标 < 2 ms |
-| **`vm_wm.c` 的窗口管理逻辑变成死代码** | 待清理 | 远程模式下 `VmWm_Move/Focus/HandleInput` 不再被调用，只服务 `demo_wm` 本地模式。M7 评估是否删除 |
+| **`vm_wm.c` 的窗口管理逻辑只服务渲染副本与测试** | 已确认保留 | `VmWm` 仍是宿主 `vm_host.c` 的渲染副本（AddWindow/BuildFrame/HitTest/WindowBody）；`VmWm_HandleInput/Move` 只被 `test_frame` 等夹具调用。`demo_wm` 删除后不再有运行时单进程桌面 |
 | **旧 app 删除前 XAML 能力需先迁出** | 已知 | `jpx_xaml` 只有 parser/state 可复用，执行层（`Jpx_*`）不可复用；前置 `task-shell-xaml-framework.md` P1/P2 的 Direct 后端 |
 | **新旧 app 并存期** | 已知 | 两套 target 同时编，构建时间增加；不共享代码，避免为删除而改旧代码 |
 | **帧不分片** | 已知 | 单帧 JSON ≤ `VMWM_MAX_PAYLOAD - sizeof(VmWmEvtFrame)`；当前 800×600 远低于此 |
@@ -656,6 +656,7 @@ Tab 顺序、caret、列表滚轮、按钮 hover/pressed、关闭按钮；e2e `a
 | M5 外壳独立 | 已完成（2026-11-24） | 5.1 迁进程（§13.7）、5.2 去 Clay / 5.3 模板抽函数（§13.8）；任务栏 XAML 化另见 `docs/task-shell-xaml-framework.md` |
 | M6 新架构 app | 已完成（2026-11-25） | A1–A4 见 `docs/task-vm-app.md` §9；e2e `app` 场景 8 条；旧 app 保持弃用状态 |
 | M7 工具包替换与删除旧 app | 已完成（2026-11-25） | M7.1 XAML 后端、M7.2 shell 菜单/设置、M7.3 `vm_ui_core`+`vm_ui_clay`、M7.4 XAML 表单/主题、M7.5 删旧 app；见 §13.10 |
+| M7.6 删除单进程 demo | 已完成（2026-11-25） | 删 `demo_wm` / `demo_server` / `demo_frame` / `demo_layout` / `vm_server`；本地适配层仅作测试夹具；见 §13.12 |
 
 ## 13. 执行记录
 
@@ -1037,3 +1038,32 @@ hover 需要指针位置，而 `EVT_INPUT` 只发给命中窗口的属主，鼠�
 - 验证：一条命令起四进程，HTTP 200；强杀启动器后重跑会输出 4 条「停止旧的多进程实例」并起新一组。
 
 **恢复点**：一条命令可起完整桌面；窗口装饰按钮在 wms 路径可用。
+
+### 13.12 删除单进程 demo（2026-11-25）
+
+**删除**
+
+- `demo_wm.c`（单进程桌面）、`demo_server.c` / `demo_frame.c` / `demo_layout.c/.h`
+  （未进构建的早期 demo）。
+- `vm_server.c/.h`（单进程 HTTP/SSE，唯一使用者是 demo_wm / demo_server；`rdp/` 早已接替）。
+- CMake target `demo_wm` 与 `set_target_properties` 条目。
+
+**保留作测试夹具**
+
+- `vm_shell_local.c`、`vm_menu.c`、`vm_clipboard.c`：`test_frame` / `test_menu` 仍用它们
+  断言本地适配、弹出菜单与剪贴板；运行时不再有单进程桌面。
+
+**工具链**
+
+- `build_vm.py` 的产物检查改为 `vm_wms` / `vm_rdp` / `vm_shell` / `vm_app` / `vm_renderer`。
+- `start_vm_desktop.py` / `start_vm_renderer.py` 只保留 `multi` 默认；`DEFAULT_PORTS` 仅 `multi`。
+- `drive_vm_desktop.py` / `inspect_vm_frame.py` 的注释从 `vm_server.c` 改指 `rdp/rdp_server.c`。
+
+**验收**
+
+- 构建通过；构建目标只剩 `vm_wms` / `vm_rdp` / `vm_shell` / `vm_app` / `vm_renderer` / `crash_probe` 与测试。
+- 9 个单测全过（断言数不变：120/30/36/7/66/67/137/16/26）。
+- `pwsh tools/e2e_wms.ps1 -SkipBuild` → **61/61**。
+- `python tools/start_vm_desktop.py --no-browser` 起四进程，HTTP 200。
+
+**恢复点**：仓库只剩当前 infra；不再有单进程桌面可执行体。

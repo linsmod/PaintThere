@@ -6,7 +6,7 @@
 
 默认服务端为 `multi`（vm_wms + vm_shell + vm_app + vm_rdp，端口 9050）；
 vm_renderer.exe 连到 vm_rdp 的 /events。单个 exe 也可以显式指定
-（VM_RENDERER_APP=demo_wm）。
+（VM_RENDERER_APP=<exe 名>，该 exe 需自带 SSE 服务端）。
 
 两个可执行文件由统一工程一次构建，产物都在 vm-desktop/build/；
 本脚本和 start_vm_desktop.py 只检查产物并启动，不再各自构建。
@@ -15,7 +15,7 @@ vm_renderer.exe 连到 vm_rdp 的 /events。单个 exe 也可以显式指定
 Ctrl+C 会停掉服务端（多进程时按 `vmwm_ui_` 管道名收掉整组）和渲染器。
 
 可选环境变量（调试用）：
-    VM_RENDERER_APP      服务端，默认 multi（可设 demo_wm）
+    VM_RENDERER_APP      服务端，默认 multi（或 build 下的单 exe 名）
     VM_DESKTOP_PORT      监听端口，默认 9050
     VM_RENDERER_FRAMES   >0 时渲染指定帧数后自动退出，默认 0（一直运行）
     VM_RENDERER_STATE    设 1 打开 C 渲染器 [STATE] 探针，默认关闭

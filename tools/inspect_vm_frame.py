@@ -29,7 +29,7 @@ for line in raw.splitlines():
     elif line.startswith("data:"):
         data_lines.append(line[5:].strip())
     elif line == "":
-        # 增量帧没有 event: 头，只有 data:（见 vm_server.c 的 vm_push_frames）
+        # 增量帧没有 event: 头，只有 data:（见 rdp/rdp_server.c 的推送）
         if data_lines:
             payload = "\n".join(data_lines)
             try:

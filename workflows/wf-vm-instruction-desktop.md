@@ -1,5 +1,10 @@
 # 工作流：VM 指令化桌面端到端开发
 
+> **历史工作流（2026-11-25 更新）**：`demo_wm` / `demo_server` / `demo_frame` /
+> `vm_server.c` 已删除，单进程桌面不再存在。当前四进程链路（`vm_wms` + `vm_rdp` +
+> `vm_shell` + `vm_app`）的构建、启动、验证见 `wf-vm-wms-process-migration.md`。
+> 本文保留单进程时代的 tiles / 帧 / 排错经验，作为协议层参考。
+
 ## 适用场景
 
 在 guest 侧用 Clay 做布局、跨端只传绘制原语与原始输入、浏览器渲染的桌面/WM 场景中，做构建、启动、验证与排错。适用于修改 `vm-desktop/*.c`、`assets/app.js` / `assets/vm_renderer.js`、协议设计文档后。

@@ -26,7 +26,7 @@ extern "C" {
 
 /* 窗口内容布局：往 out 追加绘制命令（坐标已是画布坐标）。
    Clay / XAML / 手算布局都实现这个签名；WM 不认识任何 UI 库，
-   Clay 只是 producer 侧的一个适配器（见 jpx 与 demo_layout）。 */
+   Clay 只是 producer 侧的一个适配器（见 vm_ui_clay 与 vm_app）。 */
 typedef void (*VmWindowLayout)(VmCmdBuffer *out, int x, int y, int w, int h,
                                void *userData);
 /* 手绘窗口内容：直接往 out 追加绘制命令（坐标已是画布坐标）。

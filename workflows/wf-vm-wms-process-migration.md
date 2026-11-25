@@ -1,7 +1,7 @@
 # WMS 进程化迁移：构建、验证与排错
 
 适用：`vm_wms + vm_rdp + vm_shell + vm_app` 四进程链路的开发与回归（M0–M7 的产物）。
-单人开发默认窗口、单进程 `demo_wm` 仍可用于最小复现。
+单进程桌面已移除；需要最小复现时用 `test_frame` / `test_menu` 或 `vm_renderer`。
 
 ## 1. 环境与构建
 
@@ -15,13 +15,21 @@ C:\msys64\mingw64\bin\cmake.exe --build vm-desktop/build -j 8
   `Permission denied` 或静默保留旧文件。停止命令：
 
 ```powershell
-Get-Process vm_wms,vm_rdp,vm_shell,vm_app,demo_wm -ErrorAction SilentlyContinue | Stop-Process -Force
+Get-Process vm_wms,vm_rdp,vm_shell,vm_app -ErrorAction SilentlyContinue | Stop-Process -Force
 ```
 
 - 只用 `-j 8` 全量构建；单 target 构建（`--target vm_wms`）适合看链接错误，但别用它当验收。
 
 ## 2. 四进程启动模板
 
+一键启动（默认多进程，Ctrl+C 收全部）：
+
+```powershell
+python tools/start_vm_desktop.py            # 端口 9050，日志 temp/desktop-<name>.err.txt
+python tools/start_vm_renderer.py           # 同一套 + C 渲染器
+```
+
+需要精确控制（多套并行、指定管道/坐标/参数）时用下面的手工模板。
 每套实验用**独立管道名**与**独立端口**，可与正在运行的实例并存：
 
 ```powershell
@@ -153,7 +161,7 @@ vm-desktop/
   app/          宿主（main.c）· ui_hello.c · ui_xaml.c · ui_clay_demo.c
   ui/           vm_ui_core（焦点/编辑/命中）· ui/clay（vm_ui_clay）
   jpx_xaml/     parser/state · Direct 渲染/交互 · ResourceDictionary 主题
-  vm_wm.c       只服务单进程 demo_wm；窗口内容契约是 VmCmdBuffer
+  vm_wm.c       宿主渲染副本 + test_frame/test_menu 夹具；窗口内容契约是 VmCmdBuffer
   vm_shell.c    任务栏纯绘制层（单进程适配在 vm_shell_local.c）
 ```
 

@@ -46,7 +46,7 @@
 - `vm-desktop/vm_tiles.c/.h` — Remote tiles 切分：`VmWm_BuildFrame` 的全局坐标帧 → tile 局部命令，命令签名差异只发变化的块；`VmTileGrid_Init` 配置网格。构建 `demo_wm` 时必须链接 `vm_tiles.c`。
 - `vm-desktop/vm_server.c/.h` — C 跨平台 HTTP 服务：`GET /events` SSE 推帧、`POST /input` 收原始输入、白名单静态资源。单进程模式（`demo_jpx` / `demo_wm`）仍用它；拆进程后由 `rdp/` 接替。
 - `vm-desktop/rdp/` — 呈现端服务器 `vm_rdp.exe`：libuv 实现的 HTTP / SSE / WebSocket / 静态资源 / respack。帧与资源全部来自 `vm_wms` 的事件，自己不合成；不链 `vm_wm` / Clay。`--port`（默认 9000）、`--pipe`、`--web-root`、`--font`。
-- `vm-desktop/shell/` — 桌面外壳进程 `vm_shell.exe`：`--pipe`、`--font`。以 SHELL 角色连 `vm_wms`，建任务栏窗口并推内容，输入命中转成 `Wms_*`。不链 `vm_wm` / Clay。开始菜单/设置面板/右键菜单尚未迁入。
+- `vm-desktop/shell/` — 桌面外壳进程 `vm_shell.exe`：`--pipe`、`--font`。以 SHELL 角色连 `vm_wms`，提供任务栏、开始菜单（XAML）、右键菜单（`vm_menu_view`）、设置面板（XAML，无装饰窗口）。不链 `vm_wm` / Clay；链接 `jpx_xaml_direct`。
 - `vm-desktop/app/` — 新架构应用 `vm_app.exe`（M6）：`--pipe`、`--title`、`--x`、`--y`、`--font`、`--slow-layout <ms>`、`--resize-after <ms> <w> <h>`。以 APP 角色连 `vm_wms`，只回 body 局部 `VmCmdBuffer`；A1 界面是手写命令（`ui_hello.c`），不链 Clay。
 - `vm-desktop/vm_shell.c/.h` — 任务栏纯绘制层：`VmShellModel`（条目快照 + 指针）→ `VmCmdBuffer` 或 `VmShellAction`；`vm_shell_local.c` 是单进程适配（`VmWm` → model，action → `VmWm_*`）。
 - `vm-desktop/wms/` — WMS 协议层与服务：`wms_ipc.h`（v2 线路协议）、`wms_client.c`（句柄式 SDK）、`wms_server.c`（窗口表/焦点/输入路由）、`vm_host.c`（本项目合成宿主，10 个回调）。

@@ -12,6 +12,7 @@
  * 线程模型：与 vm_rdp 相同。WmsClient 自带 loop，主循环里用
  * Wms_PollEvents(c, 0) 轮询；16 ms timer 保证空闲时也会醒来。
  */
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -83,6 +84,7 @@ static int          g_startDirty;
 static int          g_pendingOpenStart;
 static int          g_pendingCloseStart;
 static int          g_pendingOpenSettings;
+static int          g_pendingCloseSettings;
 static VmDrawCommand g_startCmds[VM_DISPLAY_MAX_COMMANDS];
 
 static const char kStartXaml[] =
@@ -92,6 +94,34 @@ static const char kStartXaml[] =
     "    <Button Name='showdesktop' Content='显示桌面' Height='28' Click='OnItem' />"
     "    <Separator Height='6' />"
     "    <Button Name='about' Content='关于 vm_shell' Height='28' Click='OnItem' />"
+    "  </StackPanel>"
+    "</Window>";
+
+/* 设置面板：普通装饰窗口 + XAML 表单。 */
+typedef struct {
+    unsigned char showClock, showTray;
+} SettingsModel;
+
+static JpxXamlView *g_settingsView;
+static uint64_t     g_settingsWin;
+static uint32_t     g_settingsEpoch;
+static int32_t      g_settingsBodyW, g_settingsBodyH;
+static int          g_settingsOpen;
+static int          g_settingsDirty;
+static SettingsModel g_settingsModel;
+static VmDrawCommand g_settingsCmds[VM_DISPLAY_MAX_COMMANDS];
+
+/* 无装饰窗口：wms 的装饰按钮在远程模式下还没有处理者（见 issues），
+   所以设置面板自带标题与关闭按钮，避免点了 × 没反应。 */
+static const char kSettingsXaml[] =
+    "<Window>"
+    "  <StackPanel Orientation='Vertical' Gap='8'>"
+    "    <TextBlock Text='外壳设置' Height='20' />"
+    "    <CheckBox Name='clock' Content='显示时钟' Height='24'"
+    "              IsChecked='{Binding showClock}' Click='OnToggle' />"
+    "    <CheckBox Name='tray' Content='显示托盘图标' Height='24'"
+    "              IsChecked='{Binding showTray}' Click='OnToggle' />"
+    "    <Button Name='close' Content='关闭' Height='26' Width='80' Click='OnClose' />"
     "  </StackPanel>"
     "</Window>";
 
@@ -384,6 +414,104 @@ static int inside_start(int x, int y) {
            y < (g_screenH - VmShell_Height(g_shell));
 }
 
+/* ---------------- 设置面板 ---------------- */
+
+static void on_settings_toggle(JpxXamlView *view, int nodeIndex, void *userData) {
+    const JpxXamlNode *n = JpxXamlView_Node(view, nodeIndex);
+    (void)userData;
+    /* 复选框已经把值写回 model；这里应用到任务栏并重推。 */
+    VmShell_SetShowClock(g_shell, g_settingsModel.showClock ? 1 : 0);
+    VmShell_SetShowTrayIcon(g_shell, g_settingsModel.showTray ? 1 : 0);
+    g_dirty = 1;
+    SHELL_LOG("settings toggle name='%s' clock=%d tray=%d",
+              n ? JpxXamlNode_Attr(n, "Name") : "?",
+              g_settingsModel.showClock, g_settingsModel.showTray);
+}
+
+static void close_settings(void) {
+    if (!g_settingsOpen && !g_settingsWin) return;
+    if (g_wms && g_settingsWin) Wms_CloseWindow(g_wms, g_settingsWin);
+    SHELL_LOG("settings close");
+    g_settingsOpen = 0;
+    g_settingsWin = 0;
+    g_settingsEpoch = 0;
+    g_settingsDirty = 0;
+}
+
+static void on_settings_close(JpxXamlView *view, int nodeIndex, void *userData) {
+    (void)view;
+    (void)nodeIndex;
+    (void)userData;
+    g_pendingCloseSettings = 1;
+}
+
+static void push_settings(void) {
+    VmCmdBuffer buf;
+    int accepted = 0, overflow = 0;
+    VmWmResult r;
+    if (!g_wms || !g_settingsView || !g_settingsWin || g_settingsEpoch == 0) return;
+    buf.commands = g_settingsCmds;
+    buf.cap = (int)(sizeof(g_settingsCmds) / sizeof(g_settingsCmds[0]));
+    buf.count = 0;
+    buf.rejected = 0;
+    JpxXaml_RenderDirect(g_settingsView, JpxXamlBackend_CmdBuf(), &buf,
+                         0, 0, g_settingsBodyW, g_settingsBodyH);
+    r = Wms_PushContent(g_wms, g_settingsWin, g_settingsEpoch, g_settingsCmds,
+                        (uint32_t)buf.count, (uint32_t)sizeof(VmDrawCommand),
+                        &accepted, &overflow);
+    SHELL_LOG("settings push count=%d accepted=%d -> %s",
+              buf.count, accepted, Wms_StrError(r));
+    if (r == VMWM_OK && accepted) g_settingsDirty = 0;
+}
+
+static void open_settings(void) {
+    char err[256];
+    VmWmResult r;
+    if (!g_wms) return;
+
+    if (!g_settingsView) {
+        g_settingsView = JpxXamlView_Create(NULL, kSettingsXaml, &g_settingsModel,
+                                            err, sizeof(err));
+        if (!g_settingsView) {
+            SHELL_LOG("settings parse failed: %s", err);
+            return;
+        }
+        JpxXamlView_Bind(g_settingsView, "showClock", JPX_XAML_BIND_BOOL,
+                         offsetof(SettingsModel, showClock), 1);
+        JpxXamlView_Bind(g_settingsView, "showTray", JPX_XAML_BIND_BOOL,
+                         offsetof(SettingsModel, showTray), 1);
+        JpxXamlView_On(g_settingsView, "OnToggle", on_settings_toggle, NULL);
+        JpxXamlView_On(g_settingsView, "OnClose", on_settings_close, NULL);
+    }
+
+    g_settingsModel.showClock = (unsigned char)VmShell_ShowClock(g_shell);
+    g_settingsModel.showTray = (unsigned char)VmShell_ShowTrayIcon(g_shell);
+
+    if (g_settingsOpen && g_settingsWin) {
+        Wms_StackWindow(g_wms, g_settingsWin, VMWM_STACK_TOP);
+        Wms_SetFocus(g_wms, g_settingsWin);
+        return;
+    }
+
+    g_settingsOpen = 1;
+    g_settingsWin = 0;
+    g_settingsEpoch = 0;
+    g_settingsDirty = 0;
+    r = Wms_CreateWindow(g_wms, 240, 150, 280, 180,
+                         VMWM_WINFLAG_UNDECORATED | VMWM_WINFLAG_TOPMOST,
+                         &g_settingsWin);
+    if (r != VMWM_OK) {
+        SHELL_LOG("settings create failed (%s)", Wms_StrError(r));
+        g_settingsOpen = 0;
+        g_settingsWin = 0;
+        return;
+    }
+    Wms_SetTitle(g_wms, g_settingsWin, "外壳设置");
+    Wms_SetClassHint(g_wms, g_settingsWin, "VmShell.Settings");
+    Wms_MapWindow(g_wms, g_settingsWin);
+    SHELL_LOG("settings open");
+}
+
 /* ---------------- 动作执行 ---------------- */
 
 static void apply_action(const VmShellAction *a) {
@@ -435,8 +563,19 @@ static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
     (void)user;
 
     switch (e->evt) {
+    case EVT_WINDOW_CLOSE: {
+        const VmWmWindowInfo *info = Wms_AsWindowInfo(e);
+        if (g_settingsOpen && info && info->win_id == g_settingsWin) {
+            SHELL_LOG("settings closed");
+            g_settingsOpen = 0;
+            g_settingsWin = 0;
+            g_settingsEpoch = 0;
+            g_settingsDirty = 0;
+        }
+        g_resync = 1;
+        break;
+    }
     case EVT_WINDOW_NEW:
-    case EVT_WINDOW_CLOSE:
     case EVT_WINDOW_CONFIGURE:
     case EVT_FOCUS_CHANGE:
     case EVT_TITLE_CHANGE:
@@ -469,7 +608,16 @@ static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
     case EVT_INPUT: {
         const VmWmReqInput *in = Wms_AsInput(e);
         VmShellAction a;
-        if (!in || in->kind != 1 || !in->is_down) break;
+        if (!in) break;
+        /* 设置窗口：down/up 都交给 XAML Direct 交互层（click 在 up 时成立）。 */
+        if (g_settingsOpen && in->win_id == g_settingsWin) {
+            if (g_settingsView && (in->kind == 1 || in->kind == 2))
+                JpxXaml_DirectPointer(g_settingsView, in->x, in->y, in->kind == 1);
+            g_settingsDirty = 1;
+            g_dirty = 1;
+            break;
+        }
+        if (in->kind != 1 || !in->is_down) break;
         /* 菜单点击优先：body 局部 → 画布坐标再命中；执行放主循环。 */
         if (g_menuOpen && in->win_id == g_menuWin) {
             int idx = VmMenuView_Hit(&g_menu, g_menu.x + in->x, g_menu.y + in->y);
@@ -512,6 +660,17 @@ static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
             g_menuBodyH = lr->height;
             g_menuDirty = 1;
             SHELL_LOG("menu layout epoch=%u body=%dx%d",
+                      (unsigned)lr->epoch, lr->width, lr->height);
+            break;
+        }
+        if (g_settingsOpen && g_settingsWin == 0 && lr->win_id != g_taskbar &&
+            lr->win_id != g_menuWin && lr->win_id != g_startWin) {
+            g_settingsWin = lr->win_id;
+            g_settingsEpoch = lr->epoch;
+            g_settingsBodyW = lr->width;
+            g_settingsBodyH = lr->height;
+            g_settingsDirty = 1;
+            SHELL_LOG("settings layout epoch=%u body=%dx%d",
                       (unsigned)lr->epoch, lr->width, lr->height);
             break;
         }
@@ -671,13 +830,18 @@ static void on_timer(uv_timer_t *t) {
         g_pendingOpenStart = 0;
         open_start();
     }
+    if (g_pendingCloseSettings) {
+        g_pendingCloseSettings = 0;
+        close_settings();
+    }
     if (g_pendingOpenSettings) {
         g_pendingOpenSettings = 0;
-        SHELL_LOG("settings panel not migrated yet");
+        open_settings();
     }
 
     if (g_menuDirty) push_menu();
     if (g_startDirty) push_start();
+    if (g_settingsDirty) push_settings();
     if (g_dirty) push_content();
 }
 

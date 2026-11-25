@@ -155,6 +155,13 @@ static uint64_t host_hit_test(void *user, int32_t x, int32_t y) {
     return vw ? (uint64_t)vw->id : 0;
 }
 
+static int host_hit_test_decor(void *user, uint64_t win_id, int32_t x, int32_t y) {
+    VmHost *h = (VmHost *)user;
+    if (!h) return 0;
+    VmWindow *vw = VmWm_FindWindow(h->wm, (int)win_id);
+    return VmWm_WindowDecorHit(h->wm, vw, x, y);
+}
+
 static void host_on_tick(void *user, uint32_t frame_id) {
     VmHost *h = (VmHost *)user;
     if (!h) return;
@@ -229,6 +236,7 @@ VmHost *VmHost_Create(int width, int height, int tileW, int tileH) {
     h->cb.on_window_removed = host_on_window_removed;
     h->cb.body_rect = host_body_rect;
     h->cb.hit_test = host_hit_test;
+    h->cb.hit_test_decor = host_hit_test_decor;
     h->cb.on_tick = host_on_tick;
     h->cb.on_frame_request = host_on_frame_request;
     h->cb.on_respack_request = host_on_respack_request;

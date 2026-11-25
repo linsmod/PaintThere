@@ -1016,3 +1016,24 @@ hover 需要指针位置，而 `EVT_INPUT` 只发给命中窗口的属主，鼠�
 - `pwsh tools/e2e_wms.ps1 -SkipBuild` → **61/61**。
 
 **恢复点**：仓库只剩当前 infra；旧 app 与 `Jpx_*` 执行层已删除。
+
+### 13.11 装饰按钮与多进程启动器（2026-11-25）
+
+**装饰按钮**
+
+- `wms_host.h` 加 `hit_test_decor`：宿主返回 0/1/2/3（无/关闭/最大化/最小化）。
+- `vm_wm.h/.c` 加 `VmWm_WindowDecorHit`，与 `VmWm_HandleInput` 共用 `chrome_button_rects` 几何。
+- `wms_server.c: route_input` 在焦点与转发之前消费：关闭走 `VmWm_ServerRemoveWindow`，
+  最小化走 `VmWm_MapWindow(win, 0)`，最大化无状态仅消费（避免落到 body 当普通按下）。
+- 验证：点 × → `decor close win=2` + 应用 `close -> exit` + 任务栏条目消失；
+  点 — → `decor minimize win=3` + 窗口内容消失且条目保留；点条目 → `activate win=3 restore=1` 内容恢复。
+
+**多进程启动器**
+
+- `start_vm_desktop.py` 默认 `multi`：顺序拉起 `vm_wms` / `vm_shell` / `vm_app` / `vm_rdp`，
+  共用 `\\.\pipe\vmwm_ui_<pid>`，日志写 `temp/desktop-<name>.err.txt`；
+  Ctrl+C 或脚本退出按逆序收掉；重跑先用命令行匹配 `vmwm_ui_` 清理上一组。
+- `start_vm_renderer.py` 默认同样用 `multi`，`stop_all` 按管道名收组。
+- 验证：一条命令起四进程，HTTP 200；强杀启动器后重跑会输出 4 条「停止旧的多进程实例」并起新一组。
+
+**恢复点**：一条命令可起完整桌面；窗口装饰按钮在 wms 路径可用。

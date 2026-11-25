@@ -1,28 +1,25 @@
 #!/usr/bin/env python3
-"""零参数启动 vm-desktop 的桌面 demo。
+"""启动 vm-desktop 桌面。
 
 日常用法：
-    python tools/start_vm_desktop.py             # 默认 demo_jpx（JPX 应用外壳）
-    python tools/start_vm_desktop.py demo_wm     # WM 双窗口 demo
-    python tools/start_vm_desktop.py demo_xaml --port 9061 --theme "<theme.xaml>" --font <font.ttf>
+    python tools/start_vm_desktop.py              # 多进程桌面：vm_wms + vm_shell + vm_app + vm_rdp
+    python tools/start_vm_desktop.py demo_wm      # 单进程 WM demo（9000）
+    python tools/start_vm_desktop.py vm_app ...   # 单独跑 build/<name>.exe
 
-第一个位置参数选择程序：内置 demo_wm / demo_jpx / demo_xaml 有默认端口映射；
-其他值按 build/<名字>.exe 的构建产物运行（默认端口 9000，建议显式 --port）。
+多进程模式（默认）：按顺序拉起 vm_wms / vm_shell / vm_app / vm_rdp，共用一条本次运行
+独有的命名管道（`vmwm_ui_<pid>`）；Ctrl+C 或脚本退出时按逆序收掉全部子进程。
+四个进程的日志分别写到 temp/desktop-<name>.err.txt。
+
 `--port N` 指定端口（优先于 VM_DESKTOP_PORT）；`--no-browser` 不自动开浏览器；
-其余参数原样透传给 exe（如 demo_xaml 的 --theme / --font）。
+多进程模式只认 `--font <ttf>`，其余参数忽略；单进程模式原样透传给 exe。
 
-脚本自行定位仓库根、共享资源和 exe，显式传入 webRoot 绝对路径，
-因此从任何目录调用都不依赖工作目录或 exe 的默认参数。
-构建由 tools/build_vm.py 统一完成；本脚本只检查产物并按端口停掉旧实例，
+脚本自行定位仓库根、共享资源与 exe；构建由 tools/build_vm.py 统一完成，
 源码改动后先运行 python tools/build_vm.py。
 
-脚本在前台保持运行（exe 由 Popen 拉起），按 Ctrl+C 会同时停止它；
-需要终端继续干活就另开一个窗口，不要再靠关终端来结束 demo。
-
-可选环境变量（仅调试用，日常无需设置）：
-    VM_DESKTOP_PORT        监听端口，默认 demo_wm=9000 / demo_jpx=9050 / demo_xaml=9060
+可选环境变量（仅调试用）：
+    VM_DESKTOP_PORT        监听端口，默认 多进程=9050 / demo_wm=9000
     VM_DESKTOP_NO_BROWSER  设为 1 时不自动打开浏览器
-    VM_DESKTOP_APP         默认启动的程序，默认 demo_jpx（demo_wm / demo_jpx / demo_xaml），命令行参数优先
+    VM_DESKTOP_APP         默认启动项，默认 multi
 """
 
 import os
@@ -40,12 +37,14 @@ BUILD = VM_DIR / "build"
 ASSETS = ROOT / "assets"
 FONT_SOURCE = Path(r"H:\github_repos\mystbfont_c\fonts\NotoSans-Regular.ttf")
 
-APP_NAME = "demo_wm"
-EXE = BUILD / "demo_wm.exe"
+APP_NAME = "multi"
+EXE = BUILD / "multi.exe"
 
-# 内置 demo 的默认端口；不在表里的 exe 一律默认 9000。
-# 多进程桌面（vm_wms + vm_rdp + vm_shell + vm_app）暂用 e2e 或手动启动，见 docs/task-vm-app.md。
-DEFAULT_PORTS = {"demo_wm": 9000}
+# 内置启动项的默认端口；不在表里的 exe 一律默认 9000。
+DEFAULT_PORTS = {"multi": 9050, "demo_wm": 9000}
+
+# 多进程桌面的组成与启动顺序（rdp 最后，它连上就请求 fullframe）。
+MULTI_EXES = ("vm_wms", "vm_shell", "vm_app", "vm_rdp")
 
 REQUIRED_ASSETS = (
     "app.js",
@@ -93,6 +92,104 @@ def stop_old(port, app_name):
 def check_built():
     if not EXE.is_file():
         raise RuntimeError(f"找不到 {EXE}，先运行 python tools/build_vm.py")
+
+
+def check_built_multi():
+    missing = [f"{name}.exe" for name in MULTI_EXES if not (BUILD / f"{name}.exe").is_file()]
+    if missing:
+        raise RuntimeError("找不到 " + ", ".join(missing) + "，先运行 python tools/build_vm.py")
+
+
+def stop_old_multi():
+    """只停本启动器拉起的那一组：命令行里带 `vmwm_ui_` 显式管道名。"""
+    ps = (
+        "$p = Get-CimInstance Win32_Process -Filter "
+        "\"Name='vm_wms.exe' or Name='vm_shell.exe' or Name='vm_app.exe' or Name='vm_rdp.exe'\" | "
+        "Where-Object { $_.CommandLine -like '*vmwm_ui_*' }; "
+        "foreach ($x in $p) { Stop-Process -Id $x.ProcessId -Force -ErrorAction SilentlyContinue; "
+        "Write-Output $x.ProcessId }"
+    )
+    result = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    for pid in result.stdout.split():
+        print(f"[start] 停止旧的多进程实例 (PID {pid})")
+    if result.stdout.split():
+        time.sleep(0.6)
+
+
+def run_multi(port, no_browser, exe_args):
+    pipe = rf"\\.\pipe\vmwm_ui_{os.getpid()}"
+    font = str(ASSETS / "font.ttf")
+    for i, a in enumerate(exe_args):
+        if a == "--font" and i + 1 < len(exe_args):
+            font = exe_args[i + 1]
+    if exe_args and "--font" not in exe_args:
+        print("[start] 多进程模式只认 --font，其余参数忽略")
+
+    log_dir = ROOT / "temp"
+    log_dir.mkdir(exist_ok=True)
+    procs = []
+
+    def spawn(name, args):
+        log_path = log_dir / f"desktop-{name}.err.txt"
+        log = open(log_path, "wb")
+        p = subprocess.Popen(
+            [str(BUILD / f"{name}.exe")] + args,
+            cwd=VM_DIR,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+        )
+        procs.append((name, p, log))
+        print(f"[start] {name}.exe PID={p.pid} 日志 {log_path}")
+        return p
+
+    try:
+        spawn("vm_wms", ["--pipe", pipe, "--screen", "800x600"])
+        time.sleep(0.7)
+        spawn("vm_shell", ["--pipe", pipe, "--font", font])
+        time.sleep(0.4)
+        spawn("vm_app", ["--pipe", pipe, "--title", "Hello",
+                         "--x", "60", "--y", "60", "--font", font])
+        spawn("vm_rdp", ["--port", str(port), "--pipe", pipe,
+                         "--web-root", str(ASSETS), "--font", font])
+
+        wait_ready(port)
+        url = f"http://127.0.0.1:{port}/"
+        print(f"[start] 多进程桌面已就绪：{url}")
+        print("[start] 保持运行，按 Ctrl+C 停止（wms/shell/app/rdp 一起退出）")
+        if os.environ.get("VM_DESKTOP_NO_BROWSER") != "1" and not no_browser:
+            webbrowser.open(url)
+
+        while True:
+            for name, p, _log in procs:
+                if p.poll() is None:
+                    continue
+                # wms / rdp 是链路根：它们退出后桌面不再可用，收掉其余进程。
+                if name in ("vm_wms", "vm_rdp"):
+                    print(f"[start] {name}.exe 已退出（code={p.returncode}）", file=sys.stderr)
+                    return 1
+                print(f"[start] {name}.exe 已退出（code={p.returncode}），桌面继续", file=sys.stderr)
+            time.sleep(0.4)
+    except KeyboardInterrupt:
+        print("\n[start] Ctrl+C，停止多进程桌面")
+        return 0
+    except Exception as exc:
+        print(f"[start] 失败: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        for name, p, log in reversed(procs):
+            if p.poll() is None:
+                p.terminate()
+                try:
+                    p.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+                    p.wait()
+            log.close()
 
 
 def wait_ready(port, timeout=8.0):
@@ -161,7 +258,7 @@ def main():
         print(f"[start] {exc}", file=sys.stderr)
         return 1
     if app is None:
-        app = os.environ.get("VM_DESKTOP_APP", "demo_wm")
+        app = os.environ.get("VM_DESKTOP_APP", "multi")
     APP_NAME = app
     EXE = BUILD / f"{app}.exe"
     # demo 默认端口分开，可以同时开着对比；未知 exe 默认 9000。
@@ -173,11 +270,18 @@ def main():
 
     try:
         ensure_assets()
-        check_built()
-        stop_old(port, APP_NAME)
+        if app == "multi":
+            check_built_multi()
+            stop_old_multi()
+        else:
+            check_built()
+            stop_old(port, APP_NAME)
     except Exception as exc:
         print(f"[start] 失败: {exc}", file=sys.stderr)
         return 1
+
+    if app == "multi":
+        return run_multi(port, no_browser, exe_args)
 
     proc = subprocess.Popen(
         [str(EXE), str(port), str(ASSETS)] + exe_args, cwd=VM_DIR

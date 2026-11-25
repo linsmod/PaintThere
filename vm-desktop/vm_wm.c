@@ -235,6 +235,18 @@ static void chrome_button_rects(const VmWm *wm, const VmWindow *win,
     *minRect = (VmRect){(float)minX, (float)by, (float)size, (float)size};
 }
 
+int VmWm_WindowDecorHit(VmWm *wm, VmWindow *win, int x, int y) {
+    VmRect closeRect, maxRect, minRect;
+    int size = 0;
+    if (!wm || !win || (win->flags & VM_WIN_UNDECORATED)) return VM_WM_DECOR_NONE;
+    chrome_button_rects(wm, win, &closeRect, &maxRect, &minRect, &size);
+    if (size <= 0) return VM_WM_DECOR_NONE;
+    if (rect_contains(closeRect, x, y)) return VM_WM_DECOR_CLOSE;
+    if (rect_contains(maxRect, x, y)) return VM_WM_DECOR_MAXIMIZE;
+    if (rect_contains(minRect, x, y)) return VM_WM_DECOR_MINIMIZE;
+    return VM_WM_DECOR_NONE;
+}
+
 /* Hit test: 置顶窗口整层优先，其次按 z 从高到低。 */
 VmWindow *VmWm_HitTest(VmWm *wm, int x, int y) {
     if (!wm) return NULL;

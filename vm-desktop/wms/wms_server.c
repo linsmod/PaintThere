@@ -647,6 +647,30 @@ static void route_input(uint32_t from_client, const VmWmReqInput* in)
     lx  -= body.x;
     ly  -= body.y;
 
+    /* 装饰按钮先于焦点与转发：命中即消费，客户端收不到这次点击。
+       wmwms 不持装饰几何，交给宿主的 hit_test_decor（画布坐标）。 */
+    if (in->win_id == 0 && in->kind == 1 && in->is_down &&
+        g_host_set && g_host.hit_test_decor) {
+        int decor = g_host.hit_test_decor(g_host.user, s->win_id, in->x, in->y);
+        if (decor == 1) {
+            int32_t prev = 0;
+            vmwm_log("decor close win=%llu", (unsigned long long)s->win_id);
+            VmWm_ServerRemoveWindow(s->win_id, &prev);
+            return;
+        }
+        if (decor == 3) {
+            vmwm_log("decor minimize win=%llu", (unsigned long long)s->win_id);
+            VmWm_MapWindow(s->win_id, 0);
+            return;
+        }
+        if (decor == 2) {
+            /* wmwms 不管理最大化状态：消费点击，避免落到 body 当普通按下。 */
+            vmwm_log("decor maximize win=%llu (no state, ignored)",
+                     (unsigned long long)s->win_id);
+            return;
+        }
+    }
+
     /* NOFOCUS 窗口（任务栏等）不抢焦点也不抬升：点击只投递给属主。 */
     if (in->kind == 1 && in->is_down &&
         (s->info.flags & VMWM_WINFLAG_NOFOCUS) == 0) {

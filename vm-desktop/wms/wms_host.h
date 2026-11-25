@@ -58,6 +58,11 @@ typedef struct VmWmHost {
      * 未注册时服务端用自带的 z 序近似实现。 */
     uint64_t (*hit_test)(void* user, int32_t x, int32_t y);
 
+    /* 装饰按钮命中（画布坐标）：0=非按钮 1=关闭 2=最大化 3=最小化。
+     * 服务端据此执行 remove / unmap；最大化无状态，仅消费点击。
+     * 未注册时装饰按钮不生效（点击按普通输入转发）。 */
+    int (*hit_test_decor)(void* user, uint64_t win_id, int32_t x, int32_t y);
+
     /* ---- 帧节拍 ---- */
     /* 每个 tick（默认 16 ms）调用一次，frame_id 单调递增。
      * 宿主在这里做：消费脏 → 合成 → 差分 → 切块 → VmWm_ServerBroadcastFrame()。 */

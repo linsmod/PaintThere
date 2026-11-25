@@ -66,6 +66,8 @@
 - `assets/font.ttf` 当前为宋体子集，覆盖 XP 中文 UI 用字；替换字体需同时满足 stb 轮廓渲染与两端一致性。
 - 静态资源上限由 `vm_server.c` 决定（当前 16 MB），新增大资源需要核对。
 - 现行测试为 `vm-desktop/test_*.exe --probe` 纯逻辑断言；跨进程链路由 `tools/e2e_wms.ps1`（61 条）覆盖，浏览器视觉验证仍依赖 `agent-browser` 与截图，未形成像素回归。
-- `vm_shell` 已提供任务栏、开始菜单、右键菜单、设置面板；设置面板不持久化，远程模式装饰按钮（×/□/—）无处理者（见 `issues/INDEX.md`）。
+- `vm_shell` 已提供任务栏、开始菜单、右键菜单、设置面板；设置面板不持久化。
+- wms 输入路由已接装饰按钮：× 删除窗口、— 最小化（unmap），□ 无状态仅消费点击。
 - wmwms 不管理最大化状态，`VmShellItem.maximized` 在外壳进程里恒 0。
-- 多进程桌面没有一键启动器：`start_vm_desktop.py` 只拉单进程 `demo_wm`，多进程用 e2e 或手动 `vm_wms + vm_rdp + vm_shell + vm_app`。
+- 多进程桌面：`start_vm_desktop.py` 默认拉 `vm_wms + vm_shell + vm_app + vm_rdp`（模式名 `multi`，端口 9050），
+  日志在 `temp/desktop-<name>.err.txt`；`start_vm_renderer.py` 默认同样用 `multi`。单进程 `demo_wm` 仍可显式指定。

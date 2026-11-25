@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
-"""一键启动 C 版 VM 渲染器（canvas-cpp / ant 引擎），默认展示 JPX 应用外壳。
+"""一键启动 C 版 VM 渲染器（canvas-cpp / ant 引擎），默认展示多进程桌面。
 
-一条命令同时拉起 SSE 服务端和原生窗口渲染器：
+一条命令同时拉起桌面服务端和原生窗口渲染器：
     python tools/build_vm.py && python tools/start_vm_renderer.py
 
-默认服务端为 demo_jpx（端口 9050）；vm_renderer.exe 连到它的 /events。
+默认服务端为 `multi`（vm_wms + vm_shell + vm_app + vm_rdp，端口 9050）；
+vm_renderer.exe 连到 vm_rdp 的 /events。单个 exe 也可以显式指定
+（VM_RENDERER_APP=demo_wm）。
+
 两个可执行文件由统一工程一次构建，产物都在 vm-desktop/build/；
 本脚本和 start_vm_desktop.py 只检查产物并启动，不再各自构建。
 
 进程级禁用代理，避免 SDK 的 HTTP 客户端把 127.0.0.1 请求发到系统代理。
-Ctrl+C 会按端口停掉 demo 子进程，并同时停掉服务端和渲染器。
+Ctrl+C 会停掉服务端（多进程时按 `vmwm_ui_` 管道名收掉整组）和渲染器。
 
 可选环境变量（调试用）：
-    VM_RENDERER_APP      SSE 服务端程序，默认 demo_jpx（可设 demo_wm）
+    VM_RENDERER_APP      服务端，默认 multi（可设 demo_wm）
     VM_DESKTOP_PORT      监听端口，默认 9050
     VM_RENDERER_FRAMES   >0 时渲染指定帧数后自动退出，默认 0（一直运行）
-    JPX_LOG_LEVEL        设 2 打开 demo_jpx 逐帧 [jpx] 日志，默认 1（只告警）
     VM_RENDERER_STATE    设 1 打开 C 渲染器 [STATE] 探针，默认关闭
 """
 
@@ -28,9 +30,9 @@ import urllib.request
 from pathlib import Path
 
 try:
-    from .start_vm_desktop import stop_old
+    from .start_vm_desktop import stop_old, stop_old_multi
 except ImportError:
-    from start_vm_desktop import stop_old
+    from start_vm_desktop import stop_old, stop_old_multi
 
 ROOT = Path(__file__).resolve().parent.parent
 VM_DIR = ROOT / "vm-desktop"
@@ -38,8 +40,9 @@ ASSETS = ROOT / "assets"
 EXE = VM_DIR / "build" / "vm_renderer.exe"
 PAGE = ASSETS / "vm_renderer.js"
 DLL_SRC = Path(r"E:\canvas-cpp\recovery\out\recovered\build-ant\antjsb.dll")
-SERVER_APP = "demo_wm"
+SERVER_APP = "multi"
 DEFAULT_PORT = 9050
+MULTI_EXES = ("vm_wms", "vm_shell", "vm_app", "vm_rdp")
 
 
 def clear_proxy():
@@ -51,6 +54,13 @@ def clear_proxy():
 
 
 def ensure_built(app):
+    if app == "multi":
+        missing = [n for n in MULTI_EXES if not (EXE.parent / f"{n}.exe").is_file()]
+        if EXE.is_file() and not missing and PAGE.is_file():
+            return
+        raise RuntimeError(
+            f"缺少 {EXE} / {missing} / {PAGE}；先运行 python tools/build_vm.py"
+        )
     server = EXE.parent / f"{app}.exe"
     if EXE.is_file() and server.is_file() and PAGE.is_file():
         return
@@ -118,9 +128,12 @@ def main():
     print("[renderer] Ctrl+C 退出")
 
     def stop_all():
-        # 先按端口停掉真正的 demo 子进程（start_vm_desktop.py 的 stop_old），
-        # 否则只终止中间的 python 启动脚本，demo_jpx.exe 会留下来继续出帧。
-        stop_old(port, app)
+        # 先收掉真正的桌面子进程：多进程按 `vmwm_ui_` 管道名，单进程按端口 + 进程名。
+        # 否则只终止中间的 python 启动脚本，桌面进程会留下来继续出帧。
+        if app == "multi":
+            stop_old_multi()
+        else:
+            stop_old(port, app)
         for proc in (renderer, server):
             if proc.poll() is None:
                 proc.terminate()

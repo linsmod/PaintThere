@@ -191,6 +191,15 @@ VmWindow *VmWm_AddWindow(VmWm *wm, int id, const char *title,
 void VmWm_RemoveWindow(VmWm *wm, int id);
 VmWindow *VmWm_FindWindow(VmWm *wm, int id);
 VmWindow *VmWm_HitTest(VmWm *wm, int x, int y);
+
+/* 标题栏按钮命中（画布坐标）。远程宿主用它把「点到 ×」转成 wms 命令。 */
+enum {
+    VM_WM_DECOR_NONE = 0,
+    VM_WM_DECOR_CLOSE = 1,
+    VM_WM_DECOR_MAXIMIZE = 2,
+    VM_WM_DECOR_MINIMIZE = 3
+};
+int VmWm_WindowDecorHit(VmWm *wm, VmWindow *win, int x, int y);
 void VmWm_Focus(VmWm *wm, int id);
 void VmWm_Raise(VmWm *wm, int id);
 void VmWm_Move(VmWm *wm, int id, int x, int y);

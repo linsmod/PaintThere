@@ -548,6 +548,11 @@ Tab 顺序、caret、列表滚轮、按钮 hover/pressed、关闭按钮；e2e `a
 
 **恢复点**：`vm_app --ui clay` 可替代 `demo_jpx` 的表单示例。
 
+**状态：进行中（2026-11-25）**。`vm_ui_core`（焦点/编辑/命中，26 项断言）与
+`vm_ui_clay`（Clay 布局 + 按钮/复选框/输入框）已落地，`vm_app --ui clay` 可渲染表单、
+文本框可输入（`buf=a` → `ab`）、复选框与按钮回调正常。
+遗留：按钮的 `Clay_Hovered()` 在文本输入聚焦后返回假，导致点击不再命中；已登记 `issues/INDEX.md`。
+
 #### M7.4 新 app 接 XAML 与主题（A6）
 
 **做什么**

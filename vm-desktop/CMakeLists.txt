@@ -205,6 +205,18 @@ add_library(vm_ui_core STATIC
     ui/ui_hit.c)
 target_include_directories(vm_ui_core PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/ui")
 
+# Clay 后端的控件层（M7.3b）：布局交给 Clay，状态/焦点来自 vm_ui_core。
+add_library(vm_ui_clay STATIC
+    ui/clay/ui_clay.c
+    jpx/jpx_clay_impl.c
+    clay_frame_adapter.c)
+target_include_directories(vm_ui_clay PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ui/clay"
+    "${CLAY_DIR}" "${MSTB_DIR}")
+target_link_libraries(vm_ui_clay PUBLIC vm_ui_core)
+
 # jp_xaml 的 Direct 渲染与命令缓冲后端（M7.1）：shell / app 共用，不依赖 Clay。
 add_library(jpx_xaml_direct STATIC
     jpx_xaml/jpx_xaml_parser.c
@@ -382,13 +394,15 @@ target_link_libraries(vm_shell PRIVATE wms_client jpx_xaml_direct ${WMS_PLATFORM
 add_executable(vm_app
     app/main.c
     app/ui_hello.c
-    app/ui_xaml.c)
+    app/ui_xaml.c
+    app/ui_clay_demo.c)
 target_include_directories(vm_app PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/wms"
     "${MSTB_DIR}")
-# --ui xaml 复用 jp_xaml 的 parser/state 与 Direct 后端；库自带 vm_display / vm_font。
-target_link_libraries(vm_app PRIVATE wms_client jpx_xaml_direct ${WMS_PLATFORM_LIBS})
+# --ui xaml 复用 jp_xaml 的 Direct 后端；--ui clay 用 vm_ui_clay。
+# 两个库都带 vm_display / vm_font，静态链接时链接器按需取一份。
+target_link_libraries(vm_app PRIVATE wms_client jpx_xaml_direct vm_ui_clay ${WMS_PLATFORM_LIBS})
 
 set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer vm_wms test_wms_app test_wms_shell test_wms_rdp vm_rdp vm_shell vm_app test_ui PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"

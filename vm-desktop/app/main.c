@@ -17,6 +17,7 @@
 #include "wms_client.h"
 #include "wms_ipc.h"
 
+#include "ui_clay_demo.h"
 #include "ui_hello.h"
 #include "ui_xaml.h"
 #include "vm_display.h"
@@ -43,6 +44,7 @@ static int          g_dirty;
 static int          g_slowLayoutMs;
 static int          g_x = 60, g_y = 60;
 static int          g_uiXaml;
+static int          g_uiClay;
 static const char  *g_xamlPath;
 static const char  *g_themeName;
 static const char  *g_checkTheme;
@@ -72,6 +74,8 @@ static void push_content(void) {
     buf.rejected = 0;
     if (g_uiXaml)
         XamlUi_Paint(&buf, g_state.bodyW, g_state.bodyH);
+    else if (g_uiClay)
+        ClayUi_Paint(&buf, g_state.bodyW, g_state.bodyH);
     else
         Hello_Paint(&g_state, &buf);
 
@@ -116,6 +120,13 @@ static void on_input(const VmWmReqInput *in) {
         else if (in->kind == 2) dirty = XamlUi_Pointer(in->x, in->y, 0);
         else if (in->kind == 4 && in->is_down) dirty = XamlUi_Key(in->key, 0, 0);
         if (dirty) g_dirty = 1;
+        return;
+    }
+    if (g_uiClay) {
+        if (in->kind == 1) ClayUi_Pointer(in->x, in->y, 1);
+        else if (in->kind == 2) ClayUi_Pointer(in->x, in->y, 0);
+        else if (in->kind == 4 && in->is_down) ClayUi_Key(in->key, 0, 0);
+        g_dirty = 1;
         return;
     }
 
@@ -265,9 +276,10 @@ static void on_timer(uv_timer_t *t) {
 
 static void on_caret(uv_timer_t *t) {
     (void)t;
-    if (g_uiXaml) {
+    if (g_uiXaml || g_uiClay) {
         g_xamlCaretOn = !g_xamlCaretOn;
-        XamlUi_SetCaret(g_xamlCaretOn);
+        if (g_uiXaml) XamlUi_SetCaret(g_xamlCaretOn);
+        else ClayUi_SetCaret(g_xamlCaretOn);
         g_dirty = 1;
         return;
     }
@@ -298,7 +310,9 @@ int main(int argc, char **argv) {
             g_resizeW = atoi(argv[++i]);
             g_resizeH = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--ui") == 0 && i + 1 < argc) {
-            g_uiXaml = strcmp(argv[++i], "xaml") == 0;
+            const char *mode = argv[++i];
+            g_uiXaml = strcmp(mode, "xaml") == 0;
+            g_uiClay = strcmp(mode, "clay") == 0;
         } else if (strcmp(argv[i], "--xaml") == 0 && i + 1 < argc) {
             g_xamlPath = argv[++i];
             g_uiXaml = 1;
@@ -354,6 +368,10 @@ int main(int argc, char **argv) {
                 return 1;
             }
         }
+    }
+    if (g_uiClay && !ClayUi_Init()) {
+        APP_LOG("clay init failed");
+        return 1;
     }
     g_state.caretOn = 1;
     snprintf(g_state.text, sizeof(g_state.text), "%s", "");

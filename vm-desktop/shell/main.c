@@ -27,16 +27,24 @@
 #include "jpx_xaml_backend_cmdbuf.h"
 
 #include "vm_display.h"
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
 #include "vm_font.h"
 #include "vm_menu_view.h"
 #include "vm_shell.h"
 #include "vm_theme.h"
 
-#define SHELL_LOG(...)                                   \
-    do {                                                 \
-        fprintf(stderr, "[shell] " __VA_ARGS__);         \
-        fputc('\n', stderr);                             \
-        fflush(stderr);                                  \
+#define SHELL_LOG(fmt, ...)                                              \
+    do {                                                                 \
+        fprintf(stderr, "[shell %5u] " fmt,                              \
+                (unsigned)(uv_hrtime() / 1000000ull) % 100000u,          \
+                ##__VA_ARGS__);                                          \
+        fputc('\n', stderr);                                             \
+        fflush(stderr);                                                  \
     } while (0)
 
 static uv_loop_t  g_loop;
@@ -584,6 +592,7 @@ static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
     case EVT_POINTER: {
         const VmWmEvtPointer *p = Wms_AsPointer(e);
         if (!p) break;
+        if (p->kind == 1) SHELL_LOG("pointer down (%d,%d)", (int)p->x, (int)p->y);
         /* 菜单开着：在菜单内更新 hover；按在菜单外就关掉（Windows 行为）。
            关闭动作放到主循环，避免在事件回调里发同步请求。 */
         if (g_menuOpen) {
@@ -609,6 +618,9 @@ static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
         const VmWmReqInput *in = Wms_AsInput(e);
         VmShellAction a;
         if (!in) break;
+        if (in->kind == 1 && in->is_down)
+            SHELL_LOG("input down win=%llu (%d,%d) button=%d",
+                      (unsigned long long)in->win_id, (int)in->x, (int)in->y, (int)in->button);
         /* 设置窗口：down/up 都交给 XAML Direct 交互层（click 在 up 时成立）。 */
         if (g_settingsOpen && in->win_id == g_settingsWin) {
             if (g_settingsView && (in->kind == 1 || in->kind == 2))
@@ -880,11 +892,21 @@ int main(int argc, char **argv) {
     }
 
     uv_timer_init(&g_loop, &g_timer);
-    uv_timer_start(&g_timer, on_timer, 16, 16);
+    /* 4ms tick: pending actions (menu/start/settings) drain in a few ticks,
+       not two 16ms rounds. WMS frame cadence stays at its own 16ms. */
+    uv_timer_start(&g_timer, on_timer, 4, 4);
 
     while (!g_stop) {
-        uv_run(&g_loop, UV_RUN_ONCE);
+        /* NOWAIT + poll every iteration: never block on the timer before
+           draining WMS events (otherwise pointer/input arrive 1 tick late). */
+        uv_run(&g_loop, UV_RUN_NOWAIT);
         if (g_wms) Wms_PollEvents(g_wms, 0);
+#ifdef _WIN32
+        /* Sleep(1) rounds to ~15.6ms on Windows; yield without the rounding. */
+        Sleep(0);
+#else
+        usleep(200);
+#endif
         if (g_wms && !Wms_ClientIsConnected(g_wms)) {
             SHELL_LOG("wms disconnected, exiting (restart the shell to recover)");
             break;

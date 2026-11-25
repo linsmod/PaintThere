@@ -32,6 +32,7 @@ OUT_DIR = os.environ.get("VM_DRIVE_OUT", "temp")   # snap 的落盘目录
 buf = bytearray()
 lock = threading.Lock()
 status = {"connected": False, "closed": False}
+frame_times = []   # (monotonic, bytes) at each SSE data: frame boundary
 
 
 def recorder():
@@ -56,6 +57,12 @@ def recorder():
             break
         with lock:
             buf.extend(chunk)
+            text = chunk.decode("utf-8", "replace")
+            n = text.count("\n\n")
+            if n:
+                now = time.monotonic()
+                for _ in range(n):
+                    frame_times.append((now, len(chunk)))
     s.close()
 
 
@@ -95,7 +102,8 @@ def mouse(kind, x, y, button=0):
     body = ('{"type":"input","kind":"%s","x":%d,"y":%d,"button":%d,'
             '"clientId":"%s","color":"#ff0000","frameId":1}'
             % (kind, x, y, button, CID))
-    print("  %-9s (%d,%d) -> %s" % (kind, x, y, post(body)))
+    print("  [%8.3f] %-9s (%d,%d) button=%d -> %s"
+          % (time.monotonic(), kind, x, y, button, post(body)))
     sys.stdout.flush()
 
 
@@ -137,6 +145,22 @@ def main():
         elif a == "up":
             mouse("mouseup", int(args[i + 1]), int(args[i + 2]))
             i += 3
+        elif a == "rdown":
+            x, y = int(args[i + 1]), int(args[i + 2])
+            mouse("mousemove", x, y, 2)
+            time.sleep(0.08)
+            mouse("mousedown", x, y, 2)
+            i += 3
+        elif a == "rup":
+            mouse("mouseup", int(args[i + 1]), int(args[i + 2]), 2)
+            i += 3
+        elif a == "times":
+            with lock:
+                recent = frame_times[-20:]
+            for t, n in recent:
+                print("  frame @%8.3f chunk=%d" % (t, n))
+            sys.stdout.flush()
+            i += 1
         elif a == "key":
             body = ('{"type":"input","kind":"keydown","key":"%s","code":"%s",'
                     '"clientId":"%s","frameId":1}' % (args[i + 1], args[i + 1], CID))

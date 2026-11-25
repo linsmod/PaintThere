@@ -642,6 +642,9 @@ static void route_input(uint32_t from_client, const VmWmReqInput* in)
         g_ptr_y = in->y;
         broadcast_pointer(in);
     }
+    if (in->kind == 1 && in->is_down)
+        vmwm_log("input down (%d,%d) button=%d hit=%llu", (int)in->x, (int)in->y,
+                 (int)in->button, (unsigned long long)(s ? s->win_id : 0));
 
     if (!s) return;                          /* 没有窗口接这条输入，丢弃 */
 

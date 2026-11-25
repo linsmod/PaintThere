@@ -30,11 +30,12 @@
 #include "vm_shm.h"
 #include "rdp_server.h"
 
-#define RDP_LOG(...)                                     \
-    do {                                                 \
-        fprintf(stderr, "[rdp] " __VA_ARGS__);           \
-        fputc('\n', stderr);                             \
-        fflush(stderr);                                  \
+#define RDP_LOG(fmt, ...)                                                 \
+    do {                                                                  \
+        fprintf(stderr, "[rdp %5u] " fmt,                                 \
+                (unsigned)(uv_hrtime() / 1000000ull) % 100000u, ##__VA_ARGS__); \
+        fputc('\n', stderr);                                              \
+        fflush(stderr);                                                   \
     } while (0)
 
 static uv_loop_t   g_loop;

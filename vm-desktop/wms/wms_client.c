@@ -79,6 +79,21 @@ static void vmwm_sleep_ms(unsigned ms)
 #endif
 }
 
+/* Short yield for tight poll loops. On Windows Sleep(1) rounds up to ~15.6ms
+   (timer granularity), which makes every synchronous WMS request cost >=15ms.
+   Sleep(0) yields the slice without that rounding; spin briefly to avoid a
+   fully busy loop. */
+static void vmwm_yield_short(void)
+{
+#ifdef _WIN32
+    Sleep(0);
+    uint64_t until = uv_hrtime() + 200000ull; /* 0.2ms */
+    while (uv_hrtime() < until) { /* spin */ }
+#else
+    vmwm_sleep_ms(1);
+#endif
+}
+
 static void copy_str(char* dst, unsigned cap, const char* src)
 {
     unsigned i = 0;
@@ -289,7 +304,7 @@ static VmWmResult client_call(WmsClient* c, uint16_t cmd, const void* body,
         if (c->ack_got) break;
         if (!c->connected) return VMWM_ERR_NOT_CONNECTED;
         if (vmwm_now_ms() >= deadline) return VMWM_ERR_TIMEOUT;
-        vmwm_sleep_ms(1);
+        vmwm_yield_short();
     }
 
     if (c->ack.len && !vmwm_buf_append(out, c->ack.data, c->ack.len))
@@ -534,7 +549,7 @@ int Wms_PollEvents(WmsClient* c, int timeout_ms)
         if (c->evt_count != start) break;
         if (!c->connected) break;
         if (vmwm_now_ms() >= deadline) break;
-        vmwm_sleep_ms(1);
+        vmwm_yield_short();
     }
 
     return c->evt_count - start;

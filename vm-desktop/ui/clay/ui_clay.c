@@ -177,7 +177,7 @@ int VmUiClay_Button(VmUiClay *ui, int id, const char *text) {
     eid = hash_id("ui/btn", id);
     CLAY(eid, {
         .layout = {
-            .sizing = {CLAY_SIZING_FIT(0), CLAY_SIZING_FIT(0)},
+            .sizing = {CLAY_SIZING_FIXED(96), CLAY_SIZING_FIXED(30)},
             .padding = {14, 14, 6, 6},
             .childAlignment = {CLAY_ALIGN_X_CENTER, CLAY_ALIGN_Y_CENTER},
         },
@@ -243,9 +243,11 @@ int VmUiClay_TextInput(VmUiClay *ui, int id, char *buf, size_t cap, int width) {
     VmUiFocus_Add(&ui->focus, id);   /* 登记到 Tab 链 */
     focused = VmUiFocus_Get(&ui->focus) == id;
     eid = hash_id("ui/in", id);
+    /* 固定高度：空文本时 FIT 会算成 0 高，背景矩形被 tile 切分丢弃，
+       控件看似不存在（见 workflows/wf-vm-instruction-desktop.md 的经验）。 */
     CLAY(eid, {
         .layout = {
-            .sizing = {CLAY_SIZING_FIXED((float)width), CLAY_SIZING_FIT(0)},
+            .sizing = {CLAY_SIZING_FIXED((float)width), CLAY_SIZING_FIXED(28)},
             .padding = {8, 8, 5, 5},
         },
         .backgroundColor = UI_INPUT_BG,

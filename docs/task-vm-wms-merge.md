@@ -548,10 +548,13 @@ Tab 顺序、caret、列表滚轮、按钮 hover/pressed、关闭按钮；e2e `a
 
 **恢复点**：`vm_app --ui clay` 可替代 `demo_jpx` 的表单示例。
 
-**状态：进行中（2026-11-25）**。`vm_ui_core`（焦点/编辑/命中，26 项断言）与
-`vm_ui_clay`（Clay 布局 + 按钮/复选框/输入框）已落地，`vm_app --ui clay` 可渲染表单、
-文本框可输入（`buf=a` → `ab`）、复选框与按钮回调正常。
-遗留：按钮的 `Clay_Hovered()` 在文本输入聚焦后返回假，导致点击不再命中；已登记 `issues/INDEX.md`。
+**状态：已完成（2026-11-25）**。`vm_ui_core`（焦点/编辑/命中，26 项断言）与
+`vm_ui_clay`（Clay 布局 + 按钮/复选框/输入框）已落地；`vm_app --ui clay` 表单完整闭环：
+点击输入框 → 输入 `ab` → 点 OK → `clay ok name='ab'`。
+
+过程中修掉两个实现问题：Clay 默认根是横向（控件排到屏外）；输入框/按钮用 `CLAY_SIZING_FIT`
+时空文本高度为 0（背景与命中区被 tile 切分丢弃）。测试侧注意：合成点击必须带 `mousemove`
+（`drive_vm_desktop.py down` 已内置），否则 `Clay_Hovered()` 为假。
 
 #### M7.4 新 app 接 XAML 与主题（A6）
 

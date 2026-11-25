@@ -4,6 +4,7 @@
    Run:   test_jpx_xaml.exe [--probe]
 */
 
+#include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -302,6 +303,90 @@ static void test_direct_backend(void) {
     JpxXamlView_Destroy(view);
 }
 
+/* ---- Direct 交互层：命中、按钮/复选框/输入框/列表（M7.1） ---- */
+
+typedef struct {
+    char name[64];
+    unsigned char ok;
+    int sel;
+} FmtModel;
+
+static int g_clickCount;
+static void on_direct_click(JpxXamlView *view, int nodeIndex, void *userData) {
+    (void)view;
+    (void)nodeIndex;
+    (*(int *)userData)++;
+}
+
+static void test_direct_interaction(void) {
+    section("direct interaction");
+    static FmtModel model;
+    FmtModel zero;
+    Recorder rec;
+    JpxXamlBackend backend;
+    memset(&zero, 0, sizeof(zero));
+    model = zero;
+
+    JpxXamlView *view = JpxXamlView_Create(NULL,
+        "<Window>"
+        "  <StackPanel Orientation='Vertical' Gap='6'>"
+        "    <Button Content='OK' Width='80' Height='30' Click='OnOk' />"
+        "    <CheckBox Content='opt' IsChecked='{Binding ok}' Click='OnOk' />"
+        "    <TextBox Text='{Binding name}' />"
+        "    <ListBox Items='a;b;c' Height='60' SelectedIndex='{Binding sel}' />"
+        "  </StackPanel>"
+        "</Window>", &model, NULL, 0);
+    expect(view != NULL, "interact: view created");
+    if (!view) return;
+
+    JpxXamlView_Bind(view, "ok", JPX_XAML_BIND_BOOL, offsetof(FmtModel, ok), 1);
+    JpxXamlView_Bind(view, "name", JPX_XAML_BIND_TEXT, offsetof(FmtModel, name),
+                     sizeof(model.name));
+    JpxXamlView_Bind(view, "sel", JPX_XAML_BIND_INT, offsetof(FmtModel, sel), sizeof(int));
+    g_clickCount = 0;
+    JpxXamlView_On(view, "OnOk", on_direct_click, &g_clickCount);
+
+    memset(&rec, 0, sizeof(rec));
+    memset(&backend, 0, sizeof(backend));
+    backend.rect = rec_rect;
+    backend.border = rec_border;
+    backend.text = rec_text;
+    backend.frame_begin = rec_frame_begin;
+    backend.line_height = rec_line_height;
+    JpxXaml_RenderDirect(view, &backend, &rec, 0, 0, 300, 300);
+
+    /* 节点：0 Window, 1 StackPanel, 2 Button, 3 CheckBox, 4 TextBox, 5 ListBox */
+    int bx = view->nodeX[2] + 4, by = view->nodeY[2] + 4;
+    expect_int(JpxXaml_DirectPointer(view, bx, by, 1), 1, "interact: button press dirty");
+    JpxXaml_DirectPointer(view, bx, by, 0);
+    expect_int(g_clickCount, 1, "interact: button click fired once");
+
+    int cx = view->nodeX[3] + 5, cy = view->nodeY[3] + 5;
+    JpxXaml_DirectPointer(view, cx, cy, 1);
+    JpxXaml_DirectPointer(view, cx, cy, 0);
+    expect_int(model.ok, 1, "interact: checkbox writes model=true");
+    JpxXaml_DirectPointer(view, cx, cy, 1);
+    JpxXaml_DirectPointer(view, cx, cy, 0);
+    expect_int(model.ok, 0, "interact: checkbox toggles back");
+
+    int tx = view->nodeX[4] + 5, ty = view->nodeY[4] + 5;
+    JpxXaml_DirectPointer(view, tx, ty, 1);
+    JpxXaml_DirectPointer(view, tx, ty, 0);
+    expect_int(JpxXaml_DirectKey(view, "a", 0, 0), 1, "interact: key consumed by textbox");
+    JpxXaml_DirectKey(view, "b", 0, 0);
+    expect_str(model.name, "ab", "interact: textbox writes model");
+    JpxXaml_DirectKey(view, "Backspace", 0, 0);
+    expect_str(model.name, "a", "interact: backspace deletes one byte");
+
+    int lx = view->nodeX[5] + 5;
+    int ly = view->nodeY[5] + 4 + 18 + 2;
+    JpxXaml_DirectPointer(view, lx, ly, 1);
+    JpxXaml_DirectPointer(view, lx, ly, 0);
+    expect_int(model.sel, 1, "interact: listbox selects second row");
+
+    JpxXamlView_Destroy(view);
+}
+
 static void test_binding_syntax(void) {
     section("binding expression parsing");
     JpxXamlView *view = JpxXamlView_Create(NULL,
@@ -326,6 +411,7 @@ int main(int argc, char **argv) {
     test_binding_table();
     test_handler_table();
     test_direct_backend();
+    test_direct_interaction();
     test_binding_syntax();
 
     printf("%d checks, %d failures\n", g_checks, g_failures);

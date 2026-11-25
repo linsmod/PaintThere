@@ -105,6 +105,19 @@ int JpxXamlView_SetItemSource(JpxXamlView *view, const char *name,
 - 旧路径未动：`demo_xaml` 抓帧 95827 B、表单文本正常；其余单测断言数不变。
 - 布局规则（v1）：未给 `Height` 的流式项占 `line+8`；`StackPanel.Gap` 默认 6。
 
+**交互层补齐（同日）**
+
+P1 原先只做渲染，`M7.2` 的设置面板需要点击与输入。新增 `jpx_xaml_direct_ui.c`：
+
+- `JpxXaml_DirectPointer(view, x, y, down)`：命中（逆序遍历本帧矩形）+ 按下/抬起；
+  Button 触发 `Click`，CheckBox 切换并写回 `IsChecked` 绑定，TextBox 聚焦，ListBox 选中行。
+- `JpxXaml_DirectKey(view, key, ctrl, shift)`：只作用于聚焦 TextBox，写回 `Text` 绑定并触发 `TextChanged`。
+- `JpxXaml_DirectSetCaret(view, on)`：宿主每 500ms 翻转。
+- 渲染侧记录 `nodeX/Y/W/H` 与 `nodeHit`，命中与绘制共用同一份几何；按钮按下态、复选框勾选、
+  输入框 caret、列表选中行都由 `JpxXamlDirectState` 驱动。
+
+`test_jpx_xaml` 58 → **67**（新增 9 条：按钮 click、复选框两次切换、输入写回、Backspace、列表选中）。
+
 ### P2 XAML 子集扩展（标签 + LIST + 三态）
 
 **做什么**

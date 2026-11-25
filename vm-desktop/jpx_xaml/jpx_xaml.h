@@ -78,6 +78,18 @@ typedef struct {
 void JpxXaml_RenderDirect(JpxXamlView *view, const JpxXamlBackend *backend,
                           void *ctx, int x, int y, int w, int h);
 
+/* ---- Direct 后端的输入（M7.1 交互层） ----
+   坐标是渲染坐标系（与 JpxXaml_RenderDirect 的 x/y 同源）。
+   down=1 按下、0 抬起；返回 1 表示状态变化（宿主应重渲染并重推内容）。
+   只处理 Button / CheckBox / TextBox / ListBox；其余节点不响应。 */
+int JpxXaml_DirectPointer(JpxXamlView *view, int x, int y, int down);
+
+/* 键盘输入：只作用于当前聚焦的 TextBox。返回 1 表示状态变化。 */
+int JpxXaml_DirectKey(JpxXamlView *view, const char *key, int ctrl, int shift);
+
+/* caret 相位（宿主每 500ms 翻转一次）。 */
+void JpxXaml_DirectSetCaret(JpxXamlView *view, int on);
+
 #ifdef __cplusplus
 }
 #endif

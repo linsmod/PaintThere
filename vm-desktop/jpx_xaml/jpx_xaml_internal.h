@@ -73,6 +73,17 @@ typedef struct {
     size_t len;
 } JpxXamlInputSlot;
 
+/* Direct 后端的控件状态（每个节点一份）。渲染只读它，交互层写它。 */
+typedef struct {
+    int inited;
+    int pressed;
+    int checked;
+    int selected;
+    int focused;
+    char text[JPX_XAML_INPUT_CAP];
+    size_t len;
+} JpxXamlDirectState;
+
 struct JpxXamlView {
     JpxApp *app;
     void *model;
@@ -80,6 +91,17 @@ struct JpxXamlView {
     JpxXamlBinding bindings[JPX_XAML_MAX_BINDINGS];
     JpxXamlHandlerSlot handlers[JPX_XAML_MAX_HANDLERS];
     JpxXamlInputSlot inputs[JPX_XAML_MAX_NODES];
+
+    /* Direct 后端（M7.1）：渲染时记录节点矩形，命中共用同一份几何。 */
+    int nodeX[JPX_XAML_MAX_NODES];
+    int nodeY[JPX_XAML_MAX_NODES];
+    int nodeW[JPX_XAML_MAX_NODES];
+    int nodeH[JPX_XAML_MAX_NODES];
+    int nodeHit[JPX_XAML_MAX_NODES];   /* 1 = 本帧画过，可命中 */
+    JpxXamlDirectState direct[JPX_XAML_MAX_NODES];
+    int pressNode;
+    int focusNode;
+    int directCaretOn;   /* 由宿主每 500ms 翻转，控制输入框 caret 可见 */
 };
 
 /* 解析 XAML 子集到 doc。失败返回 0 并写 err（含行号）。 */

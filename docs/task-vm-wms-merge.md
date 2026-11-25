@@ -498,7 +498,8 @@ Direct 后端与最小 XAML 子集（Canvas/DockPanel/Layers/Repeat + LIST 绑�
 **恢复点**：同一份 XAML 可由 Clay 后端与 Direct 后端回放。
 
 **状态：已完成（2026-11-25）**。`jpx_xaml_direct` 库、`JpxXaml_RenderDirect`、
-`JpxXamlBackend_CmdBuf`、`test_jpx_xaml` 58 项，详见 `docs/task-shell-xaml-framework.md` P1。
+`JpxXamlBackend_CmdBuf`、Direct 交互层（`JpxXaml_DirectPointer/Key`）、`test_jpx_xaml` 67 项，
+详见 `docs/task-shell-xaml-framework.md` P1。
 
 #### M7.2 shell 补开始菜单 / 设置面板 / 右键菜单
 

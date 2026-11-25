@@ -40,6 +40,9 @@ JpxXamlView *JpxXamlView_Create(JpxApp *app, const char *xaml, void *model,
     }
     view->app = app;
     view->model = model;
+    view->directCaretOn = 1;
+    view->pressNode = -1;
+    view->focusNode = -1;
     return view;
 }
 

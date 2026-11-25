@@ -352,6 +352,7 @@ add_executable(vm_shell
     shell/main.c
     vm_shell.c
     vm_template.c
+    vm_menu_view.c
     vm_display.c
     vm_font.c
     vm_theme.c)

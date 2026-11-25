@@ -24,6 +24,7 @@
 
 #include "vm_display.h"
 #include "vm_font.h"
+#include "vm_menu_view.h"
 #include "vm_shell.h"
 #include "vm_theme.h"
 
@@ -44,13 +45,50 @@ static VmShell     *g_shell;
 static VmShellModel g_model;
 static uint64_t     g_taskbar;
 static int32_t      g_bodyW, g_bodyH;
+static int32_t      g_screenW, g_screenH;
 static uint32_t     g_epoch;
 static int          g_dirty;
 static int          g_resync;
 static int          g_clockMinute = -1;
 
+/* 弹出菜单（任务栏右键）：独立窗口，内容由 VmMenuView 产出。 */
+static VmMenuView   g_menu;
+static uint64_t     g_menuWin;
+static uint32_t     g_menuEpoch;
+static int32_t      g_menuBodyW, g_menuBodyH;
+static int          g_menuOpen;
+static int          g_menuDirty;
+static int          g_menuTarget;
+static int          g_menuAction[VM_MENU_VIEW_MAX_ITEMS];
+
+/* 事件回调里不能发起同步 WMS 请求：client_call 会重入 uv_run。
+   回调只记录意图，主循环统一执行。 */
+static int          g_pendingCloseMenu;
+static int          g_pendingOpenMenu;
+static int          g_pendingMenuTarget, g_pendingMenuX, g_pendingMenuY;
+static int          g_pendingMenuAct, g_pendingMenuActTarget;
+static VmShellAction g_pendingShellAct;
+static int          g_hasPendingShellAct;
+
+enum {
+    MENU_ACT_NONE = 0,
+    MENU_ACT_ACTIVATE,
+    MENU_ACT_MINIMIZE,
+    MENU_ACT_CLOSE,
+    MENU_ACT_SETTINGS
+};
+
 /* 内容推送缓冲：VmDisplayList 量级，不能放栈。 */
 static VmDrawCommand g_cmds[VM_DISPLAY_MAX_COMMANDS];
+static VmDrawCommand g_menuCmds[VM_DISPLAY_MAX_COMMANDS];
+static const VmTheme *g_theme;
+
+static const VmShellItem *find_item(int winId) {
+    for (int i = 0; i < g_model.count; i++) {
+        if (g_model.items[i].id == winId) return &g_model.items[i];
+    }
+    return NULL;
+}
 
 /* ---------------- 窗口快照 ---------------- */
 
@@ -109,20 +147,133 @@ static void push_content(void) {
     if (r == VMWM_OK && accepted) g_dirty = 0;
 }
 
+/* ---------------- 弹出菜单 ---------------- */
+
+static void push_menu(void) {
+    VmCmdBuffer buf;
+    int accepted = 0, overflow = 0;
+    VmWmResult r;
+    if (!g_wms || !g_menuWin || g_menuEpoch == 0) return;
+    buf.commands = g_menuCmds;
+    buf.cap = (int)(sizeof(g_menuCmds) / sizeof(g_menuCmds[0]));
+    buf.count = 0;
+    buf.rejected = 0;
+    VmMenuView_Paint(&g_menu, &buf);
+    r = Wms_PushContent(g_wms, g_menuWin, g_menuEpoch, g_menuCmds, (uint32_t)buf.count,
+                        (uint32_t)sizeof(VmDrawCommand), &accepted, &overflow);
+    SHELL_LOG("menu push count=%d accepted=%d -> %s", buf.count, accepted, Wms_StrError(r));
+    if (r == VMWM_OK && accepted) g_menuDirty = 0;
+}
+
+static void close_menu(void) {
+    if (!g_menuOpen && !g_menuWin) return;
+    if (g_wms && g_menuWin) Wms_CloseWindow(g_wms, g_menuWin);
+    SHELL_LOG("menu close");
+    g_menuOpen = 0;
+    g_menuWin = 0;
+    g_menuEpoch = 0;
+    g_menuDirty = 0;
+    g_menu.count = 0;
+}
+
+static void apply_menu(int act) {
+    uint64_t id = (uint64_t)g_menuTarget;
+    switch (act) {
+        case MENU_ACT_ACTIVATE:
+            Wms_MapWindow(g_wms, id);
+            Wms_StackWindow(g_wms, id, VMWM_STACK_TOP);
+            Wms_SetFocus(g_wms, id);
+            SHELL_LOG("menu activate win=%d", g_menuTarget);
+            break;
+        case MENU_ACT_MINIMIZE:
+            Wms_UnmapWindow(g_wms, id);
+            SHELL_LOG("menu minimize win=%d", g_menuTarget);
+            break;
+        case MENU_ACT_CLOSE:
+            Wms_CloseWindow(g_wms, id);
+            SHELL_LOG("menu close win=%d", g_menuTarget);
+            break;
+        case MENU_ACT_SETTINGS:
+            SHELL_LOG("settings requested (panel not migrated yet)");
+            break;
+        default:
+            break;
+    }
+}
+
+static void open_menu(int target, int ax, int ay) {
+    VmMenuItem items[5];
+    int n = 0;
+    const VmShellItem *it;
+    VmWmResult r;
+
+    if (!g_wms || !g_theme) return;
+    if (g_menuOpen) close_menu();
+
+    g_menuTarget = target;
+    it = find_item(target);
+    if (it) {
+        items[n].text = it->minimized ? "还原" : "激活";
+        items[n].enabled = 1;
+        g_menuAction[n++] = MENU_ACT_ACTIVATE;
+        items[n].text = "最小化";
+        items[n].enabled = 1;
+        g_menuAction[n++] = MENU_ACT_MINIMIZE;
+        items[n].text = NULL;
+        items[n].enabled = 0;
+        g_menuAction[n++] = MENU_ACT_NONE;
+        items[n].text = "关闭";
+        items[n].enabled = 1;
+        g_menuAction[n++] = MENU_ACT_CLOSE;
+    } else {
+        items[n].text = "属性";
+        items[n].enabled = 1;
+        g_menuAction[n++] = MENU_ACT_SETTINGS;
+    }
+
+    VmMenuView_Layout(&g_menu, g_theme, items, n, ax, ay, g_screenW, g_screenH);
+    g_menuOpen = 1;
+    g_menuWin = 0;
+    g_menuEpoch = 0;
+    g_menuDirty = 0;
+
+    r = Wms_CreateWindow(g_wms, g_menu.x, g_menu.y, g_menu.w, g_menu.h,
+                         VMWM_WINFLAG_UNDECORATED | VMWM_WINFLAG_TOPMOST |
+                         VMWM_WINFLAG_PINNED | VMWM_WINFLAG_NOFOCUS,
+                         &g_menuWin);
+    if (r != VMWM_OK) {
+        SHELL_LOG("menu create failed (%s)", Wms_StrError(r));
+        g_menuOpen = 0;
+        g_menuWin = 0;
+        return;
+    }
+    Wms_SetTitle(g_wms, g_menuWin, "Menu");
+    Wms_SetClassHint(g_wms, g_menuWin, "VmShell.Menu");
+    Wms_MapWindow(g_wms, g_menuWin);
+    SHELL_LOG("menu open target=%d at (%d,%d) size=%dx%d",
+              target, g_menu.x, g_menu.y, g_menu.w, g_menu.h);
+}
+
+static int inside_menu(int x, int y) {
+    return g_menuOpen && x >= g_menu.x && x < g_menu.x + g_menu.w &&
+           y >= g_menu.y && y < g_menu.y + g_menu.h;
+}
+
 /* ---------------- 动作执行 ---------------- */
 
 static void apply_action(const VmShellAction *a) {
     switch (a->kind) {
         case VM_SHELL_ACTION_START:
-            /* 开始菜单尚未迁入外壳进程（M5.1 只做任务栏）。 */
-            SHELL_LOG("start button (menu not migrated yet)");
+            /* 开始菜单尚未迁入外壳进程（M7.2b）。 */
+            SHELL_LOG("start button (start menu not migrated yet)");
             break;
         case VM_SHELL_ACTION_SETTINGS:
-            SHELL_LOG("taskbar settings (settings panel not migrated yet)");
-            break;
         case VM_SHELL_ACTION_CONTEXT_MENU:
-            /* 弹出菜单需要自己的窗口 + popup dismiss；M5.2 补。 */
-            SHELL_LOG("context menu win=%d (not migrated yet)", a->winId);
+            /* 建菜单窗口是同步请求，交给主循环（事件回调里会重入 uv_run）。 */
+            g_pendingMenuTarget = a->kind == VM_SHELL_ACTION_CONTEXT_MENU ? a->winId : 0;
+            g_pendingMenuX = a->x;
+            g_pendingMenuY = g_screenH - VmShell_Height(g_shell) + a->y;
+            g_pendingOpenMenu = 1;
             break;
         case VM_SHELL_ACTION_TOGGLE_DESKTOP: {
             int n = 0;
@@ -170,6 +321,15 @@ static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
     case EVT_POINTER: {
         const VmWmEvtPointer *p = Wms_AsPointer(e);
         if (!p) break;
+        /* 菜单开着：在菜单内更新 hover；按在菜单外就关掉（Windows 行为）。
+           关闭动作放到主循环，避免在事件回调里发同步请求。 */
+        if (g_menuOpen) {
+            if (p->down && !inside_menu(p->x, p->y)) {
+                g_pendingCloseMenu = 1;
+                break;
+            }
+            if (VmMenuView_SetHover(&g_menu, p->x, p->y)) g_menuDirty = 1;
+        }
         g_model.pointerX = p->x;
         g_model.pointerY = p->y;
         g_model.pointerValid = 1;
@@ -182,12 +342,22 @@ static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
         const VmWmReqInput *in = Wms_AsInput(e);
         VmShellAction a;
         if (!in || in->kind != 1 || !in->is_down) break;
+        /* 菜单点击优先：body 局部 → 画布坐标再命中；执行放主循环。 */
+        if (g_menuOpen && in->win_id == g_menuWin) {
+            int idx = VmMenuView_Hit(&g_menu, g_menu.x + in->x, g_menu.y + in->y);
+            g_pendingMenuAct = idx >= 0 ? g_menuAction[idx] : MENU_ACT_NONE;
+            g_pendingMenuActTarget = g_menuTarget;
+            g_pendingCloseMenu = 1;
+            g_dirty = 1;
+            break;
+        }
         /* 服务端已转成 body 局部坐标；任务栏无装饰，body 即整窗。 */
         if (VmShell_HitTest(g_shell, &g_model, in->x, in->y,
                             in->button == 2 ? 2 : 0, 1, &a)) {
             SHELL_LOG("input id=%llu kind=1 down=1 (%d,%d) -> action %d",
                       (unsigned long long)in->win_id, in->x, in->y, (int)a.kind);
-            apply_action(&a);
+            g_pendingShellAct = a;
+            g_hasPendingShellAct = 1;
             g_dirty = 1;
         }
         break;
@@ -195,6 +365,18 @@ static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
     case EVT_LAYOUT_REQ: {
         const VmWmEvtLayoutReq *lr = Wms_AsLayoutReq(e);
         if (!lr) break;
+        /* 菜单窗口的 layout_req 先于 CreateWindow 返回，按"菜单开着且还没拿到
+           win_id"认领；它必然不是任务栏。 */
+        if (g_menuOpen && g_menuWin == 0 && lr->win_id != g_taskbar) {
+            g_menuWin = lr->win_id;
+            g_menuEpoch = lr->epoch;
+            g_menuBodyW = lr->width;
+            g_menuBodyH = lr->height;
+            g_menuDirty = 1;
+            SHELL_LOG("menu layout epoch=%u body=%dx%d",
+                      (unsigned)lr->epoch, lr->width, lr->height);
+            break;
+        }
         /* 服务端在建窗请求的处理里就发了 layout_req，那时 Wms_CreateWindow
            还没返回，g_taskbar 仍是 0。外壳只建一个窗口，所以第一条
            layout_req 必然属于任务栏，直接认领。 */
@@ -256,6 +438,10 @@ static int connect_wms(void) {
     int h;
     theme = VmTheme_Default();
 
+    g_theme = theme;
+    g_screenW = sw;
+    g_screenH = sh;
+
     h = theme->panelHeight > 0 ? theme->panelHeight : VM_SHELL_DEFAULT_HEIGHT;
     g_shell = VmShell_New(theme, sw, h);
     if (!g_shell) return 0;
@@ -309,6 +495,27 @@ static void on_timer(uv_timer_t *t) {
         g_resync = 0;
         resync_windows();
     }
+    /* 本轮的同步 WMS 请求都在这里做，事件回调只记录意图。 */
+    if (g_pendingCloseMenu) {
+        g_pendingCloseMenu = 0;
+        close_menu();
+    }
+    if (g_pendingOpenMenu) {
+        g_pendingOpenMenu = 0;
+        open_menu(g_pendingMenuTarget, g_pendingMenuX, g_pendingMenuY);
+    }
+    if (g_pendingMenuAct != MENU_ACT_NONE) {
+        int act = g_pendingMenuAct;
+        g_pendingMenuAct = MENU_ACT_NONE;
+        g_menuTarget = g_pendingMenuActTarget;
+        apply_menu(act);
+    }
+    if (g_hasPendingShellAct) {
+        g_hasPendingShellAct = 0;
+        apply_action(&g_pendingShellAct);
+    }
+
+    if (g_menuDirty) push_menu();
     if (g_dirty) push_content();
 }
 

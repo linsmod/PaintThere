@@ -518,6 +518,10 @@ Direct 后端与最小 XAML 子集（Canvas/DockPanel/Layers/Repeat + LIST 绑�
 
 **恢复点**：`vm_shell` 独立提供任务栏 + 开始菜单 + 右键菜单 + 设置面板。
 
+**状态：进行中（2026-11-25）**。右键菜单已完成：`vm_menu_view.c`（纯绘制/命中）、
+shell 菜单窗口、条目/空白右键、点外关闭；事件回调只记录意图，所有同步 WMS 请求在主循环执行
+（避免 `client_call` 重入 `uv_run` 导致建窗超时）。开始菜单与设置面板未做。
+
 #### M7.3 新 app 接 Clay 控件层（A5）
 
 **决策**：不复用 `jpx_widget.c` 的绘制代码——它与 `JpxApp` 单例、`Jpx__App()`、

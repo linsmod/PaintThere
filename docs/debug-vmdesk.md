@@ -30,7 +30,7 @@
 
 ### VM 桌面（guest 侧）
 
-- **调试自动化 HTTP 接口**（demo_jpx）：`GET /auto/<op>?query`，绕开浏览器合成输入直接调 shell/主题接口。op：`themes`（列主题）、`apply?name=<slug>`（加载+应用预编译主题，与设置窗口同一条路径）、`theme`（当前主题关键 token + respackId + selectedColor/accentColor）、`settings`（打开设置窗口）。回调注册在 `VmServer_SetAutoHandler`，op 实现在 `demo_jpx.c auto_handler`。排查主题切换类问题先打这套接口，别一上来就开浏览器。
+- **（old infra，已随 demo_jpx 删除）调试自动化 HTTP 接口**：`GET /auto/<op>?query`，绕开浏览器合成输入直接调 shell/主题接口。op：`themes`（列主题）、`apply?name=<slug>`（加载+应用预编译主题，与设置窗口同一条路径）、`theme`（当前主题关键 token + respackId + selectedColor/accentColor）、`settings`（打开设置窗口）。回调注册在 `VmServer_SetAutoHandler`，op 实现在 `demo_jpx.c auto_handler`。排查主题切换类问题先打这套接口，别一上来就开浏览器。
 - **主题切换链路的排查顺序**：`/auto/theme` 看 guest 生效 token → `curl /respack/<respackId>`（id 从 theme 响应里拿）核对下发的 pattern → 都对再看客户端。主题资源包是 `loadResPack(id)` 命令 + client 主动 GET，每次 apply 递增 id。C 渲染器同样有 `fetch`（页面 URL 指向服务端时），respack 会异步拉取并应用。`vm_renderer.js` 把帧排队等资源就绪：先等 `loadResPack` 完成、`defineStyle` 进 `styleCache`，再 `execOps`，所以首帧不会把 `s_*` 样式 id 当颜色传给 Canvas。
 - **主题派生的颜色兜底**：`system` / `system-xp` / `system-vista` 这类基础主题没有 TaskbarBackground/TrayBackground/ButtonFace，派生曾落回默认主题的近黑面板色，表现为“任务栏变黑”；SystemColors 标记扩展（`{x:Static ...}`）解析不出颜色时整个资源跳过，不进表也不进 respack。修这类问题先 `/auto/apply` 逐主题扫 `panelColor`。
 - **JPX 列表选中项的颜色 token 是 `selectedColor` 不是 `accentColor`**：accent 是任务按钮渐变的代表色，玻璃主题（longhorn-aero）派生出半透明白，白底列表的选中项会整行隐形。列表行有两条绘制路径——平铺 `Jpx_ListBox` 与虚拟化 `Jpx_ListRowEx`（XAML 带 `Rows` 属性走后者），两处都要改。
@@ -51,6 +51,19 @@
   `$env:EM_CONFIG='H:\github_repos\emsdk\.emscripten'` 才能找到 node/python/LLVM。
   `where emcc` 找不到不代表没安装 —— 先看 `emsdk/upstream/emscripten`。
 - **`inspect_vm_frame.py` 的对象断言**：手工解析 SSE 时 `ops` 里可能混有非 dict 元素，`p.get('ops')` 之前要判 `isinstance(p, dict)`，否则报 `'list' object has no attribute 'get'`。
+
+### WMS 进程化（M0–M7）
+
+- **事件回调里发同步 WMS 请求会重入 libuv**。`Wms_CreateWindow` / `Wms_PushContent` 内部跑 `uv_run`；在 `on_wms_event` 里直接调用会嵌套 `uv_run`，ACK 永远读不到，表现为 `create failed (timeout)`。规则：回调只记意图，同步请求放主循环（`shell/main.c` 的 `g_pending*` 模式）。
+- **`EVT_LAYOUT_REQ` 早于 create 的 ACK 到达**。服务端在 create 处理里就发 layout，此时调用方还没拿到 `win_id`。单窗口进程可「认领第一条 layout_req」；多窗口要用「本次 create 期间尚未认领」的状态机。
+- **外壳断开不要保留其窗口**。曾按「SHELL 掉线保留窗口、owner 置 0」实现，kill 外壳后任务栏以无主窗口留在画面上。改为断开即回收名下窗口，工作区保留最后值。
+- **`CLAY_SIZING_FIT` 空容器高度为 0**。空文本输入框的 FIT 高度是 0，背景与命中区被 tile 切分静默丢弃，控件「看不见」但代码路径都跑到。输入框/按钮给固定高度；判断方法：`Clay_GetElementData(id).boundingBox` 宽对高 0。
+- **合成点击必须先 `mousemove` 再 `mousedown`**。只发 mousedown 时 Clay 的 `pointerInfo` 没更新，`Clay_Hovered()` 为假，点击被吞。`drive_vm_desktop.py` 的 `down` 已内置 move；手写 curl 要自己补。
+- **无条目渐变的主题不能拿 `fgColor` 当条目底色**。`fgColor` 是文字色，会出现浅底白字；用 `bgColor`，focused 仍用 `accentColor`。
+- **`vm_host` 丢弃 `cmd_size` 不匹配的内容**。改 `VmDrawCommand` 必须同时改所有 producer 与消费端，否则内容静默消失（日志有 `cmd_size=... != ...`）。
+- **内容按 epoch 丢弃**。producer 必须把收到的 epoch 原样回传；wms 不复用旧 epoch 的内容。
+- **命令 id 必须跨帧稳定**。diff 与 tile 差分依赖 id；随机 id 不报错，只让带宽退化成全量。
+- **改代码前先停 exe**：Windows 锁定 `build/*.exe`，链接会失败或保留旧文件。
 
 ## 调试脚本
 

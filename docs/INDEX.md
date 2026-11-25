@@ -20,6 +20,7 @@
 - `design-jp-xaml-theme.md` — ResourceDictionary 主题设计（2026-11-23 冻结）：多 stop 渐变协议扩展、资源热更新、VM 主题派生、尺寸实测修正。
 - `task-jp-xaml-theme.md` — ResourceDictionary 主题执行文档：协议/前端渐变、资源字典解析、WM/shell 接入、热更新的分阶段计划与恢复点。
 - `task-wms-binary-frame.md` — wms↔rdp 二进制帧通道（档位 A）：tile-op 二进制编码、JSON 边界移到 rdp、旧 JSON 事件并存与验收计划。
+- `task-wms-shm-frame.md` — wms↔rdp 共享内存帧通道（档位 B）：命名规则、slot ring/seqlock 布局、SHM 通知事件与复用方案。
 - `task-shell-context-menu-and-settings.md` — 任务栏右键菜单与设置面板（对标 RetroBar）：WM 右键通道、vm_menu 弹出菜单控件、jpx_shell_settings 设置组件与配置持久化的执行记录。
 - `task-taskbar-retrobar-fidelity.md` — 任务栏几何全量主题数据驱动（对标 RetroBar）：Thickness/模板几何采集、条目动态宽度、托盘内容驱动、按钮溢出高度、开始按钮 XP 排版；含逐元素几何验证证据。
 - `task-taskbar-template-layer.md` — 任务栏按钮模板层次化（对标 RetroBar TaskButton 模板）：三态模板层集（主渐变多 stop + 外 4 边 + 内 3 边 + 对角高光）、宋体字体源替换；含线路与视觉验证。

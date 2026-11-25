@@ -346,7 +346,20 @@ target_include_directories(vm_shell PRIVATE
     "${MSTB_DIR}")
 target_link_libraries(vm_shell PRIVATE wms_client ${WMS_PLATFORM_LIBS})
 
-set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer vm_wms test_wms_app test_wms_shell test_wms_rdp vm_rdp vm_shell PROPERTIES
+# 新架构应用（M6）：只依赖 VmCmdBuffer 与 wms 协议。
+# 不链 vm_wm / vm_server / vm_shell / Clay；A1 的界面是手写命令。
+add_executable(vm_app
+    app/main.c
+    app/ui_hello.c
+    vm_display.c
+    vm_font.c)
+target_include_directories(vm_app PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/wms"
+    "${MSTB_DIR}")
+target_link_libraries(vm_app PRIVATE wms_client ${WMS_PLATFORM_LIBS})
+
+set_target_properties(demo_wm demo_jpx demo_xaml vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer vm_wms test_wms_app test_wms_shell test_wms_rdp vm_rdp vm_shell vm_app PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"

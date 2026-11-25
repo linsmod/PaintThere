@@ -149,9 +149,53 @@ e2e（A1–A3 稳定后加入）：`tools/e2e_wms.ps1` 新增 `app` 场景，断
 
 | 步 | 状态 |
 |---|---|
-| A1 骨架与单窗口 | 未开始 |
-| A2 两实例并发 | 未开始 |
-| A3 崩溃隔离 | 未开始 |
-| A4 几何与 epoch | 未开始 |
+| A1 骨架与单窗口 | 已完成（2026-11-25） |
+| A2 两实例并发 | 已完成（2026-11-25） |
+| A3 崩溃隔离 | 已完成（2026-11-25） |
+| A4 几何与 epoch | 已完成（2026-11-25） |
 | A5 Clay 后端（M7） | 未开始 |
 | A6 XAML 后端（M7） | 未开始 |
+
+## 9. 执行记录：A1–A4（2026-11-25）
+
+**做了什么**
+
+1. `app/main.c`：`WmsClient(APP)` → 建窗 → 订阅 `EVT_LAYOUT_REQ｜EVT_INPUT｜EVT_WINDOW_CLOSE｜EVT_THEME_CHANGED`；
+   首个 layout_req 认领窗口（create ACK 之前到达）；`push_content` 用最近 epoch；
+   caret 500ms timer；`--x/--y/--slow-layout/--resize-after` 四个测试参数。
+2. `app/ui_hello.c/.h`：9 条手写命令（bg / label / btn / btn_label / input / input_border /
+   input_text / caret / hint），按钮 toggle，输入框尾部截断 + caret。
+3. CMake target `vm_app`：`app/main.c app/ui_hello.c vm_display.c vm_font.c` + `wms_client`；
+   不链 `vm_wm` / `vm_server` / `vm_shell` / Clay。
+
+**验收证据**
+
+| 项 | 实测 |
+|---|---|
+| A1 body | `layout epoch=1 body=418x249`（420 − 2×1 边框，280 − 30 标题 − 1） |
+| A1 内容 | 帧文本 `vm_app / A1 (no Clay)` @ (77,102) = 窗口(40,60)+body(1,30)+内容(16,12) |
+| A1 点击 | 画布 (120,160) → body (79,70) → `button -> pressed=1 clicks=1`；帧 `Clicked: 1  [on]` @ (89,156) |
+| A1 输入 | `key h` / `key i` → 帧文本 `hi` @ (85,209)，caret 由 500ms 相位控制 |
+| A2 并发 | 两实例各一窗；任务栏两条目 `Hello` / `Second`；内容互不覆盖 |
+| A3 隔离 | kill Second → wms `remove window id=3`；帧无 Second；Hello 仍 `button -> pressed=1 clicks=1` |
+| A4 epoch | `resize -> 520x340` → `layout epoch=2 body=518x309` → `push epoch=2 accepted=1`；hint y 从 221 → 368 |
+| A4 不卡 | Slow app `--slow-layout 300` 期间，另一窗口的帧照常更新（60009 B 增量批次） |
+| e2e | `app` 场景 8 条断言，总计 **61/61** |
+| 截图 | `temp/m6-a1.png`：两窗口 + 任务栏两条目 + 时钟 |
+
+**观察**
+
+- **建窗竞态**：后启动的进程可能先拿到 `win_id`（实测 Second=2、Hello=3）。任务栏按
+  `created_seq` 排序，所以条目不按启动命令的先后排列，这是预期行为。
+- **修复 M5.1 遗留**：默认主题没有条目渐变时，`vm_shell` 用 `fgColor`（文字色）当条目底色，
+  出现浅底白字。改为 `bgColor`，`focused` 仍用 `accentColor`。该修复会改变 `demo_jpx`
+  的任务栏帧，取代旧「166531 逐字节一致」基线。
+- `Wms_PushContent` 在 app 侧是同步等 ACK；`--slow-layout` 的延迟只卡本进程，
+  wms 合成与其他 app 不受影响（A4 已验证）。
+
+**恢复点**：`vm_app.exe` 可独立跑两实例，e2e `app` 场景通过。
+
+## 10. 下一步
+
+A5/A6 属 M7：接 Clay 与 XAML 后端，前置 `docs/task-shell-xaml-framework.md` P1/P2。
+旧 app（`demo_jpx` / `demo_xaml` / `jpx` / `jpx_xaml`）在 A5/A6 完成并验收后删除。

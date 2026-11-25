@@ -410,6 +410,65 @@ Assert-Log    $sseC  'wmwm test win'                               '重启后任
 Stop-Tool $app; Stop-Tool $sh2; Stop-Tool $shRdp; Stop-Tool $srv
 
 # ---------------------------------------------------------------
+# 7. app：新架构应用（vm_app，只依赖 VmCmdBuffer 与 wms 协议）
+#    两个实例并发 → 内容进帧、任务栏两条目 → 点击命中 → kill 一个只掉自己的窗口。
+# ---------------------------------------------------------------
+Write-Host "`n== scenario: app ==" -ForegroundColor Cyan
+$pipe    = New-Pipe 'app'
+$appPort = 19800 + (Get-Random -Maximum 90)
+$a6SrvO  = Join-Path $LogDir 'app-server.out.txt'
+$a6SrvE  = Join-Path $LogDir 'app-server.err.txt'
+$a6ShO   = Join-Path $LogDir 'app-shell.out.txt'
+$a6ShE   = Join-Path $LogDir 'app-shell.err.txt'
+$a6A1O   = Join-Path $LogDir 'app-a1.out.txt'
+$a6A1E   = Join-Path $LogDir 'app-a1.err.txt'
+$a6A2O   = Join-Path $LogDir 'app-a2.out.txt'
+$a6A2E   = Join-Path $LogDir 'app-a2.err.txt'
+$a6RdpO  = Join-Path $LogDir 'app-rdp.out.txt'
+$a6RdpE  = Join-Path $LogDir 'app-rdp.err.txt'
+$sse1    = Join-Path $LogDir 'app-sse-before.txt'
+$sse2    = Join-Path $LogDir 'app-sse-after-kill.txt'
+$a6Base  = "http://127.0.0.1:$appPort"
+
+$srv = Start-Tool 'vm_wms.exe' @('--pipe', $pipe, '--screen', '800x600') $a6SrvO $a6SrvE
+if (-not (Wait-ServerReady $a6SrvE)) { Write-Host '  server 未就绪' -ForegroundColor Red; $script:Fails++ }
+$sh = Start-Tool 'vm_shell.exe' @('--pipe', $pipe, '--font', $fontPath) $a6ShO $a6ShE
+Start-Sleep -Milliseconds 400
+$a6App1 = Start-Tool 'vm_app.exe' @('--pipe', $pipe, '--title', 'Hello', '--x', '40', '--y', '60',
+    '--font', $fontPath) $a6A1O $a6A1E
+Start-Sleep -Milliseconds 500
+$a6App2 = Start-Tool 'vm_app.exe' @('--pipe', $pipe, '--title', 'Second', '--x', '460', '--y', '120',
+    '--font', $fontPath) $a6A2O $a6A2E
+Start-Sleep -Milliseconds 500
+$a6Rdp = Start-Tool 'vm_rdp.exe' @('--port', "$appPort", '--pipe', $pipe,
+    '--web-root', $assetsDir, '--font', $fontPath) $a6RdpO $a6RdpE
+Wait-Log $a6RdpE "listening on 127.0.0.1:$appPort" | Out-Null
+Start-Sleep -Milliseconds 800
+
+& curl.exe -s --noproxy '*' --max-time 4 "$a6Base/events" -o $sse1 2>$null | Out-Null
+Assert-Log $a6SrvE 'handshake client id=\d+ type=APP'          '新 app 以 APP 角色连上'
+Assert-Log $a6A1E 'layout epoch=1 body='                        'app 收到首次布局请求'
+Assert-Log $a6A1E 'push epoch=1 count=\d+ accepted=1'          'app 内容被 wms 采纳'
+Assert-Log $sse1  'vm_app / A1'                                 'fullframe 含 app 手写内容'
+Assert-Log $sse1  'Second'                                      '任务栏含第二个 app 条目'
+
+# 点击 Hello 的按钮（窗口 40,60 + body 偏移 1,30 + 按钮 16,56）
+& curl.exe -s --noproxy '*' --max-time 4 -X POST -H "Content-Type: application/json" `
+    -d '{"kind":"mousedown","x":120,"y":160,"button":0,"clientId":"e2e-app"}' "$a6Base/input" 2>$null | Out-Null
+& curl.exe -s --noproxy '*' --max-time 4 -X POST -H "Content-Type: application/json" `
+    -d '{"kind":"mouseup","x":120,"y":160,"button":0,"clientId":"e2e-app"}' "$a6Base/input" 2>$null | Out-Null
+Start-Sleep -Milliseconds 500
+Assert-Log $a6A1E 'button -> pressed=1 clicks=1'                '点击命中按钮并改状态'
+
+Stop-Process -Id $a6App2.Id -Force
+Start-Sleep -Milliseconds 700
+& curl.exe -s --noproxy '*' --max-time 4 "$a6Base/events" -o $sse2 2>$null | Out-Null
+Assert-NoLog $sse2 'Second'                                     'kill 第二个 app 后其窗口与条目消失'
+Assert-Log   $sse2 'vm_app / A1'                                'kill 后另一个 app 内容保留'
+
+Stop-Tool $a6App1; Stop-Tool $a6Rdp; Stop-Tool $sh; Stop-Tool $srv
+
+# ---------------------------------------------------------------
 # 汇总
 # ---------------------------------------------------------------
 $ok = $script:Checks - $script:Fails

@@ -21,6 +21,7 @@
   - `wms/`：WMS 进程化层（协议 v2）。`wms_ipc.h` 线路协议、`wms_client.c` 句柄式客户端 SDK、`wms_server.c` 窗口表/焦点/输入路由/连接生命周期、`vm_host.c` 本项目合成宿主（装饰 + 合成 + 瓦片 + 资源包）。产物 `vm_wms.exe`；`--mock` 挂占位宿主。
   - `rdp/`：呈现端服务器（产物 `vm_rdp.exe`）。libuv 实现 HTTP / SSE / WebSocket / 静态资源 / respack；帧来自 `EVT_FRAME` / `EVT_FULLFRAME`，输入走 `CMD_INPUT`。不合成、不持窗口表。
   - `shell/`：桌面外壳进程（产物 `vm_shell.exe`）。以 SHELL 角色连 wms：建任务栏窗口（flags 四件套）、推内容、把输入命中翻成 `Wms_*`；不链 `vm_wm` / Clay。
+  - `app/`：新架构应用（产物 `vm_app.exe`）。以 APP 角色连 wms，按 `EVT_LAYOUT_REQ` 产出 body 局部 `VmCmdBuffer` 并推送；不链 `vm_wm` / `vm_server` / Clay。旧 `demo_jpx` / `demo_xaml` 已标弃用，M7 删除。
   - `demo_wm.c`、`demo_jpx.c`、`demo_xaml.c`：分别演示 WM/多客户端指针、JPX 桌面外壳、jp_xaml 表单与主题热切换。
   - `jpx/`、`jpx_xaml/`：JPX 应用框架与声明式 UI 的解析、视图、主题预编译。
   - `test_*.c`：纯逻辑断言测试，统一支持 `--probe`；命令与耗时见 `docs/test-timing.md`。

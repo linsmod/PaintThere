@@ -46,11 +46,12 @@
 - `vm-desktop/vm_server.c/.h` — C 跨平台 HTTP 服务：`GET /events` SSE 推帧、`POST /input` 收原始输入、白名单静态资源。单进程模式（`demo_jpx` / `demo_wm`）仍用它；拆进程后由 `rdp/` 接替。
 - `vm-desktop/rdp/` — 呈现端服务器 `vm_rdp.exe`：libuv 实现的 HTTP / SSE / WebSocket / 静态资源 / respack。帧与资源全部来自 `vm_wms` 的事件，自己不合成；不链 `vm_wm` / Clay。`--port`（默认 9000）、`--pipe`、`--web-root`、`--font`。
 - `vm-desktop/shell/` — 桌面外壳进程 `vm_shell.exe`：`--pipe`、`--font`。以 SHELL 角色连 `vm_wms`，建任务栏窗口并推内容，输入命中转成 `Wms_*`。不链 `vm_wm` / Clay。开始菜单/设置面板/右键菜单尚未迁入。
+- `vm-desktop/app/` — 新架构应用 `vm_app.exe`（M6）：`--pipe`、`--title`、`--x`、`--y`、`--font`、`--slow-layout <ms>`、`--resize-after <ms> <w> <h>`。以 APP 角色连 `vm_wms`，只回 body 局部 `VmCmdBuffer`；A1 界面是手写命令（`ui_hello.c`），不链 Clay。
 - `vm-desktop/vm_shell.c/.h` — 任务栏纯绘制层：`VmShellModel`（条目快照 + 指针）→ `VmCmdBuffer` 或 `VmShellAction`；`vm_shell_local.c` 是单进程适配（`VmWm` → model，action → `VmWm_*`）。
 - `vm-desktop/wms/` — WMS 协议层与服务：`wms_ipc.h`（v2 线路协议）、`wms_client.c`（句柄式 SDK）、`wms_server.c`（窗口表/焦点/输入路由）、`vm_host.c`（本项目合成宿主，10 个回调）。
 - `vm-desktop/demo_server.c` — SSE 服务 demo。构建：`gcc -std=c11 -I<clay-dir> -I. demo_server.c demo_layout.c clay_frame_adapter.c vm_server.c -lws2_32 -o demo_server.exe`；运行：`./demo_server 9000`（webRoot 默认 `../assets`）。本机 clay 目录 `H:\github_repos\clay`；验证截图 `vm-desktop/demo_render.png`。
 
-- `e2e_wms.ps1` — WMS 端到端验收：`pwsh tools/e2e_wms.ps1`（`-SkipBuild` 跳过构建）。起 `vm_wms` + `vm_rdp` + `test_wms_app/shell/rdp` + 真实 `vm_shell`，跑 proto / basic / crash / restart / rdp / shell 六个场景共 53 条断言；rdp 场景覆盖 HTTP 首页、SSE 基线、应用内容进帧、respack 容器、HTTP 与 WebSocket 两条输入通道、kill rdp 后重启恢复画面；shell 场景覆盖真实外壳推送任务栏、kill 后任务栏消失且应用保留、重启后重建。日志落 `temp/e2e-wms-logs/`（不受 git 管理）。每个场景用独立管道名 `\\.\pipe\vmwm_e2e_<tag>_<随机>` 与独立端口（`19xxx`），可与正在运行的实例并存。验收结果与已知限制见 `docs/task-vm-wms-merge.md` §13.7。
+- `e2e_wms.ps1` — WMS 端到端验收：`pwsh tools/e2e_wms.ps1`（`-SkipBuild` 跳过构建）。起 `vm_wms` + `vm_rdp` + `test_wms_app/shell/rdp` + 真实 `vm_shell` / `vm_app`，跑 proto / basic / crash / restart / rdp / shell / app 七个场景共 61 条断言；rdp 场景覆盖 HTTP 首页、SSE 基线、应用内容进帧、respack 容器、HTTP 与 WebSocket 两条输入通道、kill rdp 后重启恢复画面；shell 场景覆盖真实外壳推送任务栏、kill 后任务栏消失且应用保留、重启后重建；app 场景覆盖新 app 建窗与内容、任务栏两条目、点击命中、kill 一个实例后另一个保留。日志落 `temp/e2e-wms-logs/`（不受 git 管理）。每个场景用独立管道名 `\\.\pipe\vmwm_e2e_<tag>_<随机>` 与独立端口（`19xxx`），可与正在运行的实例并存。验收结果与已知限制见 `docs/task-vm-wms-merge.md` §13.9。
 - `probe_ws_input.py` — 最小 WebSocket 上行探针，覆盖 curl 到不了的 `/ws` 握手与掩码帧：`python tools/probe_ws_input.py --port 19090 [--kind keydown --key Tab] [--quiet]`。对 `vm_rdp` / `demo_jpx` 都可用；断言落点是对端日志（`input kind=...`）与应用侧收到的 body 局部坐标。e2e 的 rdp 场景调用它。
 
 构建与验证使用标准命令：`python tools/build_vm.py`、`python tools/start_vm_desktop.py`，浏览器验证使用 `agent-browser`。详见 `docs/debug-vmdesk.md`。

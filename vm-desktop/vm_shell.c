@@ -312,7 +312,9 @@ void VmShell_Paint(VmShell *sh, const VmShellModel *m, VmCmdBuffer *out,
                     : "s_task";
         else if (it->focused && t->taskButtonActiveFrom) paint = "s_task_active";
         else if (t->taskButtonFrom) paint = "s_task";
-        else paint = it->focused ? t->accentColor : t->fgColor;
+        /* 无条目渐变的主题（默认深色）用 bgColor 做底：fgColor 是文字色，
+           拿它当底色会出现浅底白字（M5.1 截图暴露）。focused 仍用 accent 强调。 */
+        else paint = it->focused ? t->accentColor : t->bgColor;
 
         /* 绘制区 = 条目盒内缩模板 Padding（XP ButtonBorder 0,3,0,2）：
            渐变体不画满整栏，栏顶/底露出背景条；开始按钮无此内缩，

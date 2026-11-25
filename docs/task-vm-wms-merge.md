@@ -510,10 +510,10 @@ e2e 全过；文档里的可执行体列表与 CMake target 一致。
 |---|---|
 | 协议编解码 | `test_wms_ipc.exe --probe`（36 项） |
 | 进程身份 | `test_peer.exe --probe`（7 项） |
-| 窗口元数据 + 端到端 | `tools/e2e_wms.ps1`（53 条断言，五进程场景；含真实 `vm_shell`） |
+| 窗口元数据 + 端到端 | `tools/e2e_wms.ps1`（61 条断言，七场景；含真实 `vm_shell` 与 `vm_app`） |
 | 合成与瓦片 | `test_frame --probe` + `inspect_vm_frame.py` 对比 M0 基线 |
 | 崩溃容错 | §1 的 5 条手工验收 |
-| 新 app（producer） | `docs/task-vm-app.md` A1–A4；两实例 / kill / resize / epoch |
+| 新 app（producer） | `docs/task-vm-app.md` A1–A4 + e2e `app` 场景（两实例 / 点击 / kill / resize / epoch） |
 | 界面语义 | `test_menu --probe`、`test_jpx_xaml_theme --probe` |
 
 **测试隔离**：`vm_wms` / `vm_rdp` / `vm_shell` 的 e2e 各用独立管道名（`--pipe \\.\pipe\vmwm_test_<pid>`）与端口（`19xxx`），不碰用户正在运行的实例。`test_wms_ipc` / `test_peer` 不开 socket。
@@ -564,7 +564,7 @@ e2e 全过；文档里的可执行体列表与 CMake target 一致。
 | M3 宿主接入 | 已完成（2026-11-24） | 见 §13.4 |
 | M4 rdp 拆分 | 已完成（2026-11-24） | 见 §13.5 |
 | M5 外壳独立 | 已完成（2026-11-24） | 5.1 迁进程（§13.7）、5.2 去 Clay / 5.3 模板抽函数（§13.8）；任务栏 XAML 化另见 `docs/task-shell-xaml-framework.md` |
-| M6 新架构 app | 未开始 | 从零写 `vm_app`，见 `docs/task-vm-app.md`；旧 app 标弃用、不重构 |
+| M6 新架构 app | 已完成（2026-11-25） | A1–A4 见 `docs/task-vm-app.md` §9；e2e `app` 场景 8 条；旧 app 保持弃用状态 |
 | M7 工具包替换与删除旧 app | 未开始 | 依赖 `docs/task-shell-xaml-framework.md` P1/P2；删除 `jpx`/`demo_jpx`/`demo_xaml` |
 
 ## 13. 执行记录
@@ -856,3 +856,37 @@ hover 需要指针位置，而 `EVT_INPUT` 只发给命中窗口的属主，鼠�
   等 XAML 化时一并处理。
 
 **恢复点**：`vm_wm` 不再认识任何 UI 库；窗口内容契约只有 `VmCmdBuffer`。
+
+### 13.9 M6 新架构 app（2026-11-25）
+
+**做了什么**
+
+1. 新增 `vm-desktop/app/`（产物 `vm_app.exe`）：
+   - `app/main.c`：`WmsClient(APP)` → 建窗 → `EVT_LAYOUT_REQ` 驱动 → `Wms_PushContent`；
+     输入按 body 局部坐标分发；caret 500ms timer；`--x/--y/--slow-layout/--resize-after` 测试参数。
+   - `app/ui_hello.c/.h`：9 条手写命令（背景、标签、按钮、输入框、caret、提示）。
+2. CMake target `vm_app`：只链 `wms_client` + `vm_display` + `vm_font`；
+   不链 `vm_wm` / `vm_server` / `vm_shell` / Clay。
+3. e2e 新增 `app` 场景 8 条：APP 握手、首次布局、内容采纳、帧含手写内容、
+   任务栏两条目、点击命中按钮、kill 第二个 app 后其窗口消失、另一个 app 内容保留。
+   总数 53 → **61**。
+4. 修 M5.1 遗留配色：默认主题没有条目渐变时 `vm_shell` 用 `fgColor`（文字色）当条目底色，
+   出现浅底白字；改为 `bgColor`，focused 仍用 `accentColor`。
+
+**验收**
+
+- A1–A4 全过（证据见 `docs/task-vm-app.md` §9）：body 418x249、点击后
+  `Clicked: 1  [on]`、输入 `hi`、`resize → epoch=2 body=518x309`、慢布局不阻塞其他窗口。
+- `pwsh tools/e2e_wms.ps1 -SkipBuild` → **61/61**。
+- 8 个单元测试断言数不变全过。
+- 截图 `temp/m6-a1.png`：两个 app 窗口 + 任务栏两条目 + 时钟。
+
+**观察**
+
+- **建窗竞态**：后启动的进程可能先拿到 `win_id`（实测 Second=2、Hello=3）。
+  任务栏按 `created_seq` 排序，条目不按启动命令先后排列，属预期。
+- 配色修复改变了 `demo_jpx` 的任务栏帧，M5 的「166531 逐字节一致」基线不再适用；
+  新的对比口径是「除任务栏条目底色外一致」。
+- `Wms_PushContent` 在 app 侧同步等 ACK；`--slow-layout` 只卡本进程，wms 合成与其他 app 不受影响。
+
+**恢复点**：`vm_app.exe` 两实例在线，kill 隔离成立；旧 app 仍在（M7 删除）。

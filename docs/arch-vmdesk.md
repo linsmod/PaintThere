@@ -27,7 +27,7 @@
   - `ui/`：`vm_ui_core`（焦点/文本编辑/命中）+ `ui/clay/`（`vm_ui_clay` 控件层）。
   - `test_*.c`：纯逻辑断言测试，统一支持 `--probe`；命令与耗时见 `docs/test-timing.md`。
 - `assets/`：浏览器与 C 渲染器共享的前端资源。
-  - `vm_renderer.js`：唯一渲染入口；连接 `/events?client=<id>` 收帧，管理瓦片画布与资源批次，上行主路径是 `/ws?client=<id>`，连不上才回退 `POST /input`。`<id>` 存在 localStorage，同浏览器多标签页共用一个身份，新标签页接管会话，旧标签页停止重连并显示接管提示。
+  - `vm_renderer.js`：唯一渲染入口；连接 `/events?client=<id>&boot=<票>` 收帧，管理瓦片画布与资源批次，上行主路径是 `/ws?client=<id>&boot=<票>`，连不上才回退 `POST /input`。`<id>` 存在 localStorage，同浏览器多标签页共用一个身份，新标签页接管会话，旧标签页停止重连并显示接管提示；`<票>` 由 index 注入（C 宿主走 `GET /boot`）。
   - `app.js`：绘制原语与资源命令执行（`commandHandlers`）、`setDrawTarget`、文本重放。
   - `font_wasm.js` + `stb_font_wasm.mjs/.wasm`：浏览器端 stb_truetype 光栅化；`font.ttf` 为浏览器与 guest 共用字体。
   - `themes/`：预编译的 RetroBar 风格主题包；`index.html` / `preview.html` 为主题列表与预览页。
@@ -60,6 +60,7 @@
 - **资源一次性下发**：`definePattern` / `defineStyle` / `defineDrawProgram` / `loadImg` 等按 id 缓存；主题包由 `loadResPack(id)` 加客户端 GET 拉取。
 - **字体同源**：guest 的 `vm_font` 与浏览器的 wasm 光栅化共用同一 TTF 与度量口径，不使用 Canvas `fillText`。
 - **一个 clientId 一条会话**：会话由 `clientId`（浏览器 localStorage）标识，最多一条 SSE + 一条 WS。同角色新连接视为重连/新标签页接管：先给旧 SSE 发 `{"op":"takenOver"}`、给旧 WS 发 close 4001，再绑新连接；前端收到后停止自动重连。会话上限 8，连接硬上限 64；超限对 `/events`、`/ws` 直接回 503 断开，不排队等待。
+- **index 是门，凭票进场**：`vm_rdp` 启动时生成进程级 `boot` 票，`GET /` 返回的 HTML 注入 `window.__VM_BOOT`（没有 HTML 的宿主走 `GET /boot`）。`/events`、`/ws` 必须带 `&boot=<票>`，缺票或旧票一律 503。进程重启后旧页面手里的票作废，它重试也只是毫秒级 503，占不住浏览器那 6 条 HTTP socket（`clientId` 只看身份，不能证明"页面是本进程发出去的"）。
 
 ## 已知限制
 

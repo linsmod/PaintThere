@@ -86,7 +86,9 @@ $p = Start-Process -FilePath ".\demo_wm.exe" -ArgumentList "9000" -PassThru -Red
 .\vm-desktop\build\test_text_edit.exe --probe
 
 # 验证资源 + 首帧（自适应帧率下空闲无后续帧）
-curl -s --max-time 2 -N http://127.0.0.1:9000/events
+# 下行要先拿门票：/events 必须带 boot，命令行没有 HTML 注入，直接 GET /boot 取
+$boot = (curl -s http://127.0.0.1:9000/boot)
+curl -s --max-time 2 -N "http://127.0.0.1:9000/events?boot=$boot"
 
 # 模拟输入触发新帧
 curl -s -X POST -H "Content-Type: application/json" -d '{"kind":"mousemove","x":300,"y":250,"color":"#F44336","clientId":"A"}' http://127.0.0.1:9000/input
@@ -106,7 +108,7 @@ agent-browser --session vm close
 
 1. **构建**：`python tools/build_vm.py` 一次通过并生成 `demo_wm.exe` + `vm_renderer.exe`；gcc 编译 `demo_frame` 通过；emcc 编译 wasm 通过。
 2. **字体一致性**：`font_probe.exe <ttf> <size> <text>` 与 `node test_wasm_font.mjs <ttf> <size> <text>` 的宽度一致（本机验证过 91/70/247）。
-3. **协议**：`curl -N /events` 收到 `event: resources` + `event: fullframe`；fullframe 为 `{"type":"tiles",...}`，ops 依次含 `showLoading` / `config` / 48 个 `setTile` / `hideLoading`；帧中无 `wm_bg`，窗口背景为 `"s_window"`。
+3. **协议**：`curl -N "/events?boot=<票>"` 收到 `event: resources` + `event: fullframe`；fullframe 为 `{"type":"tiles",...}`，ops 依次含 `showLoading` / `config` / 48 个 `setTile` / `hideLoading`；帧中无 `wm_bg`，窗口背景为 `"s_window"`。
    - 增量验证：挂一个 SSE 连接后 `POST /input`，增量帧的 `setTile` 数量应远小于 48（指针移动通常 1–2 块），且始终带 loading 批次边界。
 4. **自适应帧率**：空闲 2 秒后再连接，frameId 不变；一次输入后 frameId +1。
 5. **渲染**：浏览器检查 `__vmRenderer.ready === true`、`tiles === 48`、`loading === false`、`error === ''`；`bg` canvas 全不透明、`c` canvas 标题栏颜色像素；console 无错误。
@@ -127,7 +129,7 @@ python tools/build_vm.py
 $p = Start-Process vm-desktop\build\vm_rdp.exe -ArgumentList '--port','19099',
      '--pipe','\\.\pipe\vmwm_probe_19099','--web-root','assets' -PassThru `
      -RedirectStandardError 'temp\probe-rdp.err.txt'
-python tools/probe_rdp_session.py --port 19099      # 13 条断言
+python tools/probe_rdp_session.py --port 19099      # 16 条断言（含缺票/旧票 503）
 Stop-Process -Id $p.Id -Force
 
 # 2. 浏览器：起一套临时桌面（独立管道名 + 独立端口，避免 start_vm_desktop.py 的
@@ -150,7 +152,8 @@ WS 不再重连，画面为冻结帧 + 「会话已被其他标签页接管」�
 - 两个标签页必须同源才能共用 localStorage；`agent-browser tab new` 是同一浏览器上下文，满足。
 - `agent-browser close --all` 会关掉所有 session（包括用户/其它代理开的），收尾只用 `agent-browser close`。
 - 探针里"先发事件再关闭"的读取要用「EOF 后仍检查已到字节」的写法，否则会漏掉跟随关闭事件到达的数据。
-- 旧版前端（`/events` 不带 client）仍能连，但服务端按"无会话"处理：不做去重，也不会被拒。
+- 门票是进程级的：`GET /` 注入 `window.__VM_BOOT`，`/events`、`/ws` 必须带 `&boot=<票>`，缺票/旧票一律 503。命令行与 C 宿主用 `GET /boot` 取票；`vm_rdp` 重启后旧页面手里的票立刻作废，它重试只是快速 503，不会占住浏览器那 6 条 HTTP socket 把新页面卡死。
+- `/events` 不带 client 仍能连（有票就行），但服务端按"无会话"处理：不做去重，也不会被接管。
 
 ## 经验与坑
 

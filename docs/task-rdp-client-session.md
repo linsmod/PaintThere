@@ -64,7 +64,45 @@ python tools/probe_rdp_session.py --port 19099
 - 服务端日志：`client 'd3vl29vxo9j' takes over: closing previous ws/sse connection`，
   之后无重复重连记录（旧页面没有抢回会话）。
 
+## 追加：门票（boot）—— index 是门
+
+### 问题
+
+`clientId` 只证明身份，不证明「页面是本次进程发出去的」。服务重启后旧页面带着同一个
+clientId 重连，在服务端看起来和新页面完全一样，于是照常接受。这些僵尸页面各自长期占住
+一条 SSE，浏览器同一 origin 的 HTTP/1.1 socket 池只有 6 条，被占满后新页面连 `GET /` 都
+发不出去，表现为「服务器一开，打开页面就卡住」。实测：重启 9050 后 5 个旧页面各占一条
+SSE，新页面的请求一条都没到服务端（日志里没有它的 `GET /`）。
+
+### 改动
+
+- `vm-desktop/rdp/rdp_server.c`
+  - `RdpServer.boot[RDP_BOOT_MAX]`：`make_boot()` 在 `RdpServer_Create` 生成 16 位十六进制
+    票（hrtime + 栈地址混淆），随进程生命周期，重启即换。
+  - `serve_index()`：`GET /`、`/index.html` 返回的 HTML 注入 `window.__VM_BOOT='<票>'`。
+  - `serve_boot()`：`GET /boot` 返回票，供没有 HTML 的宿主（file:// 的 C 渲染器）使用。
+  - `gate_boot()`：`/events`、`/ws` 必须带 `&boot=<票>` 且等于当前进程的票，否则
+    `503 Service Unavailable` 立刻断开（日志 `boot ticket '...' != '...', rejected`）。
+- `assets/vm_renderer.js`：`fetchBoot()` 优先取 `globalThis.__VM_BOOT`，没有就
+  `GET /boot`；拿到票后才拼 `CLIENT_QUERY`（`?client=<id>&boot=<票>`）并连两个通道。
+- 工具同步：`probe_rdp_session.py` 先取票并新增 3 条票断言；`probe_ws_input.py`、
+  `drive_vm_desktop.py` 先 `/boot` 再连；`e2e_wms.ps1` 加 `Get-Sse`（取票 + 连 `/events`）。
+
+### 验证（2026-11-25）
+
+- `probe_rdp_session.py` 16 条全过：缺票 `/events`→503、旧票 `/events`→503、缺票 `/ws`→503；
+  带票的接管、共存、会话表满、槽位回收断言不变。
+- `GET /` 注入的票与 `GET /boot` 一致（`832b2055b9acbf79`）。
+- 浏览器（临时桌面，19052）：页面正常出帧，`globalThis.__VM_BOOT=caa0911e08d00d0b`。
+- 只重启 `vm_rdp`（新票 `6cc4521b2e4f2656`）后，旧页面重连被拒：
+  `GET /ws?...&boot=caa0911e08d00d0b` / `GET /events?...` 两条都是
+  `boot ticket 'caa0911e08d00d0b' != '6cc4521b2e4f2656', rejected`，页面转
+  `disconnected:true`；刷新页面拿到新票后恢复正常。
+- 未实测：`vm_renderer.exe`（C 宿主）走 `/boot` 取票。该进程实测一个 HTTP 请求都没打到
+  服务端（`font.ttf` 也没有），ticket 之前就没走到联网那步，属既有状态，本次未构成回归；
+  已登记 `issues/INDEX.md`。
+
 ## 恢复点
 
-若会话中断：源码改动集中在上述三个文件，逐条对照「改动」章节即可确认是否已应用；
-验证用 `tools/probe_rdp_session.py`（不需要上游 wms），浏览器验证按上面步骤重跑。
+若会话中断：源码改动集中在上述文件，逐条对照「改动」章节即可确认是否已应用；
+验证用 `tools/probe_rdp_session.py`（不需要上游 wms，已验证 16 条），浏览器验证按上面步骤重跑。

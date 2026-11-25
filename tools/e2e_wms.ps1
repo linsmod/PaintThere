@@ -84,6 +84,14 @@ function Assert-NoLog {
     }
 }
 
+function Get-Sse {
+    # 下行通道要先拿门票：/events 与 /ws 都认 index 发的 boot 票，进程重启即失效。
+    param([string]$Base, [string]$OutFile, [int]$Seconds = 4)
+    $boot = (& curl.exe -s --noproxy '*' --max-time 4 "$Base/boot" 2>$null)
+    if ($boot) { $boot = ($boot | Out-String).Trim() }
+    & curl.exe -s --noproxy '*' --max-time $Seconds "$Base/events?boot=$boot" -o $OutFile 2>$null | Out-Null
+}
+
 function Start-Tool {
     param([string]$Exe, [string[]]$Arguments, [string]$OutFile, [string]$ErrFile)
     $path = Join-Path $BuildDir $Exe
@@ -295,7 +303,7 @@ Wait-Log $rdpE "listening on 127.0.0.1:$rdpPort" | Out-Null
 Start-Sleep -Milliseconds 800
 
 & curl.exe -s --noproxy '*' --max-time 6 "$base/" -o $idxDump 2>$null | Out-Null
-& curl.exe -s --noproxy '*' --max-time 4 "$base/events" -o $sseDump 2>$null | Out-Null
+Get-Sse $base $sseDump 4
 & curl.exe -s --noproxy '*' --max-time 6 "$base/respack/default" -o $respackDump 2>$null | Out-Null
 # HTTP 回退通道（前端在 WS 不可用时用）
 & curl.exe -s --noproxy '*' --max-time 6 -X POST -H "Content-Type: application/json" `
@@ -349,7 +357,7 @@ Start-Sleep -Milliseconds 400
 $rdp2 = Start-Tool 'vm_rdp.exe' @('--port', "$rdpPort", '--pipe', $pipe, '--web-root', $assetsDir) $rdp2O $rdp2E
 Wait-Log $rdp2E "listening on 127.0.0.1:$rdpPort" | Out-Null
 Start-Sleep -Milliseconds 800
-& curl.exe -s --noproxy '*' --max-time 4 "$base/events" -o $sse2Dump 2>$null | Out-Null
+Get-Sse $base $sse2Dump 4
 Assert-Log $sse2Dump 'app_rect_0' 'kill rdp 重启后靠 fullframe 恢复应用内容'
 
 Stop-Tool $app; Stop-Tool $rdp2; Stop-Tool $srv
@@ -389,7 +397,7 @@ $shRdp = Start-Tool 'vm_rdp.exe' @('--port', "$shPort", '--pipe', $pipe,
 Wait-Log $shRdpE "listening on 127.0.0.1:$shPort" | Out-Null
 Start-Sleep -Milliseconds 700
 
-& curl.exe -s --noproxy '*' --max-time 4 "$shBase/events" -o $sseA 2>$null | Out-Null
+Get-Sse $shBase $sseA 4
 Assert-Log    $srvE  'handshake client id=\d+ type=SHELL'          '真实外壳以 SHELL 角色连上'
 Assert-Log    $shE   'push content count=\d+ accepted=1'           '外壳推送任务栏内容被采纳'
 Assert-Log    $sseA  '开始'                                        'fullframe 含任务栏开始按钮'
@@ -397,13 +405,13 @@ Assert-Log    $sseA  'wmwm test win'                               '任务栏含
 
 Stop-Process -Id $sh.Id -Force
 Start-Sleep -Milliseconds 800
-& curl.exe -s --noproxy '*' --max-time 4 "$shBase/events" -o $sseB 2>$null | Out-Null
+Get-Sse $shBase $sseB 4
 Assert-NoLog  $sseB  '开始'                                        'kill 外壳后任务栏消失'
 Assert-Log    $sseB  'wmwm test window'                            'kill 外壳后应用内容保留'
 
 $sh2 = Start-Tool 'vm_shell.exe' @('--pipe', $pipe, '--font', $fontPath) $sh2O $sh2E
 Start-Sleep -Milliseconds 800
-& curl.exe -s --noproxy '*' --max-time 4 "$shBase/events" -o $sseC 2>$null | Out-Null
+Get-Sse $shBase $sseC 4
 Assert-Log    $sseC  '开始'                                        '重启外壳后任务栏重建'
 Assert-Log    $sseC  'wmwm test win'                               '重启后任务栏条目重建'
 
@@ -445,7 +453,7 @@ $a6Rdp = Start-Tool 'vm_rdp.exe' @('--port', "$appPort", '--pipe', $pipe,
 Wait-Log $a6RdpE "listening on 127.0.0.1:$appPort" | Out-Null
 Start-Sleep -Milliseconds 800
 
-& curl.exe -s --noproxy '*' --max-time 4 "$a6Base/events" -o $sse1 2>$null | Out-Null
+Get-Sse $a6Base $sse1 4
 Assert-Log $a6SrvE 'handshake client id=\d+ type=APP'          '新 app 以 APP 角色连上'
 Assert-Log $a6A1E 'layout epoch=1 body='                        'app 收到首次布局请求'
 Assert-Log $a6A1E 'push epoch=1 count=\d+ accepted=1'          'app 内容被 wms 采纳'
@@ -462,7 +470,7 @@ Assert-Log $a6A1E 'button -> pressed=1 clicks=1'                '点击命中按
 
 Stop-Process -Id $a6App2.Id -Force
 Start-Sleep -Milliseconds 700
-& curl.exe -s --noproxy '*' --max-time 4 "$a6Base/events" -o $sse2 2>$null | Out-Null
+Get-Sse $a6Base $sse2 4
 Assert-NoLog $sse2 'Second'                                     'kill 第二个 app 后其窗口与条目消失'
 Assert-Log   $sse2 'vm_app / A1'                                'kill 后另一个 app 内容保留'
 

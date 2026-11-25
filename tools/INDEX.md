@@ -51,7 +51,7 @@
 - `vm-desktop/wms/` — WMS 协议层与服务：`wms_ipc.h`（v2 线路协议）、`wms_client.c`（句柄式 SDK）、`wms_server.c`（窗口表/焦点/输入路由）、`vm_host.c`（本项目合成宿主，10 个回调）。
 
 - `e2e_wms.ps1` — WMS 端到端验收：`pwsh tools/e2e_wms.ps1`（`-SkipBuild` 跳过构建）。起 `vm_wms` + `vm_rdp` + `test_wms_app/shell/rdp` + 真实 `vm_shell` / `vm_app`，跑 proto / basic / crash / restart / rdp / shell / app 七个场景共 61 条断言；rdp 场景覆盖 HTTP 首页、SSE 基线、应用内容进帧、respack 容器、HTTP 与 WebSocket 两条输入通道、kill rdp 后重启恢复画面；shell 场景覆盖真实外壳推送任务栏、kill 后任务栏消失且应用保留、重启后重建；app 场景覆盖新 app 建窗与内容、任务栏两条目、点击命中、kill 一个实例后另一个保留。日志落 `temp/e2e-wms-logs/`（不受 git 管理）。每个场景用独立管道名 `\\.\pipe\vmwm_e2e_<tag>_<随机>` 与独立端口（`19xxx`），可与正在运行的实例并存。验收结果与已知限制见 `docs/task-vm-wms-merge.md` §13.9。
-- `probe_ws_input.py` — 最小 WebSocket 上行探针，覆盖 curl 到不了的 `/ws` 握手与掩码帧：`python tools/probe_ws_input.py --port 19090 [--kind keydown --key Tab] [--quiet]`。`--client-id` 同时写进 `/ws?client=<id>` 与会话内的输入体，用于验证会话归属/接管。对 `vm_rdp` / `demo_jpx` 都可用；断言落点是对端日志（`input kind=...`）与应用侧收到的 body 局部坐标。e2e 的 rdp 场景调用它。
-- `probe_rdp_session.py` — `vm_rdp` 会话行为探针（纯标准库）：`python tools/probe_rdp_session.py --port 19099`。覆盖 SSE 接管（旧连接收 `takenOver`）、同 clientId 的 SSE+WS 共存、WS 接管（close 4001）、会话表满 503、槽位回收，共 13 条断言；只需 `vm_rdp` 起来，不需要 `vm_wms`。`--sessions N` 对齐服务端上限（默认 8）。
+- `probe_ws_input.py` — 最小 WebSocket 上行探针，覆盖 curl 到不了的 `/ws` 握手与掩码帧：`python tools/probe_ws_input.py --port 19090 [--kind keydown --key Tab] [--quiet]`。先 `GET /boot` 取门票，`--client-id` 写进 `/ws?client=<id>&boot=<票>` 与会话内的输入体，用于验证会话归属/接管。对 `vm_rdp` / `demo_jpx` 都可用；断言落点是对端日志（`input kind=...`）与应用侧收到的 body 局部坐标。e2e 的 rdp 场景调用它。
+- `probe_rdp_session.py` — `vm_rdp` 会话与门票探针（纯标准库）：`python tools/probe_rdp_session.py --port 19099`。覆盖缺票/旧票 503、SSE 接管（旧连接收 `takenOver`）、同 clientId 的 SSE+WS 共存、WS 接管（close 4001）、会话表满 503、槽位回收，共 16 条断言；只需 `vm_rdp` 起来，不需要 `vm_wms`。`--sessions N` 对齐服务端上限（默认 8）。
 
 构建与验证使用标准命令：`python tools/build_vm.py`、`python tools/start_vm_desktop.py`，浏览器验证使用 `agent-browser`。详见 `docs/debug-vmdesk.md`。

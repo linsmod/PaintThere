@@ -28,8 +28,17 @@ const CLIENT_ID = (() => {
     return Math.random().toString(36).slice(2);
   }
 })();
-const CLIENT_QUERY = `?client=${encodeURIComponent(CLIENT_ID)}`;
-const EVENTS_URL = `${BASE}/events${CLIENT_QUERY}`;
+/* 门票：服务端在 index 里注入 window.__VM_BOOT；C 宿主走 file://、没有 HTML，
+   用 GET /boot 现取。拿到票才能开 /events 与 /ws —— 服务重启后旧票作废，
+   旧页面重试也只是快速 503，不会占住浏览器那 6 条 HTTP socket。 */
+let CLIENT_QUERY = '';
+const fetchBoot = async () => {
+  const injected = globalThis.__VM_BOOT;
+  if (injected) return String(injected);
+  const r = await fetch(`${BASE}/boot`);
+  if (!r.ok) throw new Error('boot ticket: HTTP ' + r.status);
+  return (await r.text()).trim();
+};
 const INPUT_URL = `${BASE}/input`;
 
 window.__vmRenderer = { ready: false, frames: 0, resources: 0, tiles: 0, loading: false, disconnected: false, takenOver: false, error: '' };
@@ -362,7 +371,7 @@ async function boot() {
     window.__vmRenderer.error = '';
     resourcesReady = Promise.resolve();
     frameChain = Promise.resolve();
-    const source = new EventSource(EVENTS_URL);
+    const source = new EventSource(`${BASE}/events${CLIENT_QUERY}`);
     eventSource = source;
     let rejected = false;
 
@@ -434,6 +443,8 @@ async function boot() {
       }, DISCONNECT_DELAY_MS);
     };
   };
+  const bootTicket = await fetchBoot();
+  CLIENT_QUERY = `?client=${encodeURIComponent(CLIENT_ID)}&boot=${encodeURIComponent(bootTicket)}`;
   connectEvents();
 
   const cid = CLIENT_ID;

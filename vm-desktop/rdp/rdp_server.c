@@ -22,6 +22,11 @@
  * close 4001，前端据此停止自动重连，避免两个标签页互抢同一条会话。
  * 连接数有硬上限；会话数另有上限，超了直接回 503 并断开，不把连接挂在队列里
  * 等槽位（挂住会让客户端看到 pending 请求）。
+ *
+ * 门票（boot）：`GET /` 是唯一入口，返回的 HTML 里带上本次进程的 boot 票；
+ * 没有 HTML 的宿主（C 渲染器）用 `GET /boot` 现取。`/events` 与 `/ws` 必须
+ * 带同一个 boot 才放行，缺票/旧票一律 503。进程重启后旧页面手里的票作废，
+ * 它重试多少次都进不来，也就不会占住浏览器那 6 条 HTTP socket。
  */
 #include "rdp_server.h"
 
@@ -41,6 +46,7 @@
 #define RDP_MAX_CONNS        64   /* 连接硬上限：含静态资源/input 等短连接 */
 #define RDP_MAX_SESSIONS      8   /* 一个浏览器 = 一条会话（SSE + WS 各一条） */
 #define RDP_CLIENT_ID_MAX    64
+#define RDP_BOOT_MAX         17   /* 16 hex + NUL：进程级门票 */
 #define RDP_RECV_CHUNK       65536
 #define RDP_SSE_MAX_PENDING  (8u * 1024u * 1024u)
 #define RDP_HTTP_MAX_PENDING (48u * 1024u * 1024u)
@@ -95,6 +101,7 @@ struct RdpServer {
     unsigned short   port;
     char             webRoot[512];
     char             fontPath[640];
+    char             boot[RDP_BOOT_MAX];   /* 本次进程的门票，重启即变 */
 
     char             respackId[64];
     char            *respackJson;
@@ -640,12 +647,50 @@ static void start_ws(RdpConn *c, size_t hdrLen, const char *clientId) {
     ws_consume(c);
 }
 
-/* ---------------- 静态资源 ---------------- */
+/* ---------------- 门票 ---------------- */
 
-/* HTML 只加载 JS；所有 DOM/样式由 vm_renderer.js 统一创建，与 C 宿主可比。 */
-static const char VM_INDEX_HTML[] =
-    "<!DOCTYPE html><html><head><meta charset='utf-8'><title>VM Frame</title>"
-    "<script type='module' src='/vm_renderer.js'></script></head><body></body></html>";
+/* 16 位十六进制，进程级随机：只用 hrtime 与栈地址做混淆源，够防"上一个进程
+   的票"，不承担安全职责。 */
+static void make_boot(char out[RDP_BOOT_MAX]) {
+    static const char hex[] = "0123456789abcdef";
+    unsigned long long x = (unsigned long long)uv_hrtime();
+    unsigned long long y = (unsigned long long)(size_t)out;
+    int i;
+
+    for (i = 0; i < 16; i++) {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x ^= y >> ((i & 7) * 8);
+        out[i] = hex[(int)(x & 0x0F)];
+    }
+    out[16] = '\0';
+}
+
+/* 入口页：把本次进程的票写进 HTML。浏览器只有走到这里才有资格开 /events、/ws。 */
+static void serve_index(RdpConn *c) {
+    char html[512];
+    int n = snprintf(html, sizeof(html),
+                     "<!DOCTYPE html><html><head><meta charset='utf-8'>"
+                     "<title>VM Frame</title>"
+                     "<script>window.__VM_BOOT='%s'</script>"
+                     "<script type='module' src='/vm_renderer.js'></script>"
+                     "</head><body></body></html>",
+                     c->srv->boot);
+    if (n <= 0 || (size_t)n >= sizeof(html)) {
+        respond_text(c, 500, "Internal Error", "index build failed");
+        return;
+    }
+    respond(c, 200, "OK", "text/html; charset=utf-8", html, (size_t)n);
+}
+
+/* 没有 HTML 的宿主（canvas-cpp 的 vm_renderer.exe 走 file://）来这里取票。 */
+static void serve_boot(RdpConn *c) {
+    respond(c, 200, "OK", "text/plain; charset=utf-8", c->srv->boot,
+            strlen(c->srv->boot));
+}
+
+/* ---------------- 静态资源 ---------------- */
 
 /* 白名单只有这几个文件：本地演示服务，不做目录映射。 */
 static const char *static_name(const char *path) {
@@ -670,8 +715,7 @@ static void serve_static(RdpConn *c, const char *path) {
     const char *ct;
 
     if (strcmp(path, "/") == 0 || strcmp(path, "/index.html") == 0) {
-        respond(c, 200, "OK", "text/html; charset=utf-8",
-                VM_INDEX_HTML, sizeof(VM_INDEX_HTML) - 1);
+        serve_index(c);
         return;
     }
 
@@ -815,6 +859,19 @@ static void start_sse(RdpConn *c, const char *clientId) {
 
 /* ---------------- 请求分发 ---------------- */
 
+/* 进门验票：只有从本进程的 index（或 /boot）拿到票的客户端才能开 events/ws。
+   进程重启后旧票作废，旧页面重试多少次都是 503 —— 它拿不到 socket 池的坑位。 */
+static int gate_boot(RdpConn *c, const char *query) {
+    char boot[RDP_BOOT_MAX] = {0};
+
+    query_param(query, "boot", boot, sizeof(boot));
+    if (boot[0] && strcmp(boot, c->srv->boot) == 0) return 1;
+    RDP_LOG("boot ticket '%s' != '%s', rejected", boot[0] ? boot : "-",
+            c->srv->boot);
+    respond_text(c, 503, "Service Unavailable", "stale boot ticket");
+    return 0;
+}
+
 static void handle_http(RdpConn *c) {
     RdpServer *s = c->srv;
     char *hdrEnd = strstr(c->in, "\r\n\r\n");
@@ -853,7 +910,13 @@ static void handle_http(RdpConn *c) {
     }
     if (c->inLen < hdrLen + bodyLen) return;   /* body 未到齐，等下一次读 */
 
+    if (strcmp(method, "GET") == 0 && strcmp(path, "/boot") == 0) {
+        serve_boot(c);
+        return;
+    }
+
     if (strcmp(method, "GET") == 0 && strcmp(path, "/events") == 0) {
+        if (!gate_boot(c, query)) return;
         query_param(query, "client", clientId, sizeof(clientId));
         start_sse(c, clientId);
         return;
@@ -861,6 +924,7 @@ static void handle_http(RdpConn *c) {
 
     /* 上行主路径：WebSocket。握手之后这条连接只承载输入帧。 */
     if (strcmp(method, "GET") == 0 && strcmp(path, "/ws") == 0) {
+        if (!gate_boot(c, query)) return;
         query_param(query, "client", clientId, sizeof(clientId));
         start_ws(c, hdrLen, clientId);
         return;
@@ -1032,6 +1096,7 @@ RdpServer *RdpServer_Create(struct uv_loop_s *loop, unsigned short port,
     s->port = port;
     snprintf(s->webRoot, sizeof(s->webRoot), "%s", webRoot ? webRoot : ".");
     snprintf(s->fontPath, sizeof(s->fontPath), "%s", fontPath ? fontPath : "");
+    make_boot(s->boot);
 
     r = uv_tcp_init(loop, &s->listener);
     if (r != 0) {
@@ -1061,7 +1126,8 @@ RdpServer *RdpServer_Create(struct uv_loop_s *loop, unsigned short port,
     uv_timer_init(loop, &s->timer);
     uv_timer_start(&s->timer, on_timer, 16, 16);
 
-    RDP_LOG("listening on 127.0.0.1:%u (web root: %s)", port, s->webRoot);
+    RDP_LOG("listening on 127.0.0.1:%u (web root: %s) boot=%s", port, s->webRoot,
+            s->boot);
     return s;
 }
 

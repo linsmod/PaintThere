@@ -35,6 +35,25 @@ status = {"connected": False, "closed": False}
 frame_times = []   # (monotonic, bytes) at each SSE data: frame boundary
 
 
+def fetch_boot():
+    """GET /boot：/events 与 /ws 认这个门票，服务进程重启即失效。"""
+    s = socket.socket()
+    s.settimeout(3)
+    data = b""
+    try:
+        s.connect(("127.0.0.1", PORT))
+        s.sendall(b"GET /boot HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+        while True:
+            chunk = s.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+    finally:
+        s.close()
+    _, _, body = data.partition(b"\r\n\r\n")
+    return body.decode("ascii", "replace").strip()
+
+
 def recorder():
     s = socket.socket()
     s.settimeout(0.3)
@@ -44,8 +63,10 @@ def recorder():
         print("sse connect failed: %s" % e)
         return
     status["connected"] = True
-    s.sendall(b"GET /events HTTP/1.1\r\nHost: 127.0.0.1\r\n"
-              b"Accept: text/event-stream\r\n\r\n")
+    boot = fetch_boot()
+    req = ("GET /events?client=%s&boot=%s HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+           "Accept: text/event-stream\r\n\r\n" % (CID, boot))
+    s.sendall(req.encode("ascii"))
     while not status["closed"]:
         try:
             chunk = s.recv(65536)

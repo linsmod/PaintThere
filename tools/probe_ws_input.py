@@ -38,6 +38,27 @@ def recv_until(sock, marker, limit=4096):
     return buf
 
 
+def fetch_boot(host, port):
+    """GET /boot：index 是唯一入口，/ws 与 /events 必须带这个门票。"""
+    sock = socket.create_connection((host, port), timeout=5)
+    data = b""
+    try:
+        sock.sendall(b"GET /boot HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                     b"Connection: close\r\n\r\n")
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            data += chunk
+    finally:
+        sock.close()
+    head, _, body = data.partition(b"\r\n\r\n")
+    status = head.split(b"\r\n", 1)[0].decode("latin-1")
+    if " 200 " not in status:
+        raise OSError("boot ticket rejected: %s" % status)
+    return body.decode("ascii", "replace").strip()
+
+
 def send_text(sock, text):
     payload = text.encode("utf-8")
     mask = os.urandom(4)
@@ -76,6 +97,7 @@ def main():
         payload.update({"key": args.key, "code": args.code})
 
     try:
+        boot = fetch_boot(args.host, args.port)
         sock = socket.create_connection((args.host, args.port), timeout=5)
     except OSError as exc:
         print("ws fail: connect %s:%d: %s" % (args.host, args.port, exc), file=sys.stderr)
@@ -83,16 +105,17 @@ def main():
 
     try:
         key = base64.b64encode(os.urandom(16)).decode()
-        client_q = ("?client=" + urllib.parse.quote(args.client_id, safe="")) \
-            if args.client_id else ""
+        params = ["boot=" + urllib.parse.quote(boot, safe="")]
+        if args.client_id:
+            params.insert(0, "client=" + urllib.parse.quote(args.client_id, safe=""))
         req = (
-            "GET /ws%s HTTP/1.1\r\n"
+            "GET /ws?%s HTTP/1.1\r\n"
             "Host: %s:%d\r\n"
             "Upgrade: websocket\r\n"
             "Connection: Upgrade\r\n"
             "Sec-WebSocket-Key: %s\r\n"
             "Sec-WebSocket-Version: 13\r\n\r\n"
-            % (client_q, args.host, args.port, key)
+            % ("&".join(params), args.host, args.port, key)
         )
         sock.sendall(req.encode())
         resp = recv_until(sock, b"\r\n\r\n")

@@ -75,17 +75,30 @@ u32 frame_id; u32 slot; u64 seq; u32 len; u32 reserved; // 实际 24B，按 pack
 - slot 覆盖：8 个 slot 循环；rdp 在通知回调内立即消费（同步解码），不长期持有 payload 指针。
 - seqlock 用 C11 `__atomic_*` builtins（x64 lock-free），跨进程可见。
 
-## 步骤
+## 步骤与结果（2026-11-25 完成）
 
-- [ ] 写本任务文档
-- [ ] 实现 `vm-desktop/wms/vm_shm.h/.c`（Windows CreateFileMapping / POSIX shm_open 条件编译）
-- [ ] 单测 `test_shm`：进程内两映射写读 round-trip
-- [ ] wms_ipc 新增 SHM 事件与载荷头
-- [ ] wms_server 新增 SHM 通知广播/单发
-- [ ] vm_host 发布帧走 SHM（灰度开关 `VM_WMS_FRAME_TRANSPORT=shm|pipe|both`）
-- [ ] rdp 订阅 SHM 事件、打开映射、零拷贝消费
-- [ ] 全量构建 + test_shm + e2e_wms.ps1
-- [ ] 浏览器验证、更新索引/工作流/任务状态
+- [x] 写本任务文档
+- [x] 实现 `vm-desktop/wms/vm_shm.h/.c`：pipe 名 FNV 派生 `vmwm_shm_xxxxxxxx`；8 slot × 256KB ring，seqlock（seq 奇=写中/偶=可读）；Windows `CreateFileMapping` / POSIX `shm_open` 条件编译；`VmShm_MapPayload` 返回映射区只读指针
+- [x] 单测 `test_shm`：Create+Open 写一帧读一帧，直接指针 memcmp 通过
+- [x] 协议：因 cmd id 仅 14 bit，无法新增事件位；SHM 通知复用 `EVT_FRAME_BIN/EVT_FULLFRAME_BIN`，靠载荷头 magic `BSHM` 区分（BFRM=内嵌帧，BSHM=slot 引用），新增 `VmWmEvtShmFrame`（32B）
+- [x] wms_server 持有 shm（ServerInit Create / ServerStop Destroy），新增 `VmWm_ServerPublishShmFrame`：写 slot + 广播 32B 通知
+- [x] vm_host 传输开关 `VM_WMS_FRAME_TRANSPORT=shm|pipe|both`（默认 both）；单份 BFRM buffer 复用于 shm 与 pipe；`VM_WMS_JSON_FRAMES=0` 可关 legacy JSON
+- [x] rdp 连接后打开 shm（失败每轮重试），BIN 事件里检查 magic，BSHM 时 `VmShm_MapPayload` 零拷贝拿 payload 直接 `VmFrameBin_ToTiles` 解码
+- [x] 全量构建通过；`test_shm` / `test_frame_bin` 通过；e2e_wms 61/61
+- [x] shm-only 验证：`VM_WMS_FRAME_TRANSPORT=shm` 启动四进程，wms/rdp 日志均确认 shm ring，浏览器画面完整（截图 `temp/shm_desktop.png`）
+
+### 验证数据
+
+- `test_shm`: `shm slot=0 seq=2 n=19 len=19 ok=1`
+- e2e_wms: 61/61 checks passed（默认 both 模式）
+- shm-only: wms 日志 `shm frame ring ready for \\.\pipe\vmwm_ui_21740`，rdp 日志 `shm frame ring opened for ...`，浏览器画面正常
+- 帧数据不再经过命名管道：管道只传 32B `VmWmEvtShmFrame` 通知；rdp 直接读映射区，跨进程零拷贝
+
+### 已知限制
+
+- rdp 解码成浏览器 JSON 仍有拷贝（SSE 文本输出必需），本任务只消除 wms→rdp 这一跳。
+- 8 slot 循环覆盖；rdp 在通知回调内同步消费，不长期持有 payload 指针。若 rdp 卡住超过 8 帧会读到更新的 seq，当前直接丢弃该帧（日志），下次 fullframe/增量补上。
+- `VM_WMS_FRAME_TRANSPORT=shm` 时 legacy `test_wms_rdp` 收不到帧（它不订阅 SHM 语义），所以 e2e 需在默认 both 模式跑；浏览器路径 shm-only 已单独验证。
 
 ## 风险与注意
 

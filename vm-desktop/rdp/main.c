@@ -27,6 +27,7 @@
 
 #include "vm_frame_bin.h"
 #include "vm_serialize_json.h"
+#include "vm_shm.h"
 #include "rdp_server.h"
 
 #define RDP_LOG(...)                                     \
@@ -39,6 +40,7 @@
 static uv_loop_t   g_loop;
 static RdpServer  *g_srv;
 static WmsClient  *g_wms;
+static VmShm      *g_shm;
 static const char *g_pipe = VMWM_PIPE_NAME;
 static int         g_stop;
 static int         g_needRespack;
@@ -150,10 +152,35 @@ static void push_binary_frame(RdpServer *srv, const WmsEvent *e, int full) {
     uint32_t len = 0, fid = 0;
     const char *payload = Wms_AsFrame(e, &len, &fid);
     if (!payload || !len) return;
+
+    const uint8_t *frame = NULL;
+    size_t frameLen = 0;
+
+    uint32_t magic = 0;
+    if (len >= sizeof(magic)) memcpy(&magic, payload, sizeof(magic));
+    if (magic == VMWM_SHM_MAGIC && len >= sizeof(VmWmEvtShmFrame)) {
+        if (!g_shm) {
+            RDP_LOG("shm notification but ring not open (frame_id=%u)", (unsigned)fid);
+            return;
+        }
+        VmWmEvtShmFrame note;
+        memcpy(&note, payload, sizeof(note));
+        frame = VmShm_MapPayload(g_shm, (int)note.slot, note.seq, &frameLen, &fid);
+        if (!frame) {
+            RDP_LOG("shm slot read failed (slot=%u seq=%llu)",
+                    (unsigned)note.slot, (unsigned long long)note.seq);
+            return;
+        }
+    } else {
+        frame = (const uint8_t *)payload;
+        frameLen = len;
+    }
+
     uint32_t decodedFid = 0;
-    VmTiles *tiles = VmFrameBin_ToTiles((const uint8_t *)payload, len, &decodedFid);
+    VmTiles *tiles = VmFrameBin_ToTiles(frame, frameLen, &decodedFid);
     if (!tiles) {
-        RDP_LOG("binary frame decode failed (frame_id=%u len=%u)", (unsigned)fid, (unsigned)len);
+        RDP_LOG("binary frame decode failed (frame_id=%u len=%zu)",
+                (unsigned)fid, frameLen);
         return;
     }
     char *json = VmTiles_Finish(tiles);
@@ -216,6 +243,7 @@ static void on_wms_event(WmsClient *c, const WmsEvent *e, void *user) {
 /* ---------------- 连接管理 ---------------- */
 
 static void wms_disconnect(void) {
+    if (g_shm) { VmShm_Destroy(g_shm); g_shm = NULL; }
     if (g_wms) {
         Wms_ClientDestroy(g_wms);
         g_wms = NULL;
@@ -252,6 +280,10 @@ static void wms_try_connect(uint64_t now) {
         return;
     }
 
+    /* Open the shared frame ring; if the writer is not ready yet, retry on next tick. */
+    if (!g_shm) g_shm = VmShm_Open(g_pipe);
+    if (g_shm) RDP_LOG("shm frame ring opened for %s", g_pipe);
+
     RDP_LOG("wms connected pipe='%s' client_id=%u screen=%dx%d",
             g_pipe, (unsigned)Wms_ClientId(g_wms),
             (int)Wms_ScreenWidth(g_wms), (int)Wms_ScreenHeight(g_wms));
@@ -277,6 +309,10 @@ static void rdp_pump(void) {
     if (!g_wms) {
         wms_try_connect(now);
         return;
+    }
+    if (!g_shm) {
+        g_shm = VmShm_Open(g_pipe);
+        if (g_shm) RDP_LOG("shm frame ring opened (retry)");
     }
 
     if (g_needRespack) {

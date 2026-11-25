@@ -66,43 +66,49 @@ static VmTiles *build_frame_tiles(VmHost *h, int full) {
     return tiles;
 }
 
-/* Default: emit both JSON (legacy clients / e2e) and binary (vm_rdp fast path).
-   VM_WMS_JSON_FRAMES=0 disables JSON; =1 disables binary. */
-static int frame_mode(void) {
-    const char *v = getenv("VM_WMS_JSON_FRAMES");
-    if (v && strcmp(v, "0") == 0) return 2; /* binary only */
-    if (v && strcmp(v, "1") == 0) return 1; /* json only */
-    return 0;                               /* both */
+/* Transport: 0=both (default), 1=pipe only, 2=shm only.
+   VM_WMS_FRAME_TRANSPORT=shm|pipe|both; legacy VM_WMS_JSON_FRAMES still controls
+   whether the legacy JSON event is emitted alongside BIN. */
+static int frame_transport(void) {
+    const char *v = getenv("VM_WMS_FRAME_TRANSPORT");
+    if (v && strcmp(v, "shm") == 0) return 2;
+    if (v && strcmp(v, "pipe") == 0) return 1;
+    return 0;
 }
 
-/* Publish one frame in the selected wire format. Returns 1 if anything was sent. */
+/* Publish one frame. Returns 1 if anything was sent. */
 static int publish_frame(VmHost *h, int full, int client_id) {
-    int mode = frame_mode();
+    int transport = frame_transport();
     VmTiles *tiles = build_frame_tiles(h, full);
     if (!tiles) return 0;
     int sent = 0;
 
-    if (mode != 1) {
-        size_t len = 0;
-        uint8_t *bin = VmTiles_FinishBin(tiles, &len);
-        if (bin) {
-            VmWmResult r = client_id >= 0
-                ? VmWm_ServerSendFrameBin((uint32_t)client_id, bin, (uint32_t)len, full)
-                : VmWm_ServerBroadcastFrameBin(bin, (uint32_t)len, full);
-            free(bin);
-            sent = (r == VMWM_OK);
-        }
+    size_t binLen = 0;
+    uint8_t *bin = VmTiles_FinishBin(tiles, &binLen);
+    /* Note: Shm publish copies into the slot; pipe send copies into the IPC buffer,
+       so the single binary buffer can serve both transports. */
+    if (bin && transport != 1) {
+        VmWmResult r = VmWm_ServerPublishShmFrame(bin, (uint32_t)binLen, full);
+        sent = sent || (r == VMWM_OK);
     }
+    if (bin && transport != 2) {
+        VmWmResult r = client_id >= 0
+            ? VmWm_ServerSendFrameBin((uint32_t)client_id, bin, (uint32_t)binLen, full)
+            : VmWm_ServerBroadcastFrameBin(bin, (uint32_t)binLen, full);
+        sent = sent || (r == VMWM_OK);
+    }
+    free(bin);
 
-    if (mode != 2) {
-        /* VmTiles_FinishBin does not destroy tiles; JSON buffer is still intact. */
+    const char *v = getenv("VM_WMS_JSON_FRAMES");
+    int emitJson = !(v && strcmp(v, "0") == 0);  /* default ON for legacy clients/e2e */
+    if (transport != 2 && emitJson) {
         char *json = VmTiles_Finish(tiles);
         if (json) {
             VmWmResult r = client_id >= 0
                 ? VmWm_ServerSendFrame((uint32_t)client_id, json, (uint32_t)strlen(json), full)
                 : VmWm_ServerBroadcastFrame(json, (uint32_t)strlen(json), full);
             free(json);
-            sent = 1;
+            sent = sent || (r == VMWM_OK);
         }
     } else {
         VmTiles_Destroy(tiles);

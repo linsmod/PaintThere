@@ -23,6 +23,7 @@
 #include "wms_host.h"
 #include "wms_peer.h"
 #include "wms_log.h"
+#include "vm_shm.h"
 
 /* ================= 类型 ================= */
 
@@ -71,6 +72,7 @@ static VmWmHost        g_host;
 static int             g_host_set = 0;
 
 static uint32_t        g_frame_id  = 0;
+static VmShm*          g_shm       = NULL;  /* frame payload ring, owned by server */
 
 static uv_loop_t*      g_loop = NULL;
 static uv_pipe_t       g_server_pipe;
@@ -1399,6 +1401,37 @@ VmWmResult VmWm_ServerSendFrameBin(uint32_t client_id, const void* data,
                                  (uint16_t)(full ? EVT_FULLFRAME_BIN : EVT_FRAME_BIN));
 }
 
+/* Publish a frame through shared memory: write slot, then broadcast a tiny
+   notification (magic 'BSHM') over the existing BIN event bit. */
+VmWmResult VmWm_ServerPublishShmFrame(const void* data, uint32_t len, int full)
+{
+    Conn* c;
+    VmWmResult last = VMWM_ERR_NOT_CONNECTED;
+    uint16_t bit = (uint16_t)(full ? EVT_FULLFRAME_BIN : EVT_FRAME_BIN);
+    uint64_t seq = 0;
+    int slot;
+
+    if (!g_shm) return VMWM_ERR_NOT_READY;
+    slot = VmShm_WriteFrame(g_shm, g_frame_id, data, len, &seq);
+    if (slot < 0) return VMWM_ERR_NOMEM;
+
+    VmWmEvtShmFrame note;
+    memset(&note, 0, sizeof(note));
+    note.magic    = VMWM_SHM_MAGIC;
+    note.frame_id = g_frame_id;
+    note.slot     = (uint32_t)slot;
+    note.len      = len;
+    note.seq      = seq;
+
+    for (c = g_conns; c; c = c->next) {
+        if (c->closing) continue;
+        if (!(conn_caps(c) & VMWM_CAP_FRAME)) continue;
+        if ((c->mask & bit) == 0) continue;
+        last = send_frame_payload_to(c, &note, (uint32_t)sizeof(note), bit);
+    }
+    return last;
+}
+
 VmWmResult VmWm_ServerSendRespack(uint32_t client_id, const char* id,
                                   const char* json, uint32_t len)
 {
@@ -1501,6 +1534,13 @@ VmWmResult VmWm_ServerInit(const char* pipe_path)
     uv_timer_init(g_loop, &g_peer_timer);
     uv_timer_start(&g_peer_timer, on_peer_timer, 1000, 1000);
 
+    /* Shared frame ring; failure is non-fatal (host falls back to pipe transport). */
+    g_shm = VmShm_Create(pipe_path ? pipe_path : VMWM_PIPE_NAME);
+    if (g_shm)
+        vmwm_log("shm frame ring ready for %s", pipe_path ? pipe_path : VMWM_PIPE_NAME);
+    else
+        vmwm_log("shm frame ring unavailable, pipe transport still active");
+
     g_inited = 1;
     vmwm_log("wm-server listening on %s (protocol v%u, payload<=%u)",
              pipe_path ? pipe_path : VMWM_PIPE_NAME, (unsigned)VMWM_VERSION,
@@ -1519,4 +1559,5 @@ void VmWm_ServerStop(void)
 {
     if (!g_inited || !g_loop) return;
     uv_stop(g_loop);
+    if (g_shm) { VmShm_Destroy(g_shm); g_shm = NULL; }
 }

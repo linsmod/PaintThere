@@ -233,6 +233,7 @@ add_executable(vm_wms
     wms/wms_server.c
     wms/wms_mock_host.c
     wms/vm_host.c
+    wms/vm_shm.c
     vm_wm.c
     vm_display.c
     vm_serialize_json.c
@@ -271,12 +272,17 @@ add_executable(test_frame_bin
     vm_display.c)
 target_include_directories(test_frame_bin PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 
+# 共享内存 ring 单测
+add_executable(test_shm wms/test_shm.c wms/vm_shm.c)
+target_include_directories(test_shm PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/wms")
+
 # 呈现端服务器：HTTP / SSE / WebSocket / 静态资源 / respack。
 # 帧与资源全部来自 vm_wms（EVT_FRAME / EVT_FULLFRAME / EVT_RESOURCES），
 # 所以它不链 vm_wm / Clay：rdp 不懂桌面语义。
 add_executable(vm_rdp
     rdp/main.c
     rdp/rdp_server.c
+    wms/vm_shm.c
     vm_frame_bin.c
     vm_serialize_json.c
     vm_display.c)
@@ -315,7 +321,7 @@ target_include_directories(vm_app PRIVATE
 # 两个库都带 vm_display / vm_font，静态链接时链接器按需取一份。
 target_link_libraries(vm_app PRIVATE wms_client jpx_xaml_direct vm_ui_clay ${WMS_PLATFORM_LIBS})
 
-set_target_properties(vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer test_frame_bin vm_wms test_wms_app test_wms_shell test_wms_rdp vm_rdp vm_shell vm_app test_ui PROPERTIES
+set_target_properties(vm_renderer test_frame test_text_edit test_jpx_xaml test_jpx_xaml_theme test_sys test_fs test_wms_ipc test_wms_peer test_frame_bin test_shm vm_wms test_wms_app test_wms_shell test_wms_rdp vm_rdp vm_shell vm_app test_ui PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}"

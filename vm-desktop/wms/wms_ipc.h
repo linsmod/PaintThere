@@ -159,6 +159,9 @@ typedef enum {
        与 EVT_FRAME / EVT_FULLFRAME 并存，便于灰度与回退。 */
     EVT_FRAME_BIN        = 1 << 12,
     EVT_FULLFRAME_BIN    = 1 << 13,
+    /* SHM 通知复用上面两个事件位，靠载荷头 magic 区分：
+       'BFRM' = payload 内嵌帧；'BSHM' = 共享内存 slot 引用。
+       cmd 的 id 字段只有 14 bit，无法再扩展事件 bit。 */
 
     EVT_ALL              = 0x3FFF
 } VmWmEvent;
@@ -342,6 +345,18 @@ typedef struct {
     uint32_t len;
 } VmWmEvtFrame;
 
+/* SHM 通知载荷头：复用 VmWmEvtFrame，len 固定为 sizeof(VmWmEvtShmFrame)，
+   紧跟的字节以 magic 'BSHM' 开头。帧数据不在管道里，而在共享内存 slot。 */
+#define VMWM_SHM_MAGIC 0x4D485342u  /* 'BSHM' little-endian */
+typedef struct {
+    uint32_t magic;
+    uint32_t frame_id;
+    uint32_t slot;
+    uint32_t len;
+    uint64_t seq;
+    uint32_t reserved[2];
+} VmWmEvtShmFrame;
+
 /* EVT_RESOURCES：定长头 + 紧跟 len 字节 JSON */
 typedef struct {
     char     id[32];
@@ -385,6 +400,7 @@ VMWM_STATIC_ASSERT(sizeof(VmWmReqInput) == 96, "VmWmReqInput size changed");
 VMWM_STATIC_ASSERT(sizeof(VmWmReqContent) == 24, "VmWmReqContent size changed");
 VMWM_STATIC_ASSERT(sizeof(VmWmEvtLayoutReq) == 20, "VmWmEvtLayoutReq size changed");
 VMWM_STATIC_ASSERT(sizeof(VmWmEvtFrame) == 8, "VmWmEvtFrame size changed");
+VMWM_STATIC_ASSERT(sizeof(VmWmEvtShmFrame) == 32, "VmWmEvtShmFrame size changed");
 VMWM_STATIC_ASSERT(sizeof(VmWmEvtRespack) == 36, "VmWmEvtRespack size changed");
 VMWM_STATIC_ASSERT(sizeof(VmWmReqWorkArea) == 16, "VmWmReqWorkArea size changed");
 VMWM_STATIC_ASSERT(sizeof(VmWmReqTheme) == 32, "VmWmReqTheme size changed");

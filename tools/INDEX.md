@@ -35,7 +35,8 @@
 - `vm-desktop/vm_menu_view.c/.h` — 弹出菜单的纯绘制/命中层（M7.2）：不认识 `VmWm`，窗口由 `vm_shell` 建；`VmMenuView_Layout/Paint/Hit/SetHover`。
 - `vm-desktop/vm_display.c/.h` — 协议无关内部模型 `VmDisplayList`，typed 命令与自有字符串存储，结构体层 diff。
 - `vm-desktop/vm_serialize_json.c/.h` — 唯一 JSON serializer：`VmDisplayList` → frame / command array JSON。
-- `vm-desktop/vm_frame_bin.c/.h` — wms↔rdp 二进制 tile 帧：增量 writer + 解码器；`VmTiles` 同时产出 JSON 与 BFRM 二进制流。灰度开关 `VM_WMS_JSON_FRAMES`（0=仅 BIN/1=仅 JSON/未设=双发）。
+- `vm-desktop/vm_frame_bin.c/.h` — wms↔rdp 二进制 tile 帧：增量 writer + 解码器；`VmTiles` 同时产出 JSON 与 BFRM 二进制流。灰度开关 `VM_WMS_JSON_FRAMES`（0=关 legacy JSON/未设=开）。
+- `vm-desktop/wms/vm_shm.c/.h` — wms↔rdp 共享内存帧环：pipe 名派生 shm 名、8×256KB slot ring、seqlock 读写、零拷贝 payload 指针。传输开关 `VM_WMS_FRAME_TRANSPORT=shm|pipe|both`（默认 both）。SHM 通知复用 BIN 事件靠 `BSHM` magic 区分。
 - `vm-desktop/clay_frame_adapter.c/.h` — Clay 命令 → `VmDisplayList`（不再直接生成 JSON）。
 - `vm-desktop/jpx_xaml/` — jp_xaml 声明式 UI 层：`jpx_xaml.h` 公开头；`jpx_xaml_parser.c` XAML 子集解析；`jpx_xaml_state.c` 视图/绑定/handler 纯逻辑；`jpx_xaml_view.c` 每帧回放为 JPX 调用（旧路径）；`jpx_xaml_render_direct.c` + `jpx_xaml_backend_cmdbuf.c` + `jpx_xaml_direct_ui.c` 为 M7.1 的 Direct 后端（直接出 `VmCmdBuffer`，含命中/按钮/复选框/输入框/列表交互，不依赖 Clay，CMake 静态库 `jpx_xaml_direct`）。`test_jpx_xaml.exe --probe` 67 项。
 - **old infra（2026-11-25 弃用）**：`demo_jpx` / `demo_xaml` / `jpx/` / `jpx_xaml/` 保留代码但不再开发，由 `vm-desktop/app`（`vm_app.exe`）取代，M6 验收后删除。见 `docs/task-vm-app.md`。

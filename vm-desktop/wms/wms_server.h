@@ -48,6 +48,9 @@ VmWmResult VmWm_ServerBroadcastFrameBin(const void* data, uint32_t len, int full
 VmWmResult VmWm_ServerSendFrameBin(uint32_t client_id, const void* data,
                                    uint32_t len, int full);
 
+/* 共享内存帧：写 slot + 广播轻量通知（'BSHM'） */
+VmWmResult VmWm_ServerPublishShmFrame(const void* data, uint32_t len, int full);
+
 /* 只发给指定客户端的资源包 */
 VmWmResult VmWm_ServerSendRespack(uint32_t client_id, const char* id,
                                   const char* json, uint32_t len);
